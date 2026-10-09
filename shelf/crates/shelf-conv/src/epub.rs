@@ -18,8 +18,11 @@ use zip::{CompressionMethod, ZipArchive, ZipWriter};
 pub const READER_MARGINS_MARKER: &str = "META-INF/eink-reader-margins";
 
 /// 单个条目解压后的上限：几 KB 的压缩数据能解出几 GB（zip 炸弹），目录里声明的大小也可以造假，按实际解出的字节数截。
-/// 这里读的只有 container.xml、OPF、几页正文和一张封面，256MB 远超真实需要。
-const MAX_ENTRY_BYTES: u64 = 256 * 1024 * 1024;
+/// 这里读的只有 container.xml、OPF、几页正文（[`MAX_TEXT_BYTES`]）和一张封面（[`MAX_IMAGE_BYTES`]）。上限要远低于
+/// book-serve 的 `MemoryMax=192M`：文本读进来后正则扫描还要再拷一两份，此前统一 256MB，一个解出几百 MB 的 OPF / 封面
+/// 足以让整个服务被 OOM 杀掉、在途操作全丢。真实书里 OPF 几 KB 到一两 MB、封面几百 KB 到几 MB。
+const MAX_TEXT_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_IMAGE_BYTES: u64 = 64 * 1024 * 1024;
 
 type FileZip = ZipArchive<std::io::BufReader<std::fs::File>>;
 
@@ -34,22 +37,22 @@ fn read_capped(r: impl Read, cap: u64, declared: u64) -> std::io::Result<Option<
     Ok((buf.len() as u64 <= cap).then_some(buf))
 }
 
-/// 按名读条目；不存在 → `Ok(None)`，超过 [`MAX_ENTRY_BYTES`] 或读失败 → `Err`。
-fn read_by_name<R: Read + Seek>(zip: &mut ZipArchive<R>, name: &str) -> Result<Option<Vec<u8>>, String> {
+/// 按名读条目；不存在 → `Ok(None)`，解出超过 `cap` 字节或读失败 → `Err`。
+fn read_by_name<R: Read + Seek>(zip: &mut ZipArchive<R>, name: &str, cap: u64) -> Result<Option<Vec<u8>>, String> {
     let f = match zip.by_name(name) {
         Ok(f) => f,
         Err(zip::result::ZipError::FileNotFound) => return Ok(None),
         Err(e) => return Err(format!("{name}: {e}")),
     };
     let size = f.size();
-    read_capped(f, MAX_ENTRY_BYTES, size)
+    read_capped(f, cap, size)
         .map_err(|e| format!("{name}: {e}"))?
         .map(Some)
-        .ok_or_else(|| format!("{name}: 解压后超过单个条目上限 {} MB（损坏或恶意的压缩包？）", MAX_ENTRY_BYTES >> 20))
+        .ok_or_else(|| format!("{name}: 解压后超过单个条目上限 {} MB（损坏或恶意的压缩包？）", cap >> 20))
 }
 
 fn read_text<R: Read + Seek>(zip: &mut ZipArchive<R>, name: &str) -> Option<String> {
-    read_by_name(zip, name).ok().flatten().map(|b| String::from_utf8(b).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()))
+    read_by_name(zip, name, MAX_TEXT_BYTES).ok().flatten().map(|b| String::from_utf8(b).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()))
 }
 
 /// 去掉 `<!-- … -->` 注释（注释里的标签不算数）。
@@ -257,7 +260,7 @@ impl Book {
         let (opf_dir, opf) = self.opf.as_ref().ok()?;
         let zip = &mut self.zip;
         let path = cover_path(opf, opf_dir, |p| read_text(zip, p))?;
-        Some((image_ext_of(&path), read_by_name(&mut self.zip, &path).ok()??))
+        Some((image_ext_of(&path), read_by_name(&mut self.zip, &path, MAX_IMAGE_BYTES).ok()??))
     }
 
     /// sheng-ren 写在漫画里的页边距（[`READER_MARGINS_MARKER`] 条目的内容）。没有、读不出、不是数字 → `None`。
@@ -393,6 +396,31 @@ mod tests {
     fn escape_and_unescape() {
         assert_eq!(xml_unescape("a&amp;b&lt;&#x4E2D;&#25991;&bogus;&"), "a&b<中文&bogus;&");
         assert_eq!(xml_escape("A & <B> \"q\"\u{0}\u{1}"), "A &amp; &lt;B&gt; &quot;q&quot;");
+    }
+
+    /// 解压后超过上限的条目不整份读进内存：OPF 解出超过 [`MAX_TEXT_BYTES`] → 当成读不到 OPF（书名为空、造不了占位），不 OOM。
+    #[test]
+    fn oversized_entries_are_refused_not_buffered() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("bomb.epub");
+        let mut z = ZipWriter::new(std::fs::File::create(&p).unwrap());
+        let o = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+        z.start_file("META-INF/container.xml", o).unwrap();
+        z.write_all(br#"<container><rootfiles><rootfile full-path="content.opf"/></rootfiles></container>"#).unwrap();
+        z.start_file("content.opf", o).unwrap();
+        z.write_all(b"<package><metadata><dc:title>t</dc:title></metadata>").unwrap();
+        let pad = vec![b' '; 1 << 20];
+        for _ in 0..=(MAX_TEXT_BYTES >> 20) {
+            z.write_all(&pad).unwrap();
+        }
+        z.write_all(b"</package>").unwrap();
+        z.finish().unwrap();
+        let book = Book::open(&p).unwrap();
+        assert!(book.opf().is_err(), "超限 OPF 不读");
+        assert_eq!(book.title(), None);
+        let mut zip = ZipArchive::new(std::fs::File::open(&p).unwrap()).unwrap();
+        assert!(read_by_name(&mut zip, "content.opf", MAX_TEXT_BYTES).unwrap_err().contains("上限"));
+        assert!(read_by_name(&mut zip, "content.opf", MAX_IMAGE_BYTES).unwrap().is_some(), "上限按调用方给的算");
     }
 
     #[test]

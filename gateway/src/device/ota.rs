@@ -182,7 +182,7 @@ mod tests {
     #[test]
     fn missing_units_only_counts_installed_services() {
         let t = tempfile::tempdir().unwrap();
-        let paths = crate::testutil::sandbox(&t);
+        let paths = Paths::sandbox(t.path());
         let units = t.path().join("units");
         std::fs::create_dir_all(&units).unwrap();
         std::fs::create_dir_all(paths.bin_dir()).unwrap();

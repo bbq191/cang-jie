@@ -1,6 +1,6 @@
 //! HTTP 适配层（唯一碰 http 类型的地方，只做取参 + 调领域方法 + 回执）。路由（经网关时前缀 `/api/books`）：
 //! `GET /status`
-//! 母版库：`GET /staging` → `{items, freeBytes}` · `POST /staging`（multipart，原样入库）
+//! 母版库：`GET /staging` → `{items, freeBytes, lowSpace}`（`lowSpace`：剩余空间低于 300 MiB，判据见 `staging::low_space`，查不到空间为 false）· `POST /staging`（multipart，原样入库）
 //! · `POST /staging/deliver {name, folder?}`（2026-09-19 起投完永远保留母版，不再有 `keep` 参数；`POST /staging/mark` 2026-10-07 删，
 //!   原调用方是已删的网关批量「加入 KOReader」）
 //! · `POST /staging/delete {name}` · `POST /staging/rename {name, newName}` · `GET /staging/file?name=`（原件下载，流式）
@@ -38,10 +38,13 @@ pub fn router(st: Arc<State>) -> Router {
         .get("/status", bind(&st, |s, _| Ok(Reply::ok(&s.status()))))
         .get("/events", bind(&st, |s, _| Ok(s.bus.sse_reply())))
         // ── 母版库（中间层）：入库 / 落库 / 删除各自正交 ──
-        .get("/staging", bind(&st, |s, _| Ok(Reply::ok(&serde_json::json!({"items": s.staging.list(), "freeBytes": s.staging.free_bytes()})))))
+        .get("/staging", bind(&st, |s, _| {
+            let free = s.staging.free_bytes();
+            Ok(Reply::ok(&serde_json::json!({"items": s.staging.list(), "freeBytes": free, "lowSpace": crate::staging::low_space(free)})))
+        }))
         // 原件下载：边读边发（大书上百 MB，不整本读进内存）；网关见到 Content-Disposition 也原样流式转发。
         .get("/staging/file", bind(&st, |s, r| {
-            let name = r.q("name").ok_or_else(|| ApiError::bad("缺少 name"))?.to_string();
+            let name = r.q_required("name")?.to_string();
             let (f, len) = s.staging.open_for_download(&name).map_err(ApiError::bad)?;
             let ctype = shelf_conv::direct_content_type(&name).map(|c| c.mime()).unwrap_or("application/octet-stream");
             Ok(Reply::sized_stream(ctype, Box::new(std::io::BufReader::new(f)), len).with_header("Content-Disposition", &rmsvc_core::multipart::content_disposition(&name)))
@@ -131,7 +134,7 @@ pub fn router(st: Arc<State>) -> Router {
 
 /// 两个代理队列长轮询的 `?wait=<秒>`：缺省/非法＝0（立即返回），上限 [`AGENT_WAIT_MAX_SECS`]。
 fn agent_wait(r: &Request<'_>) -> std::time::Duration {
-    std::time::Duration::from_secs(r.q("wait").and_then(|v| v.parse::<u64>().ok()).unwrap_or(0).min(AGENT_WAIT_MAX_SECS))
+    std::time::Duration::from_secs(r.q_parse::<u64>("wait").unwrap_or(0).min(AGENT_WAIT_MAX_SECS))
 }
 
 /// 母版库变更类操作的统一收尾：推一条 `books/staging`（网页据此重拉列表，零轮询）再回 `{ok:true}`。
@@ -147,7 +150,7 @@ fn staging_upload(st: &State, r: &mut Request<'_>) -> ApiResult {
     // 不持 spool 锁：暂存名是随机的 `.<uuid>.book.part`，与 inbox 追平互不相干；真正会撞的"挑名 + 落地"
     // 由 `Staging` 内部的落名临界区串行化（见 `staging::Staging` 的 `land` 字段）。
     let items = AssetUploadFlow::in_dir(st.spool.work()).run(&StagingStore(&st.staging), &mut *r.body, &boundary).map_err(ApiError::bad)?;
-    if items.iter().any(|i| i.ok) {
+    if asset::any_ok(&items) {
         st.bus.publish("books", "staging");
     }
     Ok(Reply::ok(&asset::receipt(&items, serde_json::Value::Null)))
@@ -157,7 +160,7 @@ fn staging_upload(st: &State, r: &mut Request<'_>) -> ApiResult {
 /// 这里只收体、做快速校验（出错照旧 400 / 404），然后把剩下的交给后台任务队列，立即回 `202 {job}`。
 fn import_book(st: &State, r: &mut Request<'_>) -> ApiResult {
     use crate::import::ImportError;
-    let name = r.q("name").ok_or_else(|| ApiError::bad("缺少 name"))?.to_string();
+    let name = r.q_required("name")?.to_string();
     let len = r.content_length;
     let accepted = match r.q("uuid").map(str::to_string) {
         Some(uuid) => st.import.accept_replace(&uuid, &name, &mut *r.body, len),
@@ -203,8 +206,7 @@ mod tests {
     }
 
     fn paths(t: &tempfile::TempDir) -> Paths {
-        let h = t.path().to_str().unwrap().to_string();
-        Paths::resolve(move |k| if k == "HOME" || k == "XDG_RUNTIME_DIR" { Some(h.clone()) } else { None })
+        Paths::sandbox(t.path())
     }
 
     /// xochitl 客户端连 `host` 的服务状态（直接导入的路由测试接假 xochitl）。
@@ -236,11 +238,7 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let st = state(&t);
         let router = router(st.clone());
-        let lib = Paths::resolve({
-            let h = t.path().to_str().unwrap().to_string();
-            move |k| if k == "HOME" || k == "XDG_RUNTIME_DIR" { Some(h.clone()) } else { None }
-        })
-        .xochitl_dir();
+        let lib = paths(&t).xochitl_dir();
         std::fs::create_dir_all(&lib).unwrap();
         std::fs::write(lib.join(format!("{U}.metadata")), "{}").unwrap();
         let path = format!("/margins/{U}");
@@ -251,6 +249,17 @@ mod tests {
         assert_eq!(call(&router, Method::Post, "/margins/applied", &format!(r#"{{"uuid":"{U}"}}"#)).0, 200);
         assert_eq!(call(&router, Method::Get, &path, "").0, 404, "销账后不再返回");
         assert_eq!(call(&router, Method::Get, "/margins/not-a-uuid", "").0, 404, "非法 uuid 一律 404");
+    }
+
+    /// `GET /staging` 带 `lowSpace`（布尔，与 `freeBytes` 同一次取样算出）。
+    #[test]
+    fn staging_list_reports_low_space_flag() {
+        let t = tempfile::tempdir().unwrap();
+        let router = router(state(&t));
+        let (code, v) = call(&router, Method::Get, "/staging", "");
+        assert_eq!(code, 200);
+        let free = v["freeBytes"].as_u64();
+        assert_eq!(v["lowSpace"].as_bool(), Some(crate::staging::low_space(free)), "{v}");
     }
 
     #[test]

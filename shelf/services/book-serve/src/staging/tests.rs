@@ -149,9 +149,8 @@ fn spawn_deliver_rejects_bad_format_synchronously_without_busy_lock() {
     assert!(s.spawn_deliver("none.epub", "", Arc::new(empty_mkdir(&t)), bus).is_err());
 }
 
-/// 造一本 2 卷合集漫画，塞进 mini_epub 装不了的
-/// 二进制字节所以这里直接手搓 zip——is_comic 只看扩展名和 NCX 结构，不校验图片
-/// 内容本身是不是合法 JPEG，够测这条集成路径。
+/// 造一本多卷合集漫画（带 NCX 分卷目录），塞进 mini_epub 装不了的二进制字节所以这里直接手搓 zip——
+/// 图片内容不是合法 JPEG 也无妨，书架从不解码图片。
 fn multivol_comic_epub(pages_per_vol: &[usize]) -> Vec<u8> {
     use std::io::Write;
     let mut buf = Vec::new();
@@ -198,9 +197,7 @@ fn deliver_oversized_comic_no_longer_splits() {
     assert!(err.contains("超过 xochitl 上传上限") && err.contains("没有加入") && !err.contains("卷0"), "{err}");
 }
 
-/// SOI+SOF0(16x16,3分量)+EOI 最小 JPEG 骨架——`imgopt::trim_margins`/`downscale_for_epub_comic`
-/// 真解码会失败（没有 SOS/熵编码数据），两者都优雅降级回原字节（`unwrap_or`），不 panic 不报错；
-/// `pdfwrite::image_from_bytes` 只解析 SOF 段拿宽高、原字节直嵌，不需要真解码，够用。
+/// SOI+SOF0(16x16,3分量)+EOI 最小 JPEG 骨架：书架只把封面字节原样拷进占位文档、从不解码，够用。
 fn fake_jpeg() -> Vec<u8> {
     vec![
         0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x11, 0x08, 0x00, 0x10, 0x00, 0x10, 0x03, 0x01, 0x11,
@@ -793,4 +790,14 @@ fn comic_margins_follow_sheng_ren_marker() {
     let margins = |n: &str| shelf_conv::epub::Book::open(&s.dir().join(n)).ok().and_then(|mut b| b.reader_margins());
     assert_eq!(margins("manga.epub"), Some(1), "缺 OPF 也照样读得到标记");
     assert_eq!(margins("novel.epub"), None);
+}
+
+/// `lowSpace` 的判据：严格小于 300 MiB 才算不足，查不到空间不算（与网页此前写死的判断一致）。
+#[test]
+fn low_space_threshold_is_strict_and_unknown_is_not_low() {
+    use super::library::LOW_SPACE_BYTES;
+    assert_eq!(LOW_SPACE_BYTES, 300 * 1024 * 1024);
+    assert!(low_space(Some(LOW_SPACE_BYTES - 1)));
+    assert!(!low_space(Some(LOW_SPACE_BYTES)));
+    assert!(!low_space(None));
 }

@@ -9,8 +9,8 @@ use image::imageops::FilterType;
 use image::{ImageFormat, RgbaImage};
 use serde::{Deserialize, Serialize};
 use rmsvc_core::asset::{AssetItem, AssetStore};
-use rmsvc_core::formats::IMAGE_EXTS;
-use rmsvc_core::fs::{plain_name, write_atomic};
+use rmsvc_core::formats::{self, IMAGE_EXTS};
+use rmsvc_core::fs::{list_files, plain_name, write_atomic};
 use rmsvc_core::paths::Paths;
 use std::io::Write;
 use std::sync::Mutex;
@@ -96,12 +96,9 @@ impl WallpaperStore {
         self.save_state(&st)
     }
 
+    /// 池里的 PNG（只认普通文件、跳过点开头的半成品，按名排序）。
     pub fn names(&self) -> Vec<String> {
-        let mut v: Vec<String> = std::fs::read_dir(&self.pool)
-            .map(|rd| rd.flatten().filter(|e| e.path().extension().map(|x| x == "png").unwrap_or(false)).map(|e| e.file_name().to_string_lossy().to_string()).collect())
-            .unwrap_or_default();
-        v.sort();
-        v
+        list_files(&self.pool, |n| n.ends_with(".png"))
     }
 
     /// 池里的图按名读字节（预览用）。
@@ -195,19 +192,22 @@ pub fn fit_to_screen(src: &[u8], fit: Fit) -> Result<Vec<u8>, String> {
         return Err(format!("图片长宽比过于极端（{w}×{h}，铺满屏幕需放大到 {nw}×{nh}），请先裁剪"));
     }
     let img = image::load_from_memory(src).map_err(|e| format!("解码失败: {e}"))?;
-    let resized = img.resize_exact(nw, nh, FilterType::Lanczos3).to_rgba8();
-    let mut canvas = RgbaImage::from_pixel(W, H, image::Rgba([0, 0, 0, 255]));
-    let ox = (nw as i64 - W as i64) / 2;
-    let oy = (nh as i64 - H as i64) / 2;
-    for y in 0..H {
-        for x in 0..W {
-            let sx = x as i64 + ox;
-            let sy = y as i64 + oy;
-            if sx >= 0 && sy >= 0 && (sx as u32) < nw && (sy as u32) < nh {
-                canvas.put_pixel(x, y, *resized.get_pixel(sx as u32, sy as u32));
-            }
+    let canvas = match fit {
+        // cover：先在原图上裁出会落在屏幕里的那块、再一次缩放到屏幕尺寸。此前整张缩放到 nw×nh 再裁掉两边，
+        // 横图要白做一半以上的 Lanczos3（host 实测 12MP 横图 1.72s → 约 1.0s），中间图也大一倍多。
+        Fit::Cover => {
+            let cw = ((sw / scale).round() as u32).clamp(1, w);
+            let ch = ((sh / scale).round() as u32).clamp(1, h);
+            img.crop_imm((w - cw) / 2, (h - ch) / 2, cw, ch).resize_exact(W, H, FilterType::Lanczos3).to_rgba8()
         }
-    }
+        // contain：缩进画布、居中贴到黑底上（replace 原样拷像素、不做 alpha 混合，与旧的逐像素拷贝一致）。
+        Fit::Contain => {
+            let resized = img.resize_exact(nw, nh, FilterType::Lanczos3).to_rgba8();
+            let mut canvas = RgbaImage::from_pixel(W, H, image::Rgba([0, 0, 0, 255]));
+            image::imageops::replace(&mut canvas, &resized, (W as i64 - nw as i64) / 2, (H as i64 - nh as i64) / 2);
+            canvas
+        }
+    };
     let mut out = std::io::Cursor::new(Vec::new());
     canvas.write_to(&mut out, ImageFormat::Png).map_err(|e| e.to_string())?;
     Ok(out.into_inner())
@@ -227,7 +227,7 @@ impl AssetStore for WallpaperStore {
         }
         let mut head = [0u8; 4];
         std::io::Read::read_exact(&mut std::fs::File::open(staged).map_err(|e| e.to_string())?, &mut head).map_err(|_| "文件太小".to_string())?;
-        if !(head.starts_with(&[0xFF, 0xD8]) || head.starts_with(b"\x89PNG")) {
+        if !matches!(formats::sniff(&head), Some("png" | "jpg")) {
             return Err("只收 JPEG/PNG".into());
         }
         Ok(())
@@ -235,8 +235,7 @@ impl AssetStore for WallpaperStore {
     fn install(&self, name: &str, staged: &Path) -> Result<AssetItem, String> {
         let src = std::fs::read(staged).map_err(|e| e.to_string())?;
         let png = fit_to_screen(&src, self.fit)?;
-        let stem = name.rsplit_once('.').map(|(s, _)| s).unwrap_or(name);
-        let out_name = format!("{stem}.png");
+        let out_name = format!("{}.png", formats::stem_of(name));
         let dest = self.pool.join(&out_name);
         write_atomic(&dest, &png).map_err(|e| e.to_string())?;
         Ok(AssetItem { name: out_name, bytes: png.len() as u64, extra: serde_json::json!({"width": W, "height": H}) })
@@ -272,9 +271,7 @@ mod tests {
 
     fn store() -> (tempfile::TempDir, WallpaperStore) {
         let t = tempfile::tempdir().unwrap();
-        let h = t.path().to_str().unwrap().to_string();
-        let paths = Paths::resolve(move |k| if k == "HOME" { Some(h.clone()) } else { None });
-        let s = WallpaperStore::new(&paths);
+        let s = WallpaperStore::new(&Paths::sandbox(t.path()));
         s.ensure().unwrap();
         (t, s)
     }
@@ -296,6 +293,52 @@ mod tests {
         let mut c = std::io::Cursor::new(Vec::new());
         img.write_to(&mut c, ImageFormat::Png).unwrap();
         c.into_inner()
+    }
+
+    /// 旧实现（整张缩放到 nw×nh 再按偏移逐像素拷到黑底画布），对拍用。
+    fn fit_reference(src: &[u8], fit: Fit) -> RgbaImage {
+        let img = image::load_from_memory(src).unwrap();
+        let (w, h) = img.dimensions();
+        let (sw, sh) = (W as f64, H as f64);
+        let scale = match fit {
+            Fit::Cover => (sw / w as f64).max(sh / h as f64),
+            Fit::Contain => (sw / w as f64).min(sh / h as f64),
+        };
+        let nw = ((w as f64 * scale).round() as u32).max(1);
+        let nh = ((h as f64 * scale).round() as u32).max(1);
+        let resized = img.resize_exact(nw, nh, FilterType::Lanczos3).to_rgba8();
+        let mut canvas = RgbaImage::from_pixel(W, H, image::Rgba([0, 0, 0, 255]));
+        let ox = (nw as i64 - W as i64) / 2;
+        let oy = (nh as i64 - H as i64) / 2;
+        for y in 0..H {
+            for x in 0..W {
+                let (sx, sy) = (x as i64 + ox, y as i64 + oy);
+                if sx >= 0 && sy >= 0 && (sx as u32) < nw && (sy as u32) < nh {
+                    canvas.put_pixel(x, y, *resized.get_pixel(sx as u32, sy as u32));
+                }
+            }
+        }
+        canvas
+    }
+
+    /// contain 与旧实现逐字节相同；cover 改成先裁后缩，取景一致（平滑渐变图上逐像素差很小）。
+    #[test]
+    fn fit_matches_reference_implementation() {
+        let smooth = |w: u32, h: u32| {
+            let img = RgbaImage::from_fn(w, h, |x, y| image::Rgba([(x * 255 / w) as u8, (y * 255 / h) as u8, 128, 255]));
+            let mut c = std::io::Cursor::new(Vec::new());
+            img.write_to(&mut c, ImageFormat::Png).unwrap();
+            c.into_inner()
+        };
+        for (w, h) in [(1200, 700), (500, 1400), (954, 1696), (3000, 1000)] {
+            let src = smooth(w, h);
+            let got = image::load_from_memory(&fit_to_screen(&src, Fit::Contain).unwrap()).unwrap().to_rgba8();
+            assert!(got == fit_reference(&src, Fit::Contain), "contain {w}x{h} 应逐字节一致");
+            let got = image::load_from_memory(&fit_to_screen(&src, Fit::Cover).unwrap()).unwrap().to_rgba8();
+            let want = fit_reference(&src, Fit::Cover);
+            let max = got.pixels().zip(want.pixels()).flat_map(|(a, b)| (0..4).map(move |i| (a[i] as i32 - b[i] as i32).abs())).max().unwrap();
+            assert!(max <= 3, "cover {w}x{h} 取景偏差过大：最大通道差 {max}");
+        }
     }
 
     #[test]
@@ -321,6 +364,11 @@ mod tests {
         for n in ["a.png", "b.png", "c.png"] {
             std::fs::write(s.pool().join(n), png(10, 10)).unwrap();
         }
+        // 目录、点开头的半成品、非 png 不算池里的图（不会被轮换选中）
+        std::fs::create_dir(s.pool().join("d.png")).unwrap();
+        std::fs::write(s.pool().join(".x.png"), b"half").unwrap();
+        std::fs::write(s.pool().join("note.txt"), b"").unwrap();
+        assert_eq!(s.names(), vec!["a.png", "b.png", "c.png"]);
         s.activate("a.png").unwrap();
         let ino = std::os::unix::fs::MetadataExt::ino(&std::fs::metadata(s.current_path()).unwrap());
         assert_eq!(s.roll().unwrap().as_deref(), Some("b.png"));
@@ -360,8 +408,7 @@ mod tests {
     #[test]
     fn upload_flow_installs_resized_png() {
         let (t, s) = store();
-        let h = t.path().to_str().unwrap().to_string();
-        let paths = Paths::resolve(move |k| if k == "HOME" || k == "XDG_RUNTIME_DIR" { Some(h.clone()) } else { None });
+        let paths = Paths::sandbox(t.path());
         paths.ensure().unwrap();
         let mut body = Vec::new();
         body.extend_from_slice(b"--B\r\nContent-Disposition: form-data; name=\"file\"; filename=\"beach.jpg\"\r\n\r\n");

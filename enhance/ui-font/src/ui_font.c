@@ -184,6 +184,25 @@ static void **find_got_slot(const char *sym) {
     return q.slot;
 }
 
+/* p 是否落在主程序（xochitl）自己的某个 PT_LOAD 段里。 */
+static int in_main_cb(struct dl_phdr_info *info, size_t size, void *data) {
+    (void)size;
+    uintptr_t *q = data; /* q[0] = 要查的地址，q[1] = 结果 */
+    for (int i = 0; i < info->dlpi_phnum; i++) {
+        const ElfW(Phdr) *ph = &info->dlpi_phdr[i];
+        if (ph->p_type != PT_LOAD) continue;
+        uintptr_t lo = info->dlpi_addr + ph->p_vaddr;
+        if (q[0] >= lo && q[0] < lo + ph->p_memsz) q[1] = 1;
+    }
+    return 1; /* 第一个对象就是主程序，看完就停 */
+}
+
+int ui_font_addr_in_main(const void *p) {
+    uintptr_t q[2] = {(uintptr_t)p, 0};
+    dl_iterate_phdr(in_main_cb, q);
+    return (int)q[1];
+}
+
 static int resolve_qt(void) {
     o_set_font = dlsym(RTLD_DEFAULT, SYM_SET_FONT);
     q_font_copy = dlsym(RTLD_DEFAULT, "_ZN5QFontC1ERKS_");
@@ -201,6 +220,14 @@ char _xovi_shouldLoad(void) {
     }
     if (!resolve_qt()) {
         fprintf(stderr, TAG " _xovi_shouldLoad: 缺 Qt 符号 → 拒绝加载\n");
+        return 0;
+    }
+    /* 非 PIE 的主程序如果取过 setFont 的地址，链接器会给它一个"规范 PLT"，dlsym 拿到的就是主程序里的
+     * 这个 PLT 桩：它经导入槽跳转，而导入槽已改成我们的 handler → handler 调"原函数"又回到自己，无限递归、
+     * xochitl 栈溢出崩溃。3.28.0.172 的 xochitl 是非 PIE，但 setFont 在 .dynsym 里 st_value=0（没取地址），
+     * dlsym 拿到的是 Qt 里的真函数；这道检查防的是将来的固件。 */
+    if (ui_font_addr_in_main((const void *)o_set_font)) {
+        fprintf(stderr, TAG " _xovi_shouldLoad: setFont 解析到主程序自己的 PLT 桩（改导入槽会自我递归）→ 拒绝加载\n");
         return 0;
     }
     return 1;
@@ -225,6 +252,10 @@ void _xovi_construct(void) {
     void *slot = NULL;
     if (!resolve_qt()) {
         fprintf(stderr, TAG " _xovi_construct: 缺 Qt 符号，hook 未安装\n");
+        return;
+    }
+    if (ui_font_addr_in_main((const void *)o_set_font)) { /* 同 _xovi_shouldLoad：防自我递归 */
+        fprintf(stderr, TAG " _xovi_construct: setFont 解析到主程序 PLT 桩，hook 未安装\n");
         return;
     }
     if (!ui_font_patch_import(SYM_SET_FONT, (void *)ui_font_set_font, &slot)) {

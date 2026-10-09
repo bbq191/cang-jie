@@ -23,12 +23,18 @@ use serde::Serialize;
 /// 传书 + 认领 + 查文件夹/去重三件事的抽象；生产实现包一层 `rmsvc_core::xochitl::Xochitl`，测试用
 /// 内存桩——不真的碰网络。
 pub trait Uploader: Send + Sync {
-    /// 上传一份 `.rmdoc`，进 `folder_name`（找不到该文件夹 → best-effort 落书库根）。
-    fn upload(&self, bytes: &[u8], filename: &str, folder_name: &str) -> Result<(), String>;
-    /// 找 `createdTime >= since_ms` 且 `visibleName == visible_name` 的文档，返回设备分配的新 uuid。
-    /// 生产实现内部短暂重试（`XochitlUploader::claim`）——`upload()` 和这一步不是一个事务，设备
-    /// 处理跟不上时重试比让调用方手动重试更安全（手动重试对首次生成的去重不友好，见该实现的注释）。
-    fn claim(&self, visible_name: &str, since_ms: u64) -> Result<String, String>;
+    /// 上传一份 `.rmdoc`，进 `folder`（**文件夹 uuid**，空串＝书库根；即 [`Self::parent_folder`] 给的值）。
+    fn upload(&self, bytes: &[u8], filename: &str, folder: &str) -> Result<(), String>;
+    /// 找 `createdTime >= since_ms` 且 `visibleName == visible_name`、又不在 `exclude`（上传前就已经在的，见
+    /// [`Self::existing`]）里的文档，返回设备分配的新 uuid。
+    /// 生产实现内部短暂等待（`XochitlUploader::claim`）——`upload()` 和这一步不是一个事务，设备
+    /// 处理跟不上时等一会比让调用方手动重试更安全（手动重试对首次生成的去重不友好，见该实现的注释）。
+    fn claim(&self, visible_name: &str, since_ms: u64, exclude: &[String]) -> Result<String, String>;
+    /// 上传**之前**就已经符合认领条件（同名、`createdTime >= since_ms`）的文档 uuid——[`Self::claim`] 不认它们，
+    /// 免得把别的文档错认成这次刚生成的。缺省空，方便不关心这件事的测试桩。
+    fn existing(&self, _visible_name: &str, _since_ms: u64) -> Vec<String> {
+        Vec::new()
+    }
     /// 书本自己在设备上的父文件夹 uuid（空串＝书库根）。查不到（书不在库里/已删除）→ `None`，
     /// 调用方 best-effort 落根目录，不新建/确保任何文件夹。缺省 `None` 方便不关心这件事的测试桩。
     fn parent_folder(&self, _book_uuid: &str) -> Option<String> {
@@ -123,7 +129,8 @@ pub fn generate_chapter(c: &Ctx, book: &Book, idx: usize) -> ChapterResult {
     ChapterResult { chapter: idx, title, outcome }
 }
 
-/// 一本书全部章节各生成/校验一遍。
+/// 一本书全部章节各生成/校验一遍（只给测试用：网页按章推送，整本生成的端点 2026-10-09 已删）。
+#[cfg(test)]
 pub fn generate_book(c: &Ctx, book_uuid: &str) -> Result<Vec<ChapterResult>, String> {
     let book = c.store.book(book_uuid)?;
     Ok((0..book.chapters.len()).map(|i| generate_chapter(c, &book, i)).collect())
@@ -153,14 +160,18 @@ fn upload_page(c: &Ctx, paragraphs: &[Paragraph], folder: &str, visible_name: &s
     let doc_uuid = uuid::Uuid::new_v4().to_string();
     let page = Page { uuid: uuid::Uuid::new_v4().to_string(), rm_bytes: rm };
     let bytes = rmdoc::pack(&doc_uuid, visible_name, "", &page, rmdoc::TEMPLATE_AUTHOR, c.now_ms)?;
+    let before = c.uploader.existing(visible_name, c.now_ms);
     c.uploader.upload(&bytes, &format!("{doc_uuid}.rmdoc"), folder)?;
-    c.uploader.claim(visible_name, c.now_ms)
+    c.uploader.claim(visible_name, c.now_ms, &before)
 }
 
-/// `claim()` 短暂重试的次数/间隔——总耗时上限约 (次数-1)×间隔，作为一次同步 HTTP 请求内的等待，
-/// 不宜太长；覆盖"设备处理稍慢"这类常见的秒级延迟就够，真的卡住等多久都没用。
-const CLAIM_RETRY_ATTEMPTS: u32 = 4;
-const CLAIM_RETRY_DELAY_MS: u64 = 1500;
+/// `claim()` 最长等多久——作为一次同步 HTTP 请求内的等待，不宜太长；覆盖"设备处理稍慢"这类常见的秒级延迟就够
+/// （与此前"每 1.5 秒查一次、共 4 次"的上限相当），真的卡住等多久都没用。
+const CLAIM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+/// 书库目录静默这么久再查一次（xochitl 建条目时连写好几个文件，攒一下只查一次）。
+const CLAIM_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(150);
+/// 笔记本 `.rmdoc` 的上传 MIME（`formats::mime_of` 不认 `.rmdoc` 扩展名，会给 octet-stream；保持一直以来真机用的 zip）。
+const RMDOC_MIME: &str = "application/zip";
 
 /// 生产实现：包一层 `rmsvc_core::xochitl::Xochitl`。
 pub struct XochitlUploader {
@@ -171,30 +182,34 @@ impl XochitlUploader {
     pub fn new(host: &str, library_dir: &std::path::Path, timeout_secs: u64) -> XochitlUploader {
         XochitlUploader { xochitl: rmsvc_core::xochitl::Xochitl::new(host, library_dir, timeout_secs) }
     }
+
+    /// 书库里同名、`createdTime >= since_ms` 的活文档 uuid（新→旧）。
+    fn matching<'a>(&self, visible_name: &'a str, since_ms: u64) -> impl Iterator<Item = String> + 'a {
+        rmsvc_core::xochitl::find_documents_since(self.xochitl.library_dir(), since_ms).into_iter().filter(move |d| d.visible_name == visible_name).map(|d| d.uuid)
+    }
 }
 
 impl Uploader for XochitlUploader {
-    fn upload(&self, bytes: &[u8], filename: &str, folder_name: &str) -> Result<(), String> {
-        self.xochitl.upload(bytes, filename, "application/zip", folder_name).map(|_| ())
+    /// `folder` 是文件夹 **uuid**：此前直接交给 `Xochitl::upload`，那个接口的参数是文件夹**名字**、内部按 visibleName
+    /// 找文件夹，拿 uuid 去找必然落空、best-effort 落到书库根——书放在文件夹里时，笔记本一直生成到根目录，而去重
+    /// （`unique_name`）查的却是书所在的文件夹（2026-09-09 改"复用书本文件夹"时起）。所以走按 uuid 的 `upload_into`。
+    fn upload(&self, bytes: &[u8], filename: &str, folder: &str) -> Result<(), String> {
+        self.xochitl.upload_into(bytes, filename, RMDOC_MIME, folder).map(|_| ())
     }
-    fn claim(&self, visible_name: &str, since_ms: u64) -> Result<String, String> {
+    fn existing(&self, visible_name: &str, since_ms: u64) -> Vec<String> {
+        self.matching(visible_name, since_ms).collect()
+    }
+    fn claim(&self, visible_name: &str, since_ms: u64, exclude: &[String]) -> Result<String, String> {
         // 2026-09-09 审计发现：`upload()` 成功那一刻设备已经真实建好文档，`claim()` 只是"回查"，
         // 两者不是一个事务——`claim()` 失败（常见原因是设备处理还没跟上，不是真的丢了）以前直接
         // 让本次生成整体判失败，用户手动点「推送本章」重试时，`unique_name` 去重会把这次已经建好、
         // 只是没认领到的文档当成"重名"，另建一份带后缀的新文档——旧的那份永远追踪不到，变孤儿。
-        // 与其指望用户重试（重试本身不安全），这里在放弃前短暂原地重试几次：给设备一点缓冲时间，
+        // 与其指望用户重试（重试本身不安全），这里在放弃前短暂等一会：给设备一点缓冲时间，
         // 绝大多数情况下能在这几秒内就认领到，用户感知不到失败、也就不会走到那条不安全的手动重试路径。
-        let mut last_err = String::new();
-        for attempt in 0..CLAIM_RETRY_ATTEMPTS {
-            if attempt > 0 {
-                std::thread::sleep(std::time::Duration::from_millis(CLAIM_RETRY_DELAY_MS));
-            }
-            match rmsvc_core::xochitl::find_documents_since(self.xochitl.library_dir(), since_ms).into_iter().find(|d| d.visible_name == visible_name) {
-                Some(d) => return Ok(d.uuid),
-                None => last_err = format!("上传后没能在书库里认领到《{visible_name}》（createdTime>={since_ms}），重试 {CLAIM_RETRY_ATTEMPTS} 次仍未见到——设备可能处理得比平时慢，稍后在网页重试（⚠ 多次重试有极小概率在设备上留下同名孤儿文档，看着重复可以手动去设备上删掉多的那份）"),
-            }
-        }
-        Err(last_err)
+        // 等法是监听书库目录（inotify，文件一落盘就查），不再固定每 1.5 秒醒一次。
+        let lib = self.xochitl.library_dir();
+        rmsvc_core::fswatch::wait_for(lib, CLAIM_DEBOUNCE, CLAIM_TIMEOUT, || self.matching(visible_name, since_ms).find(|u| !exclude.contains(u)))
+            .ok_or_else(|| format!("上传后没能在书库里认领到《{visible_name}》（createdTime>={since_ms}），等了 {} 秒仍未见到——设备可能处理得比平时慢，稍后在网页重试（⚠ 多次重试有极小概率在设备上留下同名孤儿文档，看着重复可以手动去设备上删掉多的那份）", CLAIM_TIMEOUT.as_secs()))
     }
     fn parent_folder(&self, book_uuid: &str) -> Option<String> {
         self.xochitl.parent_folder(book_uuid)
@@ -207,15 +222,11 @@ impl Uploader for XochitlUploader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ink::BookBrief;
     use notecore::model::{Destination, Entry, Status, Style};
     use std::sync::Mutex;
 
     struct FakeStore(Book);
     impl EntryStore for FakeStore {
-        fn list_books(&self) -> Result<Vec<BookBrief>, String> {
-            Ok(vec![BookBrief { uuid: self.0.uuid.clone(), title: self.0.title.clone() }])
-        }
         fn book(&self, uuid: &str) -> Result<Book, String> {
             if uuid == self.0.uuid { Ok(self.0.clone()) } else { Err("没有这本书".into()) }
         }
@@ -230,14 +241,14 @@ mod tests {
         fail_claim: Mutex<bool>,
     }
     impl Uploader for FakeUploader {
-        fn upload(&self, _bytes: &[u8], filename: &str, folder_name: &str) -> Result<(), String> {
+        fn upload(&self, _bytes: &[u8], filename: &str, folder: &str) -> Result<(), String> {
             if *self.fail_upload.lock().unwrap() {
                 return Err("模拟上传失败".into());
             }
-            self.uploads.lock().unwrap().push((filename.to_string(), folder_name.to_string()));
+            self.uploads.lock().unwrap().push((filename.to_string(), folder.to_string()));
             Ok(())
         }
-        fn claim(&self, visible_name: &str, since_ms: u64) -> Result<String, String> {
+        fn claim(&self, visible_name: &str, since_ms: u64, _exclude: &[String]) -> Result<String, String> {
             if *self.fail_claim.lock().unwrap() {
                 return Err("模拟认领失败".into());
             }
@@ -254,11 +265,11 @@ mod tests {
         unique_name_calls: Mutex<u32>,
     }
     impl Uploader for FolderAwareUploader {
-        fn upload(&self, _bytes: &[u8], filename: &str, folder_name: &str) -> Result<(), String> {
-            self.uploads.lock().unwrap().push((filename.to_string(), folder_name.to_string()));
+        fn upload(&self, _bytes: &[u8], filename: &str, folder: &str) -> Result<(), String> {
+            self.uploads.lock().unwrap().push((filename.to_string(), folder.to_string()));
             Ok(())
         }
-        fn claim(&self, visible_name: &str, since_ms: u64) -> Result<String, String> {
+        fn claim(&self, visible_name: &str, since_ms: u64, _exclude: &[String]) -> Result<String, String> {
             Ok(format!("claimed-{visible_name}-{since_ms}"))
         }
         fn parent_folder(&self, _book_uuid: &str) -> Option<String> {
@@ -296,6 +307,32 @@ mod tests {
 
     fn ctx<'a>(store: &'a FakeStore, uploader: &'a dyn Uploader, trash: &'a FakeTrash, state: &'a NotebookState, now_ms: u64) -> Ctx<'a> {
         Ctx { store, uploader, trash, state, now_ms }
+    }
+
+    /// 回归：生产上传按文件夹 **uuid** 设当前文件夹（`GET /documents/<uuid>`）再 `/upload`。此前把 uuid 当文件夹名字
+    /// 去书库里找，必然落空，`GET /documents/`（根）——书在文件夹里时笔记本一直生成到根目录。临时文件传完就删。
+    #[test]
+    fn xochitl_uploader_targets_folder_by_uuid() {
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let port = server.server_addr().to_ip().unwrap().port();
+        let h = std::thread::spawn(move || {
+            let mut seen = vec![];
+            for mut req in server.incoming_requests().take(2) {
+                let mut body = Vec::new();
+                let _ = std::io::Read::read_to_end(req.as_reader(), &mut body);
+                seen.push((req.method().to_string(), req.url().to_string(), body.windows(5).any(|w| w == b"RMDOC")));
+                let _ = req.respond(tiny_http::Response::from_string("{}"));
+            }
+            seen
+        });
+        let lib = tempfile::tempdir().unwrap();
+        let up = XochitlUploader::new(&format!("127.0.0.1:{port}"), lib.path(), 5);
+        up.upload(b"RMDOC-bytes", "d1.rmdoc", "folder-uuid-1").unwrap();
+        let seen = h.join().unwrap();
+        assert_eq!((seen[0].0.as_str(), seen[0].1.as_str()), ("GET", "/documents/folder-uuid-1"), "按 uuid 设当前文件夹，不落根");
+        assert_eq!((seen[1].0.as_str(), seen[1].1.as_str(), seen[1].2), ("POST", "/upload", true));
+        let leftovers = std::fs::read_dir(std::env::temp_dir()).unwrap().flatten().filter(|e| e.file_name().to_string_lossy() == format!("note-serve-{}-d1.rmdoc", std::process::id())).count();
+        assert_eq!(leftovers, 0, "临时文件传完就删");
     }
 
     #[test]
@@ -506,7 +543,7 @@ mod tests {
         assert!(uploader.uploads.lock().unwrap().is_empty(), "书都没找到，不该碰网络");
     }
 
-    // `XochitlUploader::claim` 的重试只碰本地文件（`find_documents_since` 读 `.metadata`），不碰
+    // `XochitlUploader::claim` 的等待只碰本地文件（`find_documents_since` 读 `.metadata`），不碰
     // 网络，所以能像 rmsvc-core::xochitl 那批测试一样直接拿真实临时目录测，不用桩。
 
     #[test]
@@ -521,7 +558,7 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(300));
             std::fs::write(lib2.join("late.metadata"), r#"{"type":"DocumentType","visibleName":"迟到的文档","parent":"","createdTime":"5000"}"#).unwrap();
         });
-        let uuid = uploader.claim("迟到的文档", 1000).expect("重试应该等到文件出现再认领到，而不是第一次没找到就放弃");
+        let uuid = uploader.claim("迟到的文档", 1000, &[]).expect("应该等到文件出现再认领到，而不是第一次没找到就放弃");
         assert_eq!(uuid, "late");
     }
 
@@ -531,7 +568,26 @@ mod tests {
         let lib = t.path().join("xochitl");
         std::fs::create_dir_all(&lib).unwrap();
         let uploader = XochitlUploader::new("10.11.99.1", &lib, 5);
-        let err = uploader.claim("从来没出现过的文档", 1000).unwrap_err();
-        assert!(err.contains("重试"), "错误信息该说明已经重试过，不是第一次没找到就报的: {err}");
+        let err = uploader.claim("从来没出现过的文档", 1000, &[]).unwrap_err();
+        assert!(err.contains("等了"), "错误信息该说明已经等过，不是第一次没找到就报的: {err}");
+    }
+
+    /// 上传前就已经在书库里的同名文档（时间窗内）不算这次生成的：认领要等到真正的新文档出现。
+    #[test]
+    fn xochitl_uploader_claim_skips_documents_that_existed_before_upload() {
+        let t = tempfile::tempdir().unwrap();
+        let lib = t.path().join("xochitl");
+        std::fs::create_dir_all(&lib).unwrap();
+        let meta = |uuid: &str, created: u64| std::fs::write(lib.join(format!("{uuid}.metadata")), format!(r#"{{"type":"DocumentType","visibleName":"同名","parent":"","createdTime":"{created}"}}"#)).unwrap();
+        meta("old", 9000);
+        let uploader = XochitlUploader::new("10.11.99.1", &lib, 5);
+        let before = uploader.existing("同名", 1000);
+        assert_eq!(before, ["old"]);
+        let lib2 = lib.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            std::fs::write(lib2.join("new.metadata"), r#"{"type":"DocumentType","visibleName":"同名","parent":"","createdTime":"5000"}"#).unwrap();
+        });
+        assert_eq!(uploader.claim("同名", 1000, &before).unwrap(), "new", "旧的 createdTime 更新也不该被认领");
     }
 }

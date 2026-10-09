@@ -5,8 +5,12 @@ const $=(s,r=document)=>r.querySelector(s);
    textContent/el({text}) 天然安全，不需要它。 */
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmtB=n=>n>1048576?(n/1048576).toFixed(1)+' MB':n>1024?(n/1024).toFixed(0)+' KB':n+' B';
+// 母版库剩余空间告急：优先用 book-serve 给的 lowSpace（阈值由后端定）；旧版 book-serve 没有这个字段时退回前端按 300MB 判。
+const stagingLowSpace=d=>typeof d.lowSpace==='boolean'?d.lowSpace:d.freeBytes!=null&&d.freeBytes<300*1048576;
 // 小徽章：renderManage 的「基石与模块」列表用。
 const badge=(t,ok)=>`<span class="badge ${ok?'on':'off'}">${t}</span>`;
+// 「已加载/未加载」徽章（xovi 有没有进 xochitl）：管理页基石、设备健康的概览与扩展三处共用。
+const xoviBadge=on=>badge(on?T('manage.loaded.on'):T('manage.loaded.off'),!!on);
 /* 母版库一本书是不是"已经不用管了"——给「已加入」筛选用：加入过 xochitl、不在处理中、最近一次加入没失败。
    正在处理/失败态都不算"完成"，归进「未加入」（还需要用户看见）。以前"加入过 KOReader"的书（2026-09-29 设备卸掉
    KOReader）不算完成。 */
@@ -69,7 +73,9 @@ const modal=(cancelValue,build,onKey)=>new Promise(resolve=>{
   const close=v=>{document.removeEventListener('keydown',key);overlay.remove();resolve(v)};
   const {nodes,focus}=build(close);
   const overlay=el('div',{class:'confirm-overlay'},[el('div',{class:'confirm-box'},nodes)]);
-  const key=e=>{if(e.key==='Escape')close(cancelValue);else if(onKey)onKey(e,close)};
+  // 焦点在对话框里的某个按钮上时，Enter 交给那个按钮自己（浏览器把它当点击）：此前 Tab 到「否」再按 Enter，
+  // 文档级的 Enter=确认 先触发，删除之类的操作就被当成"是"执行了。
+  const key=e=>{if(e.key==='Escape')close(cancelValue);else if(e.key==='Enter'&&e.target.tagName==='BUTTON')return;else if(onKey)onKey(e,close)};
   overlay.onclick=e=>{if(e.target===overlay)close(cancelValue)};
   document.addEventListener('keydown',key);
   document.body.appendChild(overlay);
@@ -127,7 +133,10 @@ document.addEventListener('click',e=>{const b=e.target.closest('.badge[title]');
 // 报障时还能带出这个号。
 // 网络层异常（设备休眠、WiFi 断开、网关重启中）fetch 直接抛 TypeError——此前没接住，开关一直灰着、按钮没反应、
 // 用户看不到任何提示（2026-09-24 审查）。统一在这里转成 {ok:false,message}，调用方照常按失败处理。
-async function j(url,opt){let r;try{r=await fetch(url,opt)}catch(e){console.error(e);return {ok:false,message:T('common.networkError')}}if(r.status===401){location.href='/login?next='+encodeURIComponent(location.pathname);return {ok:false,message:T('common.needLogin')}}if(r.status===403){location.href='/password';return {ok:false,message:T('common.needChangePassword')}}
+/* 401/403 统一去向（j() 与上传器的 XHR 共用）：登录过期 → 登录页（带回当前页）；首登未改密 → 改密页。处理了返回提示文案，否则 null。
+   403 只来自网关登录守卫（首登必改）——各领域服务都不回 403，所以不必再看应答体。 */
+const authRedirect=status=>{if(status===401){location.href='/login?next='+encodeURIComponent(location.pathname);return T('common.needLogin')}if(status===403){location.href='/password';return T('common.needChangePassword')}return null};
+async function j(url,opt){let r;try{r=await fetch(url,opt)}catch(e){console.error(e);return {ok:false,message:T('common.networkError')}}const auth=authRedirect(r.status);if(auth)return {ok:false,message:auth};
   const httpErr=T('common.httpErr',{status:r.status});
   let d;try{d=await r.json()}catch{d={ok:false,message:httpErr}}if(!r.ok&&d.ok!==false)d={ok:false,message:d.message||httpErr};return d}
 /* 带 JSON body 的请求：`jsend(url,'PUT',{a:1})`；省略 body＝不带请求体（`jsend(url,'POST')`）。全站非 GET 调用共用。 */
@@ -143,8 +152,9 @@ const bindToggle=(box,url,key)=>{box.onchange=async()=>{const want=box.checked;b
 /* 上传区 HTML（拖放框 + 隐藏 input + 队列 + 按钮），一处生成、各页复用；uploader() 认这个 .up 容器 */
 const upHtml=(icon,label,ext,btn)=>`<div class="up"><div class="drop"><span class="big">${icon}</span>${label}</div><input type="file" multiple hidden accept="${ext.join(',')}"><ul class="q"></ul><div class="row"><button class="btn pri go">${btn}</button></div></div>`;
 
-/* 通用上传器：逐文件一请求，进度条，逐项回执；失败项可重传，队列可逐项删/清空，顶部总进度。box=.up 容器 */
-function uploader(box,urlOf,queryOf,okExt,onFinish,dedupeApi){
+/* 通用上传器：逐文件一请求，进度条，逐项回执；失败项可重传，队列可逐项删/清空，顶部总进度。box=.up 容器，url=上传接口。
+   （原来 url 与查询参数各是一个回调，四个调用点全传常量 url + 空查询，2026-10-09 收成一个字符串。） */
+function uploader(box,url,okExt,onFinish,dedupeApi){
   const list=$('ul.q',box), input=$('input[type=file]',box), drop=$('.drop',box), go=$('.go',box);
   let files=[], sum=null, busy=false;
   const clr=btn(T('common.clear'),()=>{files=[];render()});go.after(clr);
@@ -177,10 +187,10 @@ function uploader(box,urlOf,queryOf,okExt,onFinish,dedupeApi){
       const li=list.querySelector(`li[data-k="${f.k}"]`);if(!li)continue;const pg=$('progress',li),msg=$('.msg',li);
       if(existing&&existing.has(f.file.name+'|'+f.file.size)){f.st='ok';li.className='ok';pg.value=100;f.msg=T('common.alreadyStaged');msg.textContent=f.msg;summary();continue}
       f.st='';li.className='';pg.value=0;msg.textContent=T('common.uploading');
-      await new Promise(res=>{const x=new XMLHttpRequest();const q=queryOf();x.open('POST',urlOf()+(q?'?'+new URLSearchParams(q):''));
+      await new Promise(res=>{const x=new XMLHttpRequest();x.open('POST',url);
         x.upload.onprogress=e=>{if(e.lengthComputable)pg.value=e.loaded/e.total*100};
         // 401/403 与 j() 同一处理（登录过期 → 登录页；首登未改密 → 改密页）；非 JSON 应答给人话 + 状态码（原来是裸 "HTTP 502"，不走语言包）。
-        x.onload=()=>{if(x.status===401){location.href='/login?next='+encodeURIComponent(location.pathname);return}if(x.status===403){location.href='/password';return}
+        x.onload=()=>{if(authRedirect(x.status))return;
           let d;try{d=JSON.parse(x.responseText)}catch{d={ok:false,message:T('common.httpErr',{status:x.status})}}
           const it=(d.items&&d.items[0])||d;f.st=it.ok?'ok':'bad';f.msg=(it.message||(it.ok?T('common.done'):T('common.failed')))+(d.note&&it.ok?' · '+d.note:'');li.className=f.st;msg.textContent=f.msg;pg.value=100;summary();
           // 同一批里排了两份同名同大小：这份传完了要马上补进快照，下一份循环到时才躲得开——只查一次
@@ -454,19 +464,19 @@ function renderTransfer(sec){sec.innerHTML=`
     items=d.items||[];const tot=items.reduce((a,b)=>a+b.bytes,0);g('stgcap').textContent=items.length?T('transfer.staging.capSummary',{count:items.length,size:fmtB(tot)}):'';
     // 清掉选中集合里的幽灵条目（书被改名/删除后旧名字再也选不中也取消不掉）
     const names=new Set(items.map(it=>it.name));for(const n of [...picked])if(!names.has(n))picked.delete(n);
-    const fr=d.freeBytes;const low=fr!=null&&fr<300*1048576;g('stgfree').style.color=low?'var(--bad)':'';g('stgfree').textContent=fr!=null?T('transfer.staging.freeSpace',{free:fmtB(fr),lowWarn:low?T('transfer.staging.lowWarn'):''}):'';
+    const fr=d.freeBytes;const low=stagingLowSpace(d);g('stgfree').style.color=low?'var(--bad)':'';g('stgfree').textContent=fr!=null?T('transfer.staging.freeSpace',{free:fmtB(fr),lowWarn:low?T('transfer.staging.lowWarn'):''}):'';
     g('stgnames').innerHTML=stgNameOptions(items);render()});
   const refreshAt=lvl=>{need=Math.max(need,lvl);return run()};
-  uploader($('.up',sec),()=>'/api/books/staging',()=>({}),BOOK_EXT,()=>refresh(),'/api/books/staging');   // 书籍格式原样入库；选中即按 BOOK_EXT 拦；传 dedupeApi 防重传出重复
+  uploader($('.up',sec),'/api/books/staging',BOOK_EXT,()=>refresh(),'/api/books/staging');   // 书籍格式原样入库；选中即按 BOOK_EXT 拦；传 dedupeApi 防重传出重复
   refresh();sec.refresh=refresh;sec.onEvent=ev=>refreshAt(ev.area!=='books'?3:!ev.svc&&ev.kind==='batch'?1:ev.kind==='staging'||ev.kind==='render'?2:3);subtabs(sec);}
 
 /* 服务 tab（按注册表出现）。key = 注册的服务名。service→seg（AREA）不再在这里手搓一份——
-   那正是 gateway/src/manage.rs::MODULES 表已声明的唯一事实源，这里改成初始化时从
-   GET /api/manage 现读，见下面 init() 里的 AREA 变量：手搓的映射会跟 MODULES 改名/新增
+   那正是 gateway/src/manage.rs::MODULES 表已声明的唯一事实源，网关在 GET /api/services 的每一项上带回
+   `seg`（2026-10-09 起；此前网页为它另取一次 /api/manage），见下面 init() 里的 AREA 变量：手搓的映射会跟 MODULES 改名/新增
    悄悄脱节，SSE 事件的 area 就对不上、对应 tab 的事件驱动刷新会静默失效。 */
 const TABS={
- 'note-serve':{titleKey:'tab.notes',title:'笔记',render:renderNotes},
- 'font-serve':{render(sec){renderFonts(sec)}},
+ 'note-serve':{titleKey:'tab.notes',render:renderNotes},
+ 'font-serve':{render:renderFonts},
  'wallpaper-serve':{render(sec){assetTab(sec,'/api/wallpapers',{
    hint:T('wallpaper.hint'),
    header:`<label class="field">${T('wallpaper.rotateLabel')}</label><div class="row"><select id="wpmode" style="max-width:12em"><option value="sequential">${T('wallpaper.mode.sequential')}</option><option value="random">${T('wallpaper.mode.random')}</option><option value="fixed">${T('wallpaper.mode.fixed')}</option></select><span id="wpst" class="small"></span></div>`,
@@ -525,7 +535,7 @@ function renderFonts(sec){
     const r=await sendT('/api/fonts/ui/select','PUT',{sans:sans.value,serif:serif.value},'common.saveFailed');
     sans.disabled=serif.disabled=false;if(r.ok!==false){show(r);toast(T('assets.uiFont.saved'),'ok')}else uiRefresh()};
   sans.onchange=save;serif.onchange=save;
-  uploader($('.up',card),()=>'/api/fonts/ui',()=>({}),FONT_EXT,uiRefresh);
+  uploader($('.up',card),'/api/fonts/ui',FONT_EXT,uiRefresh);
   uiRefresh();
   sec.refresh=()=>Promise.all([readRefresh(),uiRefresh()]);
 }
@@ -535,7 +545,7 @@ function assetTab(sec,api,o){sec.innerHTML=`<div class="card">${o.title?`<h2>${o
   ${upHtml(o.icon,o.label,o.accept,o.btn)}
   <h3>${o.listTitle||T('assets.installedDefault')}</h3><ul class="list" id="al"></ul></div>`;
   const refresh=async()=>{const d=await j(api);fillList($('#al',sec),d.items||[],(it,left,right)=>o.row(it,left,right,refresh),T('assets.emptyHint',{btn:o.btn}));if(o.onRender)o.onRender(sec,refresh,d)};
-  uploader($('.up',sec),()=>api,()=>({}),o.accept,refresh);
+  uploader($('.up',sec),api,o.accept,refresh);
   refresh();sec.refresh=refresh}
 
 /* 「其他」顶层 tab（2026-09-10 用户重排首层标签：传书/笔记/其他/管理）：xochitl(font-serve)/壁纸(wallpaper-serve)
@@ -574,6 +584,8 @@ const OBSIDIAN_ICON='<svg viewBox="0 0 24 24" width="13" height="13" style="vert
 // 不同，是因为这里图标本身要拼进结果里，不是"整串都是 key 对应的文字"。
 const DEST_ICON={notebook:()=>'📓 '+T('notes.dest.notebook'),obsidian:()=>OBSIDIAN_ICON+' '+T('notes.dest.obsidian'),both:()=>'📓'+OBSIDIAN_ICON+' '+T('notes.dest.both')};
 const DEST_ORDER=['notebook','obsidian','both'];
+/* 条目状态的显示名（徽章用，已是 HTML 安全文本）：表里没有的新状态原样显示（转义）。 */
+const statusName=e=>STATUS_NAMES[e.status]?T(STATUS_NAMES[e.status]):esc(e.status);
 /* 落设备笔记本/落 Obsidian/两处都要（三期，白皮书 §03n 之后）：缺省 both；第二轮反馈把下拉换成
    条目卡片里的循环图标按钮（`DEST_ICON`/`DEST_ORDER`，见 renderBook）。 */
 /* 「浏览」（新批注先落这，点了才转笔记）与「整理」（真被要求转笔记的才在这核对）拆两个子视图，见二期设计（白皮书 §03n）。 */
@@ -610,6 +622,10 @@ function renderNotes(sec){sec.innerHTML=`
   </div>`;
   // 当前书的后端路径：`bookApi('ink')` → `/api/ink/books/<uuid>`，`bookApi('ink',`/entries/${id}`)` 带后缀（读 `book`，调用时求值）。
   const bookApi=(svc,sub='')=>`/api/${svc}/books/${encodeURIComponent(book.uuid)}${sub}`;
+  // 当前书里某一条目的后端路径：`entryApi('ink',id)` → `/api/ink/books/<uuid>/entries/<id>`，`entryApi('mind',id,'/ask')` 带后缀。
+  const entryApi=(svc,id,sub='')=>bookApi(svc,`/entries/${encodeURIComponent(id)}${sub}`);
+  // 条目状态动作（ink-serve：request/skip/archive/restore）：POST 空体，失败 postJ 已弹提示，返回是否成功。
+  const entryAct=async(id,action)=>(await postJ(entryApi('ink',id,'/'+action),{})).ok!==false;
   const sel=$('#nbook',sec),chaptertabs=$('#nchaptertabs',sec),chapterbody=$('#nchapterbody',sec),browse=$('#nbrowse',sec),sum=$('#nsum',sec);let book=null;
   // 「推送本章」/「重新转写」/「提问」点完显示结果文案、停留 3s 再让用户看清（见下面三处 wait(3000)）——
   // 但这三个动作本身会让 ink-serve 发 `entries` 事件，笔记 tab 正开着时 SSE 会立刻调 `sec.refresh`
@@ -625,6 +641,14 @@ function renderNotes(sec){sec.innerHTML=`
   const HOLD_BUSY=10*60*1000;
   /* 结果文案停留 3s（这期间 SSE 触发的重画被 holdRefreshUntil 挡住），再执行 fn（通常是拉新数据重画）。三处「点完显示结果」共用。 */
   const lingerThen=async fn=>{holdFor(3000);await wait(3000);await fn()};
+  /* 「重新转写」/「提问」共用：按钮禁用 + 状态文字（转写中…/提问中…）→ POST 调模型服务 → 显示"✓ 完成 · token 入X 出Y"或错误，
+     停留 3s 后重取整本书重画。`reloadOnFail`：失败也重取（转写失败要刷新失败标记）；否则失败只解除暂停、不重画。 */
+  const callModel=async(button,stat,url,busyKey,failKey,doneKey,reloadOnFail)=>{button.disabled=true;stat.textContent=T(busyKey);holdFor(HOLD_BUSY);
+    const r=await j(url,{method:'POST'});
+    button.disabled=false;
+    stat.textContent=r.ok===false?'✗ '+(r.message||T(failKey)):T(doneKey,{promptTokens:r.promptTokens||0,completionTokens:r.completionTokens||0});
+    if(r.ok===false&&!reloadOnFail){holdFor(0);return}
+    await lingerThen(()=>reloadBook(renderBook))};
   const cropUrl=(uuid,f)=>`/api/ink/books/${encodeURIComponent(uuid)}/crops/${encodeURIComponent(f)}`;
   // 2026-09-16 截图走查发现：`e.ink` 有值但 `e.ink.crop` 是空串（ink-serve 自渲染裁图失败/写盘失败时
   // 会发生，见 ingest.rs 的 render_ink/write_atomic 错误分支，只记服务端日志、条目照常落盘）此前被
@@ -634,7 +658,7 @@ function renderNotes(sec){sec.innerHTML=`
   // 在途的保存请求：重取数据前先等它们落地（失焦保存 `onchange` 不 await，紧跟着的重画可能先拿到旧文本）。
   // 用 jsend 不用 postJ：postJ 失败时自己弹一次 toast，这里再弹"保存失败"就成了两条（此前如此）。
   const inflight=new Set();
-  const patch=(id,body)=>{const p=jsend(bookApi('ink',`/entries/${encodeURIComponent(id)}`),'POST',body).then(r=>{if(r.ok===false){toast(r.message||T('notes.saveFailed'));return false}return true}).finally(()=>inflight.delete(p));inflight.add(p);return p};
+  const patch=(id,body)=>{const p=jsend(entryApi('ink',id),'POST',body).then(r=>{if(r.ok===false){toast(r.message||T('notes.saveFailed'));return false}return true}).finally(()=>inflight.delete(p));inflight.add(p);return p};
   /* 编辑区文本失焦才存（`onchange`），但点旁边的按钮（重转/去处/问AI…）会先让文本框失焦触发保存，
      两件事几乎同时各发一个 HTTP 请求，谁先到服务端不一定——按钮那次的收尾动作会拉新数据整页重画，
      如果保存请求还没落地，重画拿到的还是旧文本，编辑就跟着"消失"了（用户反馈"改了内容点重转不存"）。
@@ -690,7 +714,7 @@ function renderNotes(sec){sec.innerHTML=`
   /* 「恢复」（回收站点 3）：Skipped/Revoked/Archived 都能恢复，落点由服务端按条目已有内容倒推
      （见 notecore::model::Entry::restore）——书里已经把笔画擦了也能恢复，找回的是条目库里已经存好
      的裁图/校对文本，不代表设备原页面的笔迹会重新出现（这条限制在页面文案里说清楚，不是网页能力）。 */
-  const restoreOne=async id=>{const r=await postJ(bookApi('ink',`/entries/${encodeURIComponent(id)}/restore`),{});if(r.ok===false)return false;return true};
+  const restoreOne=id=>entryAct(id,'restore');
   const renderTrash=()=>{if(!book){trashList.innerHTML=`<p class="small">${T('notes.pickBookFirst')}</p>`;trashSum.textContent='';return}trashList.innerHTML='';
     const items=trashedEntries().sort((a,b)=>b.updated-a.updated);
     trashSum.textContent=items.length?T('notes.trash.count',{count:items.length}):T('notes.trash.empty');
@@ -702,7 +726,7 @@ function renderNotes(sec){sec.innerHTML=`
       // 这条本身去哪（配置的目的地）+ 它所在章节目前的生成/导出状态（章节维度，不是这条自己确认被
       // 收进去了没——归档/撤销后这条已经不在活条目集合里，没法再逆推"当初有没有被打进那次生成"，
       // 只能诚实地给"这一章大致是什么状态"这个参考信息，用户反馈"回收站该显示导出到哪里"）。
-      row.innerHTML=`<div class="trash-badges"><span class="badge">${T(STATUS_NAMES[e.status])||esc(e.status)}</span><span class="badge">${DEST_ICON[dv]()}</span>${syncBadges(chSync,dv)}</div>
+      row.innerHTML=`<div class="trash-badges"><span class="badge">${statusName(e)}</span><span class="badge">${DEST_ICON[dv]()}</span>${syncBadges(chSync,dv)}</div>
         <div class="txt">p.${e.page_index+1}${e.chapter_title?' · '+esc(e.chapter_title):''}<br><span class="q">${esc(text)}</span>${e.status==='revoked'?`<br><span class="small">${T('notes.trash.revokedHint')}</span>`:''}</div>
         <button class="btn" data-restore>${T('notes.trash.restoreBtn')}</button>`;
       guardClick(row.querySelector('[data-restore]'),async()=>{if(!(await restoreOne(e.id)))return;await reloadBook(renderTrash,renderBrowse,renderBook)});
@@ -742,8 +766,7 @@ function renderNotes(sec){sec.innerHTML=`
     for(const e of items)await restoreOne(e.id);
     await reloadBook(renderTrash,renderBrowse,renderBook)});
   /* 浏览态动作：Mined→Pending（转入笔记）/ Mined→Skipped（不需要），见 ink-serve::triage。三个子视图都要重画（条目跨视图搬家）。 */
-  const triage=async(id,action)=>{const r=await postJ(bookApi('ink',`/entries/${encodeURIComponent(id)}/${action}`),{});if(r.ok===false)return;
-    await reloadBook(renderBrowse,renderBook,renderTrash)};
+  const triage=async(id,action)=>{if(await entryAct(id,action))await reloadBook(renderBrowse,renderBook,renderTrash)};
   const updateSummary=()=>{if(!book){sum.textContent='';return}const es=book.entries||[];
     const c=st=>es.filter(e=>e.status===st).length;
     sum.textContent=T('notes.summary',{mined:c('mined'),pending:c('pending'),draft:c('draft'),reviewed:c('reviewed')})};
@@ -757,11 +780,12 @@ function renderNotes(sec){sec.innerHTML=`
     if(!await confirmDialog(T('notes.trash.confirmPurge',{count:items.length})))return;
     await flushPendingText();
     if((await sendT(bookApi('ink',`/purge`),'POST',undefined,'notes.trash.purgeFailed')).ok===false)return;
-    book=await j(bookApi('ink'));renderTrash();refresh()});
+    // 书列表（条目数）和整本书都变了：走一次完整刷新（不受结果提示的暂停挡）。此前直接 `book=await j(…)`，取失败时
+    // `book` 变成 {ok:false}，之后的请求会拼出 /books/undefined，直到下一次刷新才恢复。
+    await runRefresh(true,false,true)});
   /* 「不要了」（三期）：转 Archived，两处投影都摘掉，条目库里软删留痕（真删靠「回收站」清空）。 */
   const archiveEntry=async(id)=>{if(!await confirmDialog(T('notes.confirmArchive')))return;
-    const r=await postJ(bookApi('ink',`/entries/${encodeURIComponent(id)}/archive`),{});if(r.ok===false)return;
-    await reloadBook(renderBook,renderTrash)};
+    if(await entryAct(id,'archive'))await reloadBook(renderBook,renderTrash)};
   /* 浏览：按页分组、只列 Mined（待决定的），最近变更的页在前；转入笔记/不需要两个按钮直接调 triage。 */
   const renderBrowse=()=>{if(!book){browse.innerHTML=`<div class="card"><p class="small">${T('notes.pickBookFirst')}</p></div>`;return}browse.innerHTML='';updateSummary();
     const mined=(book.entries||[]).filter(e=>e.status==='mined');
@@ -908,7 +932,7 @@ function renderNotes(sec){sec.innerHTML=`
           <span>p.${e.page_index+1}${e.subhead?' · '+esc(e.subhead):''}</span>
           <span class="badge">${T(STYLE_NAMES[e.style])||esc(e.style)}</span>
           ${syncBadges(s,dv)}
-          <span class="badge ${e.status==='reviewed'?'on':''}" style="margin-left:auto">${T(STATUS_NAMES[e.status])||esc(e.status)}</span>
+          <span class="badge ${e.status==='reviewed'?'on':''}" style="margin-left:auto">${statusName(e)}</span>
         </div>
         <div class="entry-body">
           <div class="entry-crop">${cropHtml(e)}</div>
@@ -942,21 +966,14 @@ function renderNotes(sec){sec.innerHTML=`
          最初给的 1.5s 真机反馈"闪一下就没了"根本来不及读，2026-09-16 延长到 3s（「推送本章」
          那条同款状态提示也一起延长，三处是同一个模式）。 */
       const tb=row.querySelector('[data-transcribe]'),txStat=row.querySelector('[data-txstat]');
-      if(tb)tb.onclick=async()=>{tb.disabled=true;txStat.textContent=T('notes.transcribing');holdFor(HOLD_BUSY);
-        const r=await j(bookApi('transcribe',`/entries/${encodeURIComponent(e.id)}`),{method:'POST'});
-        tb.disabled=false;
-        txStat.textContent=r.ok===false?('✗ '+(r.message||T('notes.transcribeFailed'))):T('notes.transcribeDone',{promptTokens:r.promptTokens||0,completionTokens:r.completionTokens||0});
-        await lingerThen(()=>reloadBook(renderBook))};
+      // 转写失败也重取：失败清单（failedIds）变了，这条要标红、按钮改「重转失败」。
+      if(tb)tb.onclick=()=>callModel(tb,txStat,entryApi('transcribe',e.id),'notes.transcribing','notes.transcribeFailed','notes.transcribeDone',true);
       /* 「问AI」勾选框 + 问题 + 提问按钮：改即存（ink-serve），点提问才真的调 mind-serve。 */
       const askBox=row.querySelector('[data-ask]'),qInput=row.querySelector('[data-question]'),askBtn=row.querySelector('[data-askbtn]'),askStat=row.querySelector('[data-askstat]');
       const syncAskUi=()=>{qInput.disabled=!askBox.checked;askBtn.disabled=!(askBox.checked&&qInput.value.trim())};
       askBox.onchange=()=>{patch(e.id,{askAi:askBox.checked});syncAskUi()};
       qInput.onchange=()=>{patch(e.id,{question:qInput.value});syncAskUi()};
-      askBtn.onclick=async()=>{askBtn.disabled=true;askStat.textContent=T('notes.asking');holdFor(HOLD_BUSY);
-        const r=await j(bookApi('mind',`/entries/${encodeURIComponent(e.id)}/ask`),{method:'POST'});
-        askBtn.disabled=false;
-        if(r.ok===false){askStat.textContent='✗ '+(r.message||T('notes.askFailed'));holdFor(0)}
-        else{askStat.textContent=T('notes.askDone',{promptTokens:r.promptTokens||0,completionTokens:r.completionTokens||0});await lingerThen(()=>reloadBook(renderBook))}};
+      askBtn.onclick=()=>callModel(askBtn,askStat,entryApi('mind',e.id,'/ask'),'notes.asking','notes.askFailed','notes.askDone',false);
       body.appendChild(row)});
     chapterbody.appendChild(card)};
   exportTabsEl.querySelectorAll('button').forEach(b=>b.onclick=()=>{if(exportTab===b.dataset.etab)return;exportTab=b.dataset.etab;selectedChapter=null;renderBook()});
@@ -984,8 +1001,9 @@ function renderNotes(sec){sec.innerHTML=`
     if(!items.length){nqres.innerHTML=`<p class="small">${T('notes.search.none')}</p>`;return}
     const ul=el('ul',{class:'nsearch'});
     items.forEach(h=>{const li=el('li',{html:`<div class="small">${esc(h.title)} · p.${h.pageIndex+1}${h.chapterTitle?' · '+esc(h.chapterTitle):''} · ${T(FIELD_KEYS[h.field]||'notes.search.field.text')}</div><div>${mark(h.snippet,q)}</div>`});
-      // 跳到这条目实际所在的子页：未处理（mined）在「浏览」，跳过/归档在「回收站」，其余（待转写/草稿/定稿）在「整理」。
-      const tab=h.status==='mined'?0:(h.status==='skipped'||h.status==='archived')?2:1;
+      // 跳到这条目实际所在的子页：未处理（mined）在「浏览」，跳过/撤销/归档在「回收站」（与回收站列表同一份 TRASH_STATUSES；
+      // 此前漏了 revoked，已撤销的命中会跳到「整理」、那里根本不列它），其余（待转写/草稿/定稿）在「整理」。
+      const tab=h.status==='mined'?0:TRASH_STATUSES.includes(h.status)?2:1;
       li.onclick=async()=>{if(sel.value!==h.uuid){sel.value=h.uuid;await runRefresh(false,false,true)}$('#nsubnav',sec).children[tab].click();nqres.innerHTML=''};
       ul.appendChild(li)});
     nqres.appendChild(el('p',{class:'small',text:T('notes.search.count',{n:items.length})}));nqres.appendChild(ul)};
@@ -1096,9 +1114,9 @@ function mountModelPanel(root,seg,title,icon,showAuto){
     priceIn.value=price.inputPer1k||'';priceOut.value=price.outputPer1k||'';
     const rows=st.usageByModel||[];
     usageBody.innerHTML=rows.length?rows.map(m=>`<tr${m.active?' style="font-weight:600"':''}><td>${esc(m.label)}${m.active?` <span class="badge on">${T('models.usage.active')}</span>`:''}</td><td>${m.calls}${m.failed?` <span style="color:var(--bad)">${T('models.usage.failedCount',{n:m.failed})}</span>`:''}</td><td>${m.promptTokens}/${m.completionTokens}</td><td>${fmtCost(m.costEstimate)}</td></tr>`).join(''):`<tr><td colspan="4" class="small">${T('models.usage.none')}</td></tr>`;
-    stat.textContent=rows.find(m=>m.active&&m.lastError)?.lastError?T('models.lastError',{err:rows.find(m=>m.active).lastError}):'';
-    const delBtn=keyRow.querySelector('[data-delkey]'),saveBtn=keyRow.querySelector('[data-savekey]');
-    if(delBtn)guardClick(delBtn,async()=>{if(!await confirmDialog(T('models.confirmDeleteKey',{title})))return;await putR({clearKey:true},'models.deleteFailed')});
+    const errRow=rows.find(m=>m.active&&m.lastError);stat.textContent=errRow?T('models.lastError',{err:errRow.lastError}):'';
+    const delKeyBtn=keyRow.querySelector('[data-delkey]'),saveBtn=keyRow.querySelector('[data-savekey]');
+    if(delKeyBtn)guardClick(delKeyBtn,async()=>{if(!await confirmDialog(T('models.confirmDeleteKey',{title})))return;await putR({clearKey:true},'models.deleteFailed')});
     if(saveBtn)guardClick(saveBtn,async()=>{const v=keyRow.querySelector('[data-keyinput]').value.trim();if(!v)return;await putR({apiKey:v})});
   };
   /* 选厂家：不是自定义就直接定位到该厂家第一个模型并原子切换（不用再点一次「确认」）；选自定义只切
@@ -1131,7 +1149,7 @@ function mountHealth(box){
     <div class="subnav"><button>${T('health.tab.overview')}</button><button>${T('health.tab.services')}</button><button>${T('health.tab.extensions')}</button><button>${T('health.tab.log')}</button><button>${T('health.tab.cleanup')}</button></div>
     ${card('overview')}${card('services')}${card('extensions')}${card('log')}
     <div class="subpanel" data-p="cleanup"><div class="card" data-cleanup></div></div>`;
-  const q=s=>box.querySelector(s),body=k=>q(`[data-p="${k}"] [data-body]`),btn=q('[data-refresh]');
+  const q=s=>box.querySelector(s),body=k=>q(`[data-p="${k}"] [data-body]`),refreshBtn=q('[data-refresh]');
   const cleanupLoad=mountCleanup(q('[data-cleanup]'));
   const CLEANUP=4;let cleanupStale=true;
   const cleanupIfShown=()=>{if(cleanupStale&&q('[data-p="cleanup"]').classList.contains('on')){cleanupStale=false;return cleanupLoad()}};
@@ -1155,11 +1173,12 @@ function mountHealth(box){
       ?badge(o.recovery==='full'?T('ota.banner.title'):T('ota.banner.xoviTitle'),false)+`<br><span class="small">${(o.reasons||[]).map(r=>esc(T('ota.reason.'+r,{units:(o.missingUnits||[]).join(', ')}))).join('<br>')}</span>`
       :badge(T('health.ota.ok'),true);
     const home=d.home||{};
+    const xoviTxt=x.readable?xoviBadge(x.xovi):'<span class="small">—</span>';
     q('[data-at]').textContent=T('health.at',{time:fmtTime(d.at)});
     body('overview').innerHTML=`<div class="kv small">
       <b>${T('health.uptime')}</b><span>${d.uptimeSecs!=null?fmtUptime(d.uptimeSecs):'—'}</span>
       <b>xochitl</b><span>${badge(esc(xu.active||'?'),xu.active==='active')} <span title="${T('health.restartsTitle')}">${T('health.unit.restarts',{n:xu.nRestarts??'?'})}</span>${xu.pid?' · PID '+xu.pid:''}</span>
-      <b>${T('health.xovi')}</b><span>${x.readable?badge(x.xovi?T('manage.loaded.on'):T('manage.loaded.off'),!!x.xovi):'<span class="small">—</span>'}</span>
+      <b>${T('health.xovi')}</b><span>${xoviTxt}</span>
       <b>${T('health.home')}</b><span>${home.freeBytes!=null?T('health.homeVal',{free:fmtB(home.freeBytes),total:fmtB(home.totalBytes||0)}):'—'}</span>
       <b>${T('health.firmware')}</b><span>${fwTxt}</span>
       <b>${T('health.ota')}</b><span>${otaTxt}</span></div>`;
@@ -1176,7 +1195,7 @@ function mountHealth(box){
       ul.appendChild(el('li',{class:'stack'},[el('span',{html:`${esc(u.unit.replace(/\.service$/,''))} ${st}`}),el('span',{class:'small',html:bits.map(b=>`<span class="nw">${b}</span>`).join(' · ')})]))});
     // 扩展：徽章 title 在触屏上看不到，所以把"换了文件未重启 / 待换入"的解释直接写成小字放在各自下面。
     body('extensions').innerHTML=`<div class="kv small">
-      <b>${T('health.xovi')}</b><span>${x.readable?badge(x.xovi?T('manage.loaded.on'):T('manage.loaded.off'),!!x.xovi):'<span class="small">—</span>'}</span>
+      <b>${T('health.xovi')}</b><span>${xoviTxt}</span>
       <b>${T('health.extensions')}</b><span>${names(x.extensions)}</span></div>
       ${(x.deleted&&x.deleted.length)||(d.soPending&&d.soPending.length)?`
       <h3>${T('health.deleted')}</h3><p class="small">${T('health.deletedTitle')}</p>
@@ -1190,7 +1209,7 @@ function mountHealth(box){
   };
   /* 进这一屏（fresh=false）或点刷新（fresh=true）：健康数据现取；清理只在它正在前台时取，否则等第一次切过去。 */
   const load=async fresh=>{cleanupStale=true;await Promise.all([loadHealth(fresh),cleanupIfShown()])};
-  guardClick(btn,()=>load(true));
+  guardClick(refreshBtn,()=>load(true));
   return load;
 }
 function mountCleanup(box){
@@ -1337,13 +1356,15 @@ function renderManage(sec){sec.innerHTML=`
   const mtRefresh=mountModelPanel($('#modelcards',sec),'mind',T('manage.models.textTitle'),'✎');
   /* 基石 + 模块三态 + 系统增强开关：三个接口并行取，/api/enhance/status 只取一次（扩展加载状态在「基石」与
      「系统增强/实验室」两处都要用，原来各取一遍，每次都让网关扫一遍 /proc）。 */
-  const refresh=async()=>{
+  /* coalesce：开关模块后的延时刷新、服务注册表变化的 manage 事件、「全部开启/关闭」收尾几乎同时到，合成一轮（此前各发一遍 3 个请求，
+     其中 /api/enhance/status 每次都让网关扫一遍 /proc）。 */
+  const refresh=coalesce(async()=>{
     const [f,es,d]=await Promise.all([j('/api/foundation'),j('/api/enhance/status'),j('/api/manage')]);
     const inst=v=>badge(v?T('common.installed'):T('common.notInstalled'),v);
     const ld=(es.ok!==false&&es.loaded)||{},live=[...(ld.extensions||[]),...(ld.qmds||[])];
     $('#found',sec).innerHTML=f.ok===false?`<span>${esc(f.message)}</span>`:
       `<b>xovi</b><span>${inst(f.xovi)}</span><b>qt-resource-rebuilder</b><span>${inst(f.qrr)}</span>`
-      +`<b>${T('manage.loaded.xoviLive')}</b><span>${badge(ld.xovi?T('manage.loaded.on'):T('manage.loaded.off'),!!ld.xovi)}${live.length?' <span class="small">'+esc(live.join(' · '))+'</span>':''}</span>`;
+      +`<b>${T('manage.loaded.xoviLive')}</b><span>${xoviBadge(ld.xovi)}${live.length?' <span class="small">'+esc(live.join(' · '))+'</span>':''}</span>`;
     const ul=$('#mods',sec);ul.innerHTML='';(d.modules||[]).forEach(m=>{
       const [state,cls]=!m.installed?[T('common.notInstalled'),'off']:m.running?[T('manage.modules.state.on'),'on']:[T('manage.modules.state.installedOff'),''];
       const lk='manage.modules.label.'+m.seg,label=I18N[lk]?T(lk):m.label; // 语言包缺这个 seg 时兜底用后端 Rust 侧的中文 label（T() 缺 key 返回 key 本身，不能靠 ||）
@@ -1351,11 +1372,14 @@ function renderManage(sec){sec.innerHTML=`
       const right=el('span',{style:'display:flex;gap:.4em;align-items:center'});
       if(m.installed){
         const t=btn(m.running?T('manage.modules.turnOff'):T('manage.modules.turnOn'),async()=>{await modAct(m.seg,m.running?'stop':'start',true);setTimeout(refresh,600)});
-        const u=btn(T('manage.modules.uninstallBtn'),async()=>{if(await confirmDialog(T('manage.modules.confirmUninstall',{label}))){if((await modAct(m.seg,'uninstall',true)).ok!==false)toast(T('manage.modules.uninstalled',{label}),'ok');setTimeout(()=>location.reload(),800)}});
+        // 成功才整页重载（tab 集合变了）；失败时 sendT 已弹出原因，此前照样 0.8 秒后重载，原因一闪就没了。
+        const u=btn(T('manage.modules.uninstallBtn'),async()=>{if(!await confirmDialog(T('manage.modules.confirmUninstall',{label})))return;
+          if((await modAct(m.seg,'uninstall',true)).ok===false){refresh();return}
+          toast(T('manage.modules.uninstalled',{label}),'ok');setTimeout(()=>location.reload(),800)});
         right.append(t,u);
       }else right.appendChild(el('span',{class:'small',html:T('manage.modules.installCmd',{only:esc(m.only)})}));
       ul.appendChild(el('li',{style:'flex-wrap:wrap'},[left,right]))});
-    if(es.ok!==false)await erApply(es)};
+    if(es.ok!==false)await erApply(es)});
   guardClick($('#allon',sec),async()=>{const d=await j('/api/manage');for(const m of (d.modules||[]))if(m.installed&&!m.running)await modAct(m.seg,'start');refresh()});
   guardClick($('#alloff',sec),async()=>{if(!await confirmDialog(T('manage.modules.confirmAllOff')))return;const d=await j('/api/manage');for(const m of (d.modules||[]))if(m.installed&&m.running)await modAct(m.seg,'stop');refresh()});
   /* 系统增强/实验室（Track 3，2026-09-09；实验室 2026-09-10 加）：CJK 画线吸附/翻页/
@@ -1406,10 +1430,9 @@ function renderManage(sec){sec.innerHTML=`
   langsel.onchange=()=>{LS.set('lang',langsel.value);location.reload()};
 
   const d=await j('/api/services');
-  // service→seg：跟 gateway/src/manage.rs::MODULES 保持同一份事实源，不再在前端手搓映射（拿不到就退回
-  // 用服务名本身当 area，跟下面两处 `AREA[s.name]||s.name` 的 fallback 语义一致，不阻塞页面渲染）。
-  let AREA={};
-  try{AREA=Object.fromEntries((await j('/api/manage')).modules.map(m=>[m.service,m.seg]))}catch{}
+  // service→seg：网关从 manage.rs::MODULES 派生、随服务列表带回（没有 seg 就退回用服务名本身当 area，
+  // 跟下面两处 `AREA[s.name]||s.name` 的 fallback 语义一致）。
+  const AREA=Object.fromEntries((d.services||[]).filter(s=>s.seg).map(s=>[s.name,s.seg]));
   const svcs=(d.services||[]).filter(s=>s.ui&&TABS[s.name]).sort((a,b)=>a.ui.order-b.ui.order);
   /* 首层标签顺序（2026-09-10 用户重排）：传书 / 笔记 / 其他 / 管理。笔记单独占位，xochitl(font-serve)/
      壁纸(wallpaper-serve)——目前 svcs 里除笔记外还带 ui.order 的候选——一律降一级包进「其他」（见 renderOther）。 */
@@ -1427,7 +1450,7 @@ function renderManage(sec){sec.innerHTML=`
       if(!rendered){rendered=true;render(sec)}else if(sec.refresh)refreshSec(sec)};
     nav.appendChild(b);main.appendChild(sec);if(first)b.onclick();return sec};
   addTab(T('tab.transfer'),renderTransfer,true,'books');          // 总入口（入库｜母版库），固定第一位（book-serve 不在时列表里提示去管理页开）
-  noteSvc.forEach((s)=>addTab(TABS[s.name].titleKey?T(TABS[s.name].titleKey):TABS[s.name].title,TABS[s.name].render,false,AREA[s.name]||s.name));
+  noteSvc.forEach((s)=>addTab(T(TABS[s.name].titleKey),TABS[s.name].render,false,AREA[s.name]||s.name));
   if(otherSvcs.length){
     const otherSec=addTab(T('tab.other'),(sec)=>renderOther(sec,otherSvcs,n=>AREA[n]||n),false,'other');
     // fonts/wallpapers 的 SSE 事件都指向同一个「其他」section，由它的 onEvent 只刷发事件的那块子面板
@@ -1444,6 +1467,14 @@ function renderManage(sec){sec.innerHTML=`
   const liveDot=el('span',{id:'live',title:T('common.eventStream'),text:'●'});liveDot.style.cssText='margin-left:.5em;font-size:.8em;color:var(--bad)';$('#hdr').appendChild(liveDot);
   const activeSec=()=>[...main.children].find(x=>x.classList.contains('on'));
   let activeStale=false,opened=false,es=null,hiddenTimer=0;
+  /* 服务集合变了（装/卸/启停带来 tab 增减）就整页重载。只在页面可见时查：隐藏时只记 `svcStale`，变可见再查一次——
+     此前隐藏时每个 manage 事件都照样去取 /api/services；而隐藏超过 60 秒 SSE 断开期间漏掉的 manage 事件，重连后也没人补查，
+     tab 列表会一直停在旧的服务集合上。 */
+  let svcStale=false;
+  const checkServices=async()=>{if(document.hidden){svcStale=true;return false}svcStale=false;
+    const d=await j('/api/services');if(d.ok===false)return false;
+    const k=(d.services||[]).filter(s=>s.ui&&TABS[s.name]).map(s=>s.name).join(',');
+    if(k!==svcKey){location.reload();return true}return false};
   /* 心跳 ?ka=60：默认 20 秒一帧空注释，只是为了让中间代理不掐空闲连接；网关直连浏览器用不着这么勤（设备上每帧都是一次唤醒+TLS 写）。
      页面隐藏超过 60 秒就**主动断开** SSE（锁屏/切走的标签页不再让设备为它保活），重新可见时重连——重连成功的 onopen
      本来就会补刷当前 tab（见上），断开期间漏掉的事件不丢；别的 tab 切过去时无条件刷新（addTab 的点击处理）。
@@ -1461,12 +1492,13 @@ function renderManage(sec){sec.innerHTML=`
   const openEs=()=>{clearTimeout(retryTimer);
     const src=es=new EventSource('/api/events?ka=60');
     es.onopen=()=>{retryMs=0;liveDot.style.color='var(--ok)';liveDot.title=T('common.eventStreamConnected');
-      if(opened){if(document.hidden)activeStale=true;else{activeStale=false;const s=activeSec();if(s)refreshSec(s)}}opened=true};
+      // 重连（非首次）：断线期间的事件没人推给我们——补查服务集合（可能整页重载）、补刷当前 tab。
+      if(opened){svcStale=true;if(document.hidden)activeStale=true;else(async()=>{if(await checkServices())return;activeStale=false;const s=activeSec();if(s)refreshSec(s)})()}opened=true};
     es.onerror=()=>{liveDot.style.color='var(--bad)';liveDot.title=T('common.eventStreamReconnecting');
       if(src.readyState===2&&es===src){closeEs();reopenLater()}}; // 2 = EventSource.CLOSED：浏览器不会再自己重连
     es.onmessage=async(e)=>{let ev;try{ev=JSON.parse(e.data)}catch{return}
       if(ev.kind==='agent-failed'){showAgentFailBanner();return} // 全站横幅，与哪个 tab 无关
-      if(ev.area==='manage'){const d=await j('/api/services');const k=(d.services||[]).filter(s=>s.ui&&TABS[s.name]).map(s=>s.name).join(',');if(k!==svcKey){location.reload();return}}
+      if(ev.area==='manage'&&await checkServices())return;
       const sec=secByArea[ev.area];if(!sec)return;
       if(!sec.classList.contains('on'))return;
       if(document.hidden)activeStale=true;
@@ -1476,8 +1508,9 @@ function renderManage(sec){sec.innerHTML=`
   document.addEventListener('visibilitychange',()=>{
     if(document.hidden){clearTimeout(hiddenTimer);hiddenTimer=setTimeout(closeEs,HIDDEN_CLOSE_MS);return}
     clearTimeout(hiddenTimer);
-    if(!es){retryMs=0;openEs();return} // 重连后的 onopen 负责补刷当前 tab
-    if(activeStale){activeStale=false;const s=activeSec();if(s)refreshSec(s)}});
+    if(!es){retryMs=0;openEs();return} // 重连后的 onopen 负责补查服务集合、补刷当前 tab
+    (async()=>{if(svcStale&&await checkServices())return;
+      if(activeStale){activeStale=false;const s=activeSec();if(s)refreshSec(s)}})()});
   openEs();
   if(document.hidden)hiddenTimer=setTimeout(closeEs,HIDDEN_CLOSE_MS); // 页面是在后台标签页里打开的
 })();

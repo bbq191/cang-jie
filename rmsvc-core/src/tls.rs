@@ -105,14 +105,18 @@ fn leaf_params(sans: Vec<String>) -> Result<CertificateParams, rcgen::Error> {
     Ok(p)
 }
 
+/// 私钥落盘：原子写（tmp→rename），临时文件**创建时**就是 0600。此前 `fs::write` 先按缺省 0644 落出来再 chmod，
+/// 中间那段窗口私钥人人可读；非原子写在首启生成途中断电/被杀会留下半截 `ca.key`，之后每次启动都读不出私钥、
+/// 网关起不来，只能手工删文件（2026-10-09 第六轮审计）。
 fn write_private(p: &Path, data: &[u8]) -> Result<(), String> {
-    std::fs::write(p, data).map_err(|e| format!("写 {}: {e}", p.display()))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o600));
-    }
+    crate::fs::write_atomic_mode(p, data, Some(0o600)).map_err(|e| format!("写 {}: {e}", p.display()))?;
+    crate::fs::set_mode(p, 0o600);
     Ok(())
+}
+
+/// 公开内容（证书、meta）落盘：同样原子写，不留半截文件。
+fn write_public(p: &Path, data: &[u8]) -> Result<(), String> {
+    crate::fs::write_atomic(p, data).map_err(|e| format!("写 {}: {e}", p.display()))
 }
 
 /// 默认 SAN（设备常用地址）+ 调用方追加（当前 IP、mDNS 名）。
@@ -154,7 +158,7 @@ pub fn ensure_ca_signed(dir: &Path, extra_sans: &[String]) -> Result<TlsPem, Str
         _ => {
             let kp = KeyPair::generate().map_err(|e| format!("生成 CA 密钥: {e}"))?;
             let cert = ca_params().and_then(|p| p.self_signed(&kp)).map_err(|e| format!("生成 CA: {e}"))?;
-            std::fs::write(&ca_pem_p, cert.pem()).map_err(|e| e.to_string())?;
+            write_public(&ca_pem_p, cert.pem().as_bytes())?;
             write_private(&ca_key_p, kp.serialize_pem().as_bytes())?;
             let _ = std::fs::remove_file(&cert_p); // 旧叶作废
             kp
@@ -180,9 +184,12 @@ pub fn ensure_ca_signed(dir: &Path, extra_sans: &[String]) -> Result<TlsPem, Str
     let mut chain = leaf.pem().into_bytes();
     chain.extend_from_slice(&ca_pem);
     let key = leaf_key.serialize_pem().into_bytes();
-    std::fs::write(&cert_p, &chain).map_err(|e| e.to_string())?;
+    // 先作废 meta 再换证书/私钥、最后写新 meta：中途被打断（只换了证书没换私钥）时下次启动 meta 不在、必定重签，
+    // 不会把一对不匹配的证书/私钥当成可复用（那样 TLS 起不来，要等到临期才自愈）。
+    let _ = std::fs::remove_file(&meta_p);
+    write_public(&cert_p, &chain)?;
     write_private(&key_p, &key)?;
-    std::fs::write(&meta_p, want_meta).map_err(|e| e.to_string())?;
+    write_public(&meta_p, want_meta.as_bytes())?;
     Ok(TlsPem { cert: chain, key })
 }
 
@@ -208,6 +215,24 @@ mod tests {
         assert_ne!(a.cert, c.cert, "SAN 变化换叶");
         assert_eq!(ca_pem(t.path()).unwrap(), ca1, "CA 不变");
         assert!(std::str::from_utf8(&c.cert).unwrap().ends_with(std::str::from_utf8(&ca1).unwrap()));
+    }
+    /// 私钥 0600、不留临时文件；叶证书换到一半被打断（meta 已作废）时下次必定重签，不复用不匹配的一对。
+    #[test]
+    fn private_keys_are_0600_and_interrupted_rotation_resigns() {
+        use std::os::unix::fs::PermissionsExt;
+        let t = tempfile::tempdir().unwrap();
+        let a = ensure_ca_signed(t.path(), &[]).unwrap();
+        for f in ["ca.key", "key.pem"] {
+            assert_eq!(std::fs::metadata(t.path().join(f)).unwrap().permissions().mode() & 0o777, 0o600, "{f}");
+        }
+        let names: Vec<String> = std::fs::read_dir(t.path()).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        assert!(names.iter().all(|n| !n.ends_with(".tmp")), "{names:?}");
+        // 模拟"作废 meta、写了新证书、私钥还没换"就断电
+        std::fs::remove_file(t.path().join("cert.meta")).unwrap();
+        std::fs::write(t.path().join("cert.pem"), b"half-rotated").unwrap();
+        let b = ensure_ca_signed(t.path(), &[]).unwrap();
+        assert_ne!(b.cert, a.cert);
+        assert!(std::str::from_utf8(&b.cert).unwrap().starts_with("-----BEGIN CERTIFICATE"), "重签出完整证书链");
     }
     /// PEM 里的全部证书（DER）。
     fn ders(pem: &[u8]) -> Vec<Vec<u8>> {

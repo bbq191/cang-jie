@@ -340,6 +340,64 @@ static void test_patch_target_rewrites_bytes_and_builds_stub(void) {
     /* stub 本身按设计"不使用后不用释放"（见头注），测试也不 munmap 它，跟生产行为一致。 */
 }
 
+/* 测试用：/proc/self/maps 里 addr 所在映射的权限串（"r-xp" 之类），查不到返回空串。 */
+static void perms_of(const void *addr, char out[5]) {
+    out[0] = 0;
+    FILE *f = fopen("/proc/self/maps", "r");
+    if (!f) return;
+    char line[512];
+    while (fgets(line, sizeof line, f)) {
+        unsigned long lo, hi;
+        char p[5];
+        if (sscanf(line, "%lx-%lx %4s", &lo, &hi, p) == 3 && (uintptr_t)addr >= lo && (uintptr_t)addr < hi) {
+            memcpy(out, p, 5);
+            break;
+        }
+    }
+    fclose(f);
+}
+
+static void test_patch_target_restores_rx(void) {
+    /* 原本 r-x 的代码页：写完跳转后应恢复 r-x（不再留 rwx），字节照样改好。目标横跨两页时两页都恢复。 */
+    long page = sysconf(_SC_PAGESIZE);
+    uint8_t *m = mmap(NULL, (size_t)page * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    CHECK(m != MAP_FAILED);
+    if (m == MAP_FAILED) return;
+    uint8_t *one = m + 64, *cross = m + page - 8;   /* 一个在页内，一个跨页 */
+    memset(m, 0xA5, (size_t)page * 2);
+    CHECK(mprotect(m, (size_t)page * 2, PROT_READ | PROT_EXEC) == 0);
+    void *handler = (void *)(uintptr_t)0x00005555deadbeefULL;
+    uint32_t expect[5];
+    cj_build_far_jump(expect, handler);
+    char p[5];
+    void *stub = NULL;
+    CHECK(cj_patch_target(one, handler, CJ_FAR_JUMP_LEN, "test", &stub) == 1);
+    CHECK(memcmp(one, expect, CJ_FAR_JUMP_LEN) == 0);
+    perms_of(one, p);
+    CHECK(strncmp(p, "r-x", 3) == 0);
+    CHECK(cj_patch_target(cross, handler, CJ_FAR_JUMP_LEN, "test", &stub) == 1);
+    CHECK(memcmp(cross, expect, CJ_FAR_JUMP_LEN) == 0);
+    perms_of(m, p);
+    CHECK(strncmp(p, "r-x", 3) == 0);
+    perms_of(m + page, p);
+    CHECK(strncmp(p, "r-x", 3) == 0);
+    munmap(m, (size_t)page * 2);
+}
+
+static void test_patch_target_keeps_existing_rwx(void) {
+    /* 原本就 rwx（例如别的扩展先改过、留着可写）：不替它关掉写权限。 */
+    long page = sysconf(_SC_PAGESIZE);
+    uint8_t *m = mmap(NULL, (size_t)page, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    CHECK(m != MAP_FAILED);
+    if (m == MAP_FAILED) return;
+    void *stub = NULL;
+    char p[5];
+    CHECK(cj_patch_target(m + 128, (void *)(uintptr_t)0x1000, CJ_FAR_JUMP_LEN, "test", &stub) == 1);
+    perms_of(m, p);
+    CHECK(strncmp(p, "rwx", 3) == 0);
+    munmap(m, (size_t)page);
+}
+
 static void test_patch_target_invalid_address_fails_safely(void) {
     /* 不是任何有效映射的地址——mprotect 该失败，函数该返回 0 且不崩溃（safe mode）。 */
     void *bogus = (void *)(uintptr_t)0x1; /* 未映射、非页对齐 */
@@ -371,6 +429,8 @@ int main(void) {
 
     test_patch_target_rewrites_bytes_and_builds_stub();
     test_patch_target_invalid_address_fails_safely();
+    test_patch_target_restores_rx();
+    test_patch_target_keeps_existing_rwx();
 
     if (failures == 0) {
         printf("OK: 全部通过\n");

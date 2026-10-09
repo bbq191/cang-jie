@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="560" viewBox="0 0 1000 560" font-family="Noto Sans CJK SC, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="560" viewBox="0 0 1000 560" font-family="Noto Sans SC, Noto Sans CJK SC, sans-serif">
 <rect width="1000" height="560" fill="#ffffff"/>
 <text x="500" y="30" text-anchor="middle" font-size="19" font-weight="bold" fill="#1f2937">设备开机时序（2026-09-24 真机重启实测）</text>
 <text x="500" y="52" text-anchor="middle" font-size="12.5" fill="#6b7280">journalctl -b -o short-monotonic 与 systemctl 的启动时间戳；横轴 = 开机后秒数</text>

@@ -152,6 +152,79 @@ pub fn unique_document_name(dir: &Path, folder: &str, base_name: &str) -> String
     }
 }
 
+/// `<uuid>.metadata` 的强类型视图（只取各服务真用到的字段；其余字段 xochitl 自己管，这里不碰）。
+/// 各服务此前各写 `v.get("type").and_then(as_str).unwrap_or("")` 再重判一遍"在不在回收站/删没删"。
+#[derive(serde::Deserialize, Debug, Default, Clone, PartialEq)]
+#[serde(default)]
+pub struct Metadata {
+    #[serde(rename = "visibleName", deserialize_with = "null_default")]
+    pub visible_name: String,
+    /// `DocumentType` / `CollectionType`。
+    #[serde(rename = "type", deserialize_with = "null_default")]
+    pub kind: String,
+    /// 所在文件夹 uuid（空串＝根，`trash`＝回收站）。
+    #[serde(deserialize_with = "null_default")]
+    pub parent: String,
+    #[serde(deserialize_with = "null_default")]
+    pub deleted: bool,
+    /// xochitl 写成毫秒字符串，也认数字；用 [`Metadata::created_ms`] 取。
+    #[serde(rename = "createdTime")]
+    pub created_time: serde_json::Value,
+}
+
+/// 字段写成 JSON `null` 时按缺省值处理（迁移前各服务手写的 `as_str().unwrap_or("")` 就是这样认的；
+/// 不然一个 `"parent": null` 会让整条 `.metadata` 解析失败）。
+fn null_default<'de, D, T>(d: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de> + Default,
+{
+    Ok(<Option<T> as serde::Deserialize>::deserialize(d)?.unwrap_or_default())
+}
+
+impl Metadata {
+    /// 非回收站、未删除（与 [`live_entries`] 同一判据）。
+    pub fn is_live(&self) -> bool {
+        self.parent != "trash" && !self.deleted
+    }
+    pub fn is_document(&self) -> bool {
+        self.kind == "DocumentType"
+    }
+    pub fn is_folder(&self) -> bool {
+        self.kind == "CollectionType"
+    }
+    pub fn is_live_document(&self) -> bool {
+        self.is_document() && self.is_live()
+    }
+    /// `createdTime`（毫秒）；缺或解析不了 → 0。
+    pub fn created_ms(&self) -> u64 {
+        self.created_time.as_str().and_then(|s| s.parse().ok()).or_else(|| self.created_time.as_u64()).unwrap_or(0)
+    }
+}
+
+/// 读一份 `<uuid>.metadata` 成 [`Metadata`]，**区分"没有"与"读不了"**：文件不在 → `Ok(None)`（书被彻底删了）；
+/// 读失败/解析失败 → `Err`（可能正被 xochitl 改写，调用方应跳过这次、别当成书没了）。调用方自己校验 uuid 形状。
+pub fn read_meta(dir: &Path, uuid: &str) -> Result<Option<Metadata>, String> {
+    let p = dir.join(format!("{uuid}.metadata"));
+    let text = match std::fs::read_to_string(&p) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("读 {} 失败: {e}", p.display())),
+    };
+    serde_json::from_str(&text).map(Some).map_err(|e| format!("{} 解析失败: {e}", p.display()))
+}
+
+/// `<uuid>.content` 的 `fileType`（`epub`/`pdf`/`notebook`）；流式只取这一个字段，不把整张页 id 表解析进内存。
+pub fn file_type(dir: &Path, uuid: &str) -> Option<String> {
+    #[derive(serde::Deserialize)]
+    struct OnlyFileType {
+        #[serde(rename = "fileType", default)]
+        file_type: String,
+    }
+    let f = std::fs::File::open(dir.join(format!("{uuid}.content"))).ok()?;
+    serde_json::from_reader::<_, OnlyFileType>(std::io::BufReader::new(f)).ok().map(|c| c.file_type).filter(|t| !t.is_empty())
+}
+
 /// 书库里一份文档（非文件夹、非回收站）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DocInfo {
@@ -189,6 +262,33 @@ pub fn page_count(dir: &Path, uuid: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn metadata_null_fields_fall_back_to_default() {
+        let m: Metadata = serde_json::from_str(r#"{"visibleName":"书","type":"DocumentType","parent":null,"deleted":null}"#).unwrap();
+        assert_eq!(m.parent, "");
+        assert!(!m.deleted);
+        assert!(m.is_live_document());
+    }
+
+    #[test]
+    fn typed_metadata_and_file_type() {
+        let t = tempfile::tempdir().unwrap();
+        let d = t.path();
+        std::fs::write(d.join("a.metadata"), r#"{"visibleName":"书","type":"DocumentType","parent":"","createdTime":"1700000000123","extra":1}"#).unwrap();
+        std::fs::write(d.join("b.metadata"), r#"{"visibleName":"夹","type":"CollectionType","parent":"trash","createdTime":5}"#).unwrap();
+        std::fs::write(d.join("c.metadata"), "{ half").unwrap();
+        std::fs::write(d.join("a.content"), r#"{"fileType":"epub","pages":["p1","p2"]}"#).unwrap();
+        let a = read_meta(d, "a").unwrap().unwrap();
+        assert!(a.is_live_document() && !a.is_folder());
+        assert_eq!((a.visible_name.as_str(), a.created_ms()), ("书", 1_700_000_000_123));
+        let b = read_meta(d, "b").unwrap().unwrap();
+        assert!(b.is_folder() && !b.is_live() && b.created_ms() == 5);
+        assert_eq!(read_meta(d, "missing").unwrap(), None, "没有 → Ok(None)");
+        assert!(read_meta(d, "c").is_err(), "半截 → Err，不当成没有");
+        assert_eq!(file_type(d, "a").as_deref(), Some("epub"));
+        assert_eq!(file_type(d, "b"), None);
+    }
 
     #[test]
     fn uuid_shape_accepts_real_uuid_rejects_traversal() {

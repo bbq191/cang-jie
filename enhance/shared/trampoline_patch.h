@@ -14,5 +14,8 @@
  * 失败（mmap/mprotect 失败）返回 0 且已经打印过一行 `[tag] ... 放弃 hook（safe mode）` 到
  * stderr，调用方应放弃这个 hook（这台设备/这个固件版本安全放弃，不崩、不重试）。成功返回 1，
  * `*out_stub` 是新分配的可执行内存（不使用后不用释放——生命周期等于插件的进程生命周期）。
+ *
+ * 2026-10-09：目标页原本是 r-x（只读可执行）时，写完跳转后恢复成 r-x，不再一直留着 rwx；原本就可写、
+ * 或横跨的两页权限不一致、或 /proc/self/maps 查不到时保持 rwx（旧行为）。
  */
 int cj_patch_target(void *target_addr, void *handler, size_t patch_len, const char *tag, void **out_stub);

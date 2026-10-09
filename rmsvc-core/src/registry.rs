@@ -156,6 +156,21 @@ impl SvcClient {
         let resp = self.agent.get(&format!("{}{path}", self.base()?)).call().map_err(|e| self.prefixed("GET", path, Self::to_svc_error(e)))?;
         serde_json::from_reader(resp.into_reader()).map_err(|e| format!("{service} {path} 应答不是 JSON: {e}"))
     }
+    /// GET JSON 并反序列化成 `T`；形状不对的错误带 `<服务> <路径> 应答形状不对:` 前缀。
+    pub fn get_typed<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, String> {
+        serde_json::from_value(self.get_json(path)?).map_err(|e| format!("{} {path} 应答形状不对: {e}", self.service))
+    }
+    /// GET 原始字节（裁图这类非 JSON 应答），最多读 `max` 字节（超了报错，不截断）；非 2xx 带对方错误体。
+    pub fn get_bytes(&self, path: &str, max: u64) -> Result<Vec<u8>, String> {
+        use std::io::Read;
+        let resp = self.agent.get(&format!("{}{path}", self.base()?)).call().map_err(|e| self.prefixed("GET", path, Self::to_svc_error(e)))?;
+        let mut v = Vec::new();
+        resp.into_reader().take(max + 1).read_to_end(&mut v).map_err(|e| format!("{} GET {path}: {e}", self.service))?;
+        if v.len() as u64 > max {
+            return Err(format!("{} GET {path}: 应答超过 {max} 字节上限", self.service));
+        }
+        Ok(v)
+    }
     /// 响应体本身通常不需要（调用方要么忽略、要么自己按需再解析），失败时把状态错误带上。
     pub fn post_json(&self, path: &str, body: &serde_json::Value) -> Result<(), String> {
         self.post_json_value(path, body).map(|_| ())
@@ -273,8 +288,19 @@ mod tests {
         let mut k = info("plain-svc", 3, me);
         k.port = one_shot_server(500, "boom");
         let _g3 = register(&p, &k).unwrap();
-        let e = SvcClient::new(p, "plain-svc", 5).post_json("/x", &serde_json::json!({})).unwrap_err();
+        let e = SvcClient::new(p.clone(), "plain-svc", 5).post_json("/x", &serde_json::json!({})).unwrap_err();
         assert!(e.contains("HTTP 500"), "对方体不是 JSON 时回落状态码: {e}");
+        // get_typed / get_bytes
+        #[derive(serde::Deserialize)]
+        struct Q {
+            queued: u32,
+        }
+        let ok = SvcClient::new(p.clone(), "ok-svc", 5);
+        assert_eq!(ok.get_typed::<Q>("/x").unwrap().queued, 3);
+        assert!(ok.get_typed::<Vec<u8>>("/x").unwrap_err().contains("形状不对"));
+        assert_eq!(ok.get_bytes("/x", 1024).unwrap(), br#"{"queued":3}"#);
+        assert!(ok.get_bytes("/x", 4).unwrap_err().contains("上限"));
+        assert!(SvcClient::new(p, "bad-svc", 5).get_bytes("/x", 1024).unwrap_err().contains("这本书正在处理中"));
     }
 
     #[test]

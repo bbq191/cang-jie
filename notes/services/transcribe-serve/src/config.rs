@@ -12,6 +12,7 @@
 //! 批量循环）。模型 id 核实来源、豆包为什么不进预置表、花费为什么不做官方定价表，这几条设计理由见
 //! `vendorcfg` 的 crate 文档，不在这重复。
 use serde::{Deserialize, Serialize};
+use rmsvc_core::http::JsonBody;
 use std::collections::BTreeMap;
 use vendorcfg::{Preset, Price, VendorConfig, DASHSCOPE, DEEPSEEK, GEMINI, OPENAI};
 
@@ -125,17 +126,18 @@ impl TranscribeConfig {
     /// `model`/`baseUrl` 才生效，写进 `customModel`/`customBaseUrl`。`price:{input,output}` 存到当前
     /// 预置名下。共享部分见 `vendorcfg::apply_common`，这里只补这条服务独有的字段
     /// （`backend`/节流四件套/`prompt`）。
-    pub fn apply(&mut self, j: &serde_json::Value) -> Result<(), String> {
-        if let Some(v) = j.get("backend").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()) {
-            self.backend = v.to_string();
+    pub fn apply(&mut self, j: &JsonBody) -> Result<(), String> {
+        let backend = j.str_or("backend", "");
+        if !backend.is_empty() {
+            self.backend = backend.to_string();
         }
-        vendorcfg::apply_common(PRESETS, j, &mut self.preset, &mut self.custom_model, &mut self.custom_base_url, &mut self.keys, &mut self.prices)?;
-        if let Some(v) = j.get("timeoutSecs").and_then(|v| v.as_u64()) { self.timeout_secs = v.clamp(5, 600); }
-        if let Some(v) = j.get("maxPerRun").and_then(|v| v.as_u64()) { self.max_per_run = (v as usize).clamp(1, 500); }
-        if let Some(v) = j.get("pauseMs").and_then(|v| v.as_u64()) { self.pause_ms = v.min(60_000); }
-        if let Some(v) = j.get("auto").and_then(|v| v.as_bool()) { self.auto = v; }
-        if let Some(v) = j.get("maxAttempts").and_then(|v| v.as_u64()) { self.max_attempts = (v as u32).clamp(1, 20); }
-        if let Some(v) = j.get("prompt") {
+        vendorcfg::apply_common(PRESETS, &j.0, &mut self.preset, &mut self.custom_model, &mut self.custom_base_url, &mut self.keys, &mut self.prices)?;
+        if let Some(v) = j.opt_u64("timeoutSecs") { self.timeout_secs = v.clamp(5, 600); }
+        if let Some(v) = j.opt_u64("maxPerRun") { self.max_per_run = (v as usize).clamp(1, 500); }
+        if let Some(v) = j.opt_u64("pauseMs") { self.pause_ms = v.min(60_000); }
+        if let Some(v) = j.opt_bool("auto") { self.auto = v; }
+        if let Some(v) = j.opt_u64("maxAttempts") { self.max_attempts = (v as u32).clamp(1, 20); }
+        if let Some(v) = j.0.get("prompt") {
             self.prompt = v.as_str().unwrap_or("").trim().to_string();
         }
         Ok(())
@@ -166,23 +168,23 @@ mod tests {
     fn switching_provider_does_not_leak_other_providers_key_and_env_fallback_is_dashscope_only() {
         let mut c = TranscribeConfig::default();
         c.keys.insert("dashscope".into(), "ds-key".into());
-        c.apply(&serde_json::json!({"preset": "gpt-5.6-terra"})).unwrap();
+        c.apply(&JsonBody(serde_json::json!({"preset": "gpt-5.6-terra"}))).unwrap();
         assert_eq!(c.provider(), "openai");
         assert_eq!(c.key_with_env(Some("env-should-not-apply".into())), None, "切到 OpenAI 后既没有 openai 的 key，也不该借用 DashScope 的环境变量兜底");
-        c.apply(&serde_json::json!({"apiKey": "oa-key"})).unwrap();
+        c.apply(&JsonBody(serde_json::json!({"apiKey": "oa-key"}))).unwrap();
         assert_eq!(c.key(), Some("oa-key".into()));
-        c.apply(&serde_json::json!({"preset": "qwen-vl-max"})).unwrap();
+        c.apply(&JsonBody(serde_json::json!({"preset": "qwen-vl-max"}))).unwrap();
         assert_eq!(c.key(), Some("ds-key".into()), "切回 DashScope 系预置，之前存的 key 还在，不用重新粘贴");
     }
 
     #[test]
     fn apply_updates_only_given_fields() {
         let mut c = TranscribeConfig::default();
-        c.apply(&serde_json::json!({"apiKey": "k1", "maxPerRun": 5})).unwrap();
+        c.apply(&JsonBody(serde_json::json!({"apiKey": "k1", "maxPerRun": 5}))).unwrap();
         assert_eq!((c.key().as_deref(), c.max_per_run), (Some("k1"), 5));
-        c.apply(&serde_json::json!({"apiKey": ""})).unwrap();
+        c.apply(&JsonBody(serde_json::json!({"apiKey": ""}))).unwrap();
         assert_eq!(c.key().as_deref(), Some("k1"), "空 apiKey 不改");
-        c.apply(&serde_json::json!({"clearKey": true})).unwrap();
+        c.apply(&JsonBody(serde_json::json!({"clearKey": true}))).unwrap();
         assert!(c.key().is_none());
         assert_eq!(c.timeout_secs, 60, "没给的字段不动");
     }
@@ -191,9 +193,9 @@ mod tests {
     fn preset_selection_sets_model_and_base_url_atomically_and_rejects_unknown() {
         let mut c = TranscribeConfig::default();
         assert_eq!(c.preset, "qwen3-vl-plus", "缺省值就是第一个预置");
-        c.apply(&serde_json::json!({"preset": "qwen-vl-max"})).unwrap();
+        c.apply(&JsonBody(serde_json::json!({"preset": "qwen-vl-max"}))).unwrap();
         assert_eq!((c.model(), c.base_url()), ("qwen-vl-max", "https://dashscope.aliyuncs.com/compatible-mode/v1"));
-        let err = c.apply(&serde_json::json!({"preset": "gpt-4o"})).unwrap_err();
+        let err = c.apply(&JsonBody(serde_json::json!({"preset": "gpt-4o"}))).unwrap_err();
         assert!(err.contains("未知的模型预置"), "{err}");
         assert_eq!(c.preset, "qwen-vl-max", "拒绝后不改动");
     }
@@ -201,9 +203,9 @@ mod tests {
     #[test]
     fn custom_preset_leaves_model_and_base_url_to_the_old_manual_fields() {
         let mut c = TranscribeConfig::default();
-        c.apply(&serde_json::json!({"preset": "custom", "model": "my-model", "baseUrl": "https://x.example/v1"})).unwrap();
+        c.apply(&JsonBody(serde_json::json!({"preset": "custom", "model": "my-model", "baseUrl": "https://x.example/v1"}))).unwrap();
         assert_eq!((c.model(), c.base_url()), ("my-model", "https://x.example/v1"));
-        assert!(c.apply(&serde_json::json!({"baseUrl": "dashscope"})).is_err());
+        assert!(c.apply(&JsonBody(serde_json::json!({"baseUrl": "dashscope"}))).is_err());
     }
 
     #[test]
@@ -220,9 +222,9 @@ mod tests {
     fn price_is_user_entered_per_model_and_defaults_to_zero() {
         let mut c = TranscribeConfig::default();
         assert_eq!(c.price(), Price::default(), "没填过就是 0，不计费");
-        c.apply(&serde_json::json!({"price": {"input": 0.01, "output": 0.03}})).unwrap();
+        c.apply(&JsonBody(serde_json::json!({"price": {"input": 0.01, "output": 0.03}}))).unwrap();
         assert_eq!(c.price(), Price { input_per1k: 0.01, output_per1k: 0.03 });
-        c.apply(&serde_json::json!({"preset": "gpt-5.6-terra"})).unwrap();
+        c.apply(&JsonBody(serde_json::json!({"preset": "gpt-5.6-terra"}))).unwrap();
         assert_eq!(c.price(), Price::default(), "换了个模型，价格各记各的，不共用");
     }
 
@@ -230,7 +232,7 @@ mod tests {
     fn usage_key_groups_by_preset_or_custom_model() {
         let mut c = TranscribeConfig::default();
         assert_eq!(c.usage_key(), "qwen3-vl-plus");
-        c.apply(&serde_json::json!({"preset": "custom", "model": "foo", "baseUrl": "https://x.example/v1"})).unwrap();
+        c.apply(&JsonBody(serde_json::json!({"preset": "custom", "model": "foo", "baseUrl": "https://x.example/v1"}))).unwrap();
         assert_eq!(c.usage_key(), "custom:foo");
     }
 

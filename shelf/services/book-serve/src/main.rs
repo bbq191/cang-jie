@@ -12,7 +12,6 @@ mod mkdir;
 mod ops;
 mod pending_queue;
 mod render_check;
-mod scratch;
 mod service_state;
 mod sidecar;
 mod spool;
@@ -69,8 +68,5 @@ fn main() {
         });
     }
     println!("[book-serve] 母版库 {}；xochitl {}", st.staging.dir().display(), st.cfg.xochitl_host);
-    if let Err(e) = service::run(&SPEC, &bind, &paths, api::router(st)) {
-        eprintln!("[book-serve] {e}");
-        std::process::exit(1);
-    }
+    service::run_or_exit(&SPEC, &bind, &paths, api::router(st), Default::default())
 }

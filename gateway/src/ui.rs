@@ -4,6 +4,7 @@
 //! 格式白名单由 [`page`] 从 `rmsvc_core::formats` 注入（`__EXTS__`），网页 accept / 选中即拦与服务端上传门同源。
 //! 页面源码在 `gateway/ui/`（index.html 骨架 + style.css + app.js + auth.css），编译期 `include_str!` 进二进制：
 //! 网页仍是单文件零外链，但 JS/CSS 是真文件——编辑器/`node --check`（CI）直接检查，改样式不用在 Rust 原始字符串里找。
+use rmsvc_core::http::html_escape as esc;
 use std::sync::OnceLock;
 
 const INDEX_HTML: &str = include_str!("../ui/index.html");
@@ -37,10 +38,6 @@ pub fn page() -> &'static str {
         let exts = serde_json::json!({"book": BOOK_EXTS, "font": FONT_EXTS, "image": IMAGE_EXTS});
         INDEX_HTML.replace("__STYLE__", STYLE_CSS).replace("__SCRIPT__", APP_JS).replace("__EXTS__", &exts.to_string())
     })
-}
-
-fn esc(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 
 /// 登录页：只要密码，无用户名。`error` 空=无提示。

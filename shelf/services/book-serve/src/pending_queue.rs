@@ -6,11 +6,11 @@
 //! `add()` 包装方法，那是两边真正不同、不该合并的部分。
 use serde::de::DeserializeOwned;
 use serde::Serialize;
-use rmsvc_core::fs::write_atomic;
+use rmsvc_core::events::Wake;
 use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::path::PathBuf;
-use std::sync::{Condvar, Mutex};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 pub struct PendingQueue<T> {
@@ -24,15 +24,14 @@ impl<T: Clone + Serialize + DeserializeOwned> PendingQueue<T> {
         PendingQueue { file, lock: Mutex::new(()), _marker: PhantomData }
     }
 
+    /// 缺失/损坏 → 空队列（与此前手写版同义）。
     fn load(&self) -> Vec<T> {
-        std::fs::read(&self.file).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+        rmsvc_core::config::load_or_default(&self.file)
     }
 
+    /// 原子写（建齐父目录）。队列文件只由本服务读写、经 HTTP 交给代理，缩进格式不影响任何读者。
     fn save(&self, items: &[T]) -> Result<(), String> {
-        if let Some(p) = self.file.parent() {
-            let _ = std::fs::create_dir_all(p);
-        }
-        write_atomic(&self.file, &serde_json::to_vec(items).map_err(|e| e.to_string())?).map_err(|e| format!("写队列失败: {e}"))
+        rmsvc_core::config::save(&self.file, &items, None).map_err(|e| format!("写队列失败: {e}"))
     }
 
     pub fn list(&self) -> Vec<T> {
@@ -86,8 +85,8 @@ impl<T: Clone + Serialize + DeserializeOwned> PendingQueue<T> {
 ///   执行不成，比如 `entryForId` 拿不到条目但 `.metadata` 还在），就放弃这一项——调用方把它移出队列并记一行日志。
 ///   此前没有终止条件，这样的项每个静默期被交出一次、代理每次执行失败写一行日志，永远不停（2026-09-25 第四轮审计）。
 pub struct Handout {
-    gen: Mutex<u64>,
-    wake: Condvar,
+    /// 入队代数 + 条件变量（`notify` 加一、`wait` 睡到代数变化）。
+    wake: Wake,
     /// 键 → (最近一次交出的时刻, 已交出次数)。只保留仍在待办里的键。
     handed: Mutex<HashMap<String, (Instant, u32)>>,
     quiet: Duration,
@@ -106,7 +105,7 @@ pub struct Taken {
 
 impl Handout {
     pub fn new(quiet: Duration) -> Handout {
-        Handout { gen: Mutex::new(0), wake: Condvar::new(), handed: Mutex::new(HashMap::new()), quiet, max_attempts: HANDOUT_MAX_ATTEMPTS }
+        Handout { wake: Wake::default(), handed: Mutex::new(HashMap::new()), quiet, max_attempts: HANDOUT_MAX_ATTEMPTS }
     }
 
     /// 单测用：改最多交出次数。
@@ -118,8 +117,7 @@ impl Handout {
 
     /// 入队后调用：唤醒正在长轮询的代理。
     pub fn notify(&self) {
-        *rmsvc_core::sync::lock(&self.gen) += 1;
-        self.wake.notify_all();
+        self.wake.bump();
     }
 
     /// 从"仍待办的键"里挑出这次该交出的（去掉静默期内交过的），并把它们记为"已交出"；静默期已过、却已经交满次数的
@@ -160,7 +158,7 @@ impl Handout {
         let mut total_pruned = 0;
         loop {
             // 先取代数再查队列：查完到睡下之间若有入队，代数已变，wait_timeout_while 不会睡过头。
-            let seen = *rmsvc_core::sync::lock(&self.gen);
+            let seen = self.wake.generation();
             let (keys, pruned) = fetch()?;
             total_pruned += pruned;
             let now = Instant::now();
@@ -168,8 +166,7 @@ impl Handout {
                 return Ok((keys, total_pruned));
             }
             let wake_at = self.next_retry().map_or(deadline, |r| r.min(deadline));
-            let g = rmsvc_core::sync::lock(&self.gen);
-            let _ = self.wake.wait_timeout_while(g, wake_at.saturating_duration_since(now), |cur| *cur == seen).unwrap_or_else(|e| e.into_inner());
+            self.wake.wait_change(seen, wake_at.saturating_duration_since(now));
         }
     }
 }

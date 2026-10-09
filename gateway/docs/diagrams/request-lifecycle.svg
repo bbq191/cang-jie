@@ -29,8 +29,8 @@
 <text x="52" y="323" text-anchor="start" font-size="10.5" fill="#3a3a3a">其余 /api/&lt;seg&gt;/* 进反向代理（proxy.rs）</text>
 <text x="628" y="286" text-anchor="end" font-size="10" fill="#8a8a8a">rmsvc-core http/router.rs</text>
 <rect x="700" y="274" width="500" height="62" rx="10" fill="#fdf1ec" stroke="#c0602d" stroke-width="1.6"/>
-<text x="712" y="294" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">处理函数 panic</text>
-<text x="712" y="316" text-anchor="start" font-size="10.5" fill="#3a3a3a">兜成 JSON 500“服务内部错误”，名额照常归还</text>
+<text x="712" y="294" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">处理函数或登录守卫 panic</text>
+<text x="712" y="316" text-anchor="start" font-size="10.5" fill="#3a3a3a">兜成 JSON 500“服务内部错误”，名额照常归还（守卫这一处 10-09 补）</text>
 <polyline points="640,305.0 700,305.0" fill="none" stroke="#b0451f" stroke-width="1.6" marker-end="url(#mr)"/>
 <polyline points="340.0,344 340.0,360" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
 <rect x="40" y="360" width="600" height="78" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>

@@ -79,7 +79,7 @@ impl Staging {
             None => (rmsvc_core::xochitl::page_count(self.xochitl.library_dir(), &up.uuid).unwrap_or(0), "onopen"),
         };
         let _ = self.set_render(name, sidecar::RenderCheck { uuid: up.uuid, pages, status: status.into(), at: rmsvc_core::clock::now_secs() });
-        let stem = name.rsplit_once('.').map_or(name, |(s, _)| s);
+        let stem = formats::stem_of(name);
         Ok(Some(DeliverOutcome {
             message: format!("《{stem}》{} MB 超过网页上传上限，已直接写入 xochitl 书库；首次打开需重新渲染，请稍候", size >> 20),
             render: None,
@@ -100,11 +100,11 @@ impl Staging {
             // 显示名沿用书自己的 dc:title（sheng-ren 优化时已写好规范书名）；书名、封面、页边距标记同一次打开 zip 取完。
             let Ok(mut book) = shelf_conv::epub::Book::open(p) else { return Ok(None) };
             let Ok(ph) = shelf_conv::placeholder::epub_placeholder(&mut book) else { return Ok(None) };
-            (ph, "application/epub+zip", None, book.reader_margins())
+            (ph, formats::mime_of(name), None, book.reader_margins())
         } else {
             // 第三方 PDF 常是交叉引用流/对象流、页树根不在对象 2：走通用的有界读取（`pdfmeta`），不整本读进内存。
             let Ok(pages) = shelf_conv::pdfmeta::page_count(p) else { return Ok(None) };
-            (shelf_conv::placeholder::pdf_placeholder(), "application/pdf", Some(pages), None)
+            (shelf_conv::placeholder::pdf_placeholder(), formats::mime_of(name), Some(pages), None)
         };
         let uuid = self.xochitl.upload_large_file_into(p, name, content_type, folder_uuid, &placeholder, pages)?;
         if let Some(m) = margins {
@@ -123,13 +123,13 @@ impl Staging {
         if folder.is_empty() || self.xochitl.find_folder(folder).is_some() {
             return;
         }
-        // `Ok(0)` = 两次查询之间刚被建出来了，不用等；`Err` = 名字不合法（目前只剩"空"）。此前只判 `Err`，`Ok(0)` 也进
-        // `watch_until`，它不先查一次，没有新事件就白等满 20 秒。
+        // `Ok(0)` = 两次查询之间刚被建出来了，不用等；`Err` = 名字不合法（目前只剩"空"）。
         if !matches!(mkdir.add(folder), Ok(n) if n > 0) {
             return;
         }
+        // `wait_for` 先挂监听再查一次：入队到挂上监听之间代理已经建好的，也不会白等满 20 秒。
         let lib_dir = self.xochitl.library_dir();
-        rmsvc_core::fswatch::watch_until(lib_dir, render_check::DEBOUNCE, FOLDER_WAIT_TIMEOUT, |_| self.xochitl.find_folder(folder).is_some());
+        rmsvc_core::fswatch::wait_for(lib_dir, render_check::DEBOUNCE, FOLDER_WAIT_TIMEOUT, || self.xochitl.find_folder(folder));
     }
 
     /// 按层确保多级文件夹（2026-10-07，直接导入用）：从书库根往下，每一级在上一级正下方按名字找（[`rmsvc_core::xochitl::find_child_folder`]），
@@ -140,16 +140,15 @@ impl Staging {
         let lib_dir = self.xochitl.library_dir();
         let mut parent = String::new();
         for (depth, seg) in segments.iter().enumerate() {
-            let found = self.xochitl.find_child_folder(&parent, seg).or_else(|| {
-                match mkdir.add_in(&parent, seg) {
-                    // 两次查询之间刚被建出来了（同 ensure_folder 的 `Ok(0)`）
-                    Ok(0) => {}
-                    Ok(_) => {
-                        rmsvc_core::fswatch::watch_until(lib_dir, render_check::DEBOUNCE, wait, |_| self.xochitl.find_child_folder(&parent, seg).is_some());
-                    }
-                    Err(e) => println!("[book-serve] 建文件夹《{seg}》入队失败: {e}"),
+            let find = || self.xochitl.find_child_folder(&parent, seg);
+            let found = find().or_else(|| match mkdir.add_in(&parent, seg) {
+                // 两次查询之间刚被建出来了（同 ensure_folder 的 `Ok(0)`）
+                Ok(0) => find(),
+                Ok(_) => rmsvc_core::fswatch::wait_for(lib_dir, render_check::DEBOUNCE, wait, find),
+                Err(e) => {
+                    println!("[book-serve] 建文件夹《{seg}》入队失败: {e}");
+                    find()
                 }
-                self.xochitl.find_child_folder(&parent, seg)
             });
             match found {
                 Some(uuid) => parent = uuid,
@@ -172,22 +171,25 @@ impl Staging {
         let busy = self.busy_guard(name, "")?;
         let now = rmsvc_core::clock::now_secs();
         let _ = self.set_deliver_check(name, sidecar::DeliverCheck { status: "pending".into(), message: String::new(), at: now });
-        let folder = folder.to_string();
-        self.spawn_bg(name, busy, bus, move |this, name, bus| {
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| this.deliver(name, &folder, &mkdir)))
-                .unwrap_or_else(|_| Err("落库过程内部异常（已捕获，不影响其他操作）".to_string()));
-            let at = rmsvc_core::clock::now_secs();
-            let (status, message) = match &result {
-                Ok(o) => ("ok".to_string(), o.message.clone()),
-                Err(e) => ("failed".to_string(), e.clone()),
-            };
-            let _ = this.set_deliver_check(name, sidecar::DeliverCheck { status, message, at });
-            if let Ok(outcome) = &result {
-                if let Some(plan) = outcome.render.clone() {
+        let (this, name, folder) = (self.clone(), name.to_string(), folder.to_string());
+        std::thread::spawn(move || {
+            // 落库本身的 panic 转成带原因的失败记录；外层再兜一次，保证无论如何都解锁、发事件。
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| this.deliver(&name, &folder, &mkdir)))
+                    .unwrap_or_else(|_| Err("落库过程内部异常（已捕获，不影响其他操作）".to_string()));
+                let at = rmsvc_core::clock::now_secs();
+                let (status, message) = match &result {
+                    Ok(o) => ("ok".to_string(), o.message.clone()),
+                    Err(e) => ("failed".to_string(), e.clone()),
+                };
+                let _ = this.set_deliver_check(&name, sidecar::DeliverCheck { status, message, at });
+                if let Ok(DeliverOutcome { render: Some(plan), .. }) = result {
                     let (staging2, bus2, lib2) = (this.clone(), bus.clone(), this.xochitl.library_dir().to_path_buf());
                     std::thread::spawn(move || crate::render_check::run(&staging2, &bus2, &lib2, &plan));
                 }
-            }
+            }));
+            drop(busy); // 先解锁再推事件：网页据事件重拉列表时这条已不是"处理中"
+            bus.publish("books", "staging");
         });
         Ok(())
     }

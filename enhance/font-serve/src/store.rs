@@ -10,15 +10,16 @@
 //! `shelf/ui-fonts.json`，不写 fontconfig。选哪个当界面字体记在 `shelf/ui-font.json`（见 `ui.rs`）。
 use serde::{Deserialize, Serialize};
 use rmsvc_core::asset::{AssetItem, AssetStore};
+use rmsvc_core::cache::{FileStamp, StampCache};
 use rmsvc_core::formats::{self, FONT_EXTS};
-use rmsvc_core::fs::write_atomic;
+use rmsvc_core::fs::{list_files, write_atomic, write_atomic_if_changed};
+use rmsvc_core::proc::run_timeout;
 use rmsvc_core::paths::Paths;
 use rmsvc_core::ttf;
 use crate::fontconfig;
-use std::collections::{BTreeMap, HashMap};
-use std::sync::Mutex;
-use std::time::SystemTime;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 /// 覆盖率 ≥ 此值才算"中文字体"、才进回退链（滤掉纯拉丁字体，避免拉丁字体当中文兜底）。
 pub const CJK_MIN_PCT: u8 = 8;
@@ -29,6 +30,12 @@ pub const UI_SUBDIR: &str = "shelf-ui";
 /// 装了界面字体时追加在每个字体请求末尾的系统中文字体（设备 /usr/share/fonts/ttf/noto 自带），
 /// 让阅读的中文缺字回退仍落在它上面、不落到界面字体上（见 `fontconfig::render` 的 `pin`）。
 pub const SYSTEM_CJK_PIN: &str = "Noto Sans SC";
+/// fc-scan 单个文件的超时：几十 MB 的中文字体也在 1 秒内；卡住（坏文件/IO 挂起）不能把上传请求一直挂着，超时退回自解析 name 表。
+const FC_SCAN_TIMEOUT: Duration = Duration::from_secs(30);
+/// fc-cache 重建用户字体目录缓存的超时（host 实测几毫秒到零点几秒，设备上大字体多时留足余量）。
+const FC_CACHE_TIMEOUT: Duration = Duration::from_secs(120);
+/// 探测缓存条目上限：远大于实际会装的字体文件数（满了整表清空重来，只是多跑一轮 fc-scan）。
+const PROBE_CACHE_CAP: usize = 4096;
 
 /// 这个仓库管的是阅读字体还是界面字体。
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -97,9 +104,9 @@ pub struct FontStore {
     fonts_dir: PathBuf,
     json_path: PathBuf,
     fontconfig_conf: PathBuf,
-    /// 逐文件探测结果缓存（家族名 + 覆盖率），键=文件名，凭 (大小, mtime) 判失效：
+    /// 逐文件探测结果缓存（家族名 + 中文覆盖率），键=文件名，凭文件戳（大小、mtime、inode）判失效：
     /// 每次上传/删除都要重扫整个字体目录，没有缓存就是对每个字体重新 fork 一次 fc-scan + 整文件读入解析。
-    probes: Mutex<HashMap<String, Probe>>,
+    probes: StampCache<(Vec<String>, u8)>,
     /// 测试可关：不真跑 fc-cache/fc-scan。
     pub side_effects: bool,
 }
@@ -109,13 +116,9 @@ fn split_families(s: &str) -> Vec<String> {
     s.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect()
 }
 
-/// 一个字体文件的探测结果 + 让它失效的指纹。
-struct Probe {
-    len: u64,
-    mtime: Option<SystemTime>,
-    families: Vec<String>,
-    /// 中文基本区覆盖率
-    pct: u8,
+/// 目录里的字体文件名（只认普通文件、不含隐藏文件，按名排序）；目录不在 → 空。扫描、开机一致性检查、"有没有界面字体"共用。
+fn font_files(dir: &Path) -> Vec<String> {
+    list_files(dir, |n| formats::has_ext(n, FONT_EXTS))
 }
 
 impl FontStore {
@@ -127,7 +130,7 @@ impl FontStore {
             fonts_dir: paths.user_fonts_dir(),
             json_path: paths.data_dir().join("fonts.json"),
             fontconfig_conf: paths.config_root().join("fontconfig/fonts.conf"),
-            probes: Mutex::new(HashMap::new()),
+            probes: StampCache::new(PROBE_CACHE_CAP),
             side_effects: true,
         }
     }
@@ -143,9 +146,7 @@ impl FontStore {
 
     /// 界面字体目录里有没有字体文件（阅读仓库据此决定要不要加系统中文保底）。
     fn ui_fonts_present(&self) -> bool {
-        std::fs::read_dir(self.fonts_dir.join(UI_SUBDIR))
-            .map(|rd| rd.flatten().any(|e| e.file_name().to_str().is_some_and(|n| !n.starts_with('.') && formats::has_ext(n, FONT_EXTS))))
-            .unwrap_or(false)
+        !font_files(&self.fonts_dir.join(UI_SUBDIR)).is_empty()
     }
 
     pub fn embolden(&self) -> bool {
@@ -172,9 +173,8 @@ impl FontStore {
         let bytes = std::fs::read(path).ok();
         let pct = bytes.as_deref().and_then(ttf::han_coverage_pct).unwrap_or(0);
         if self.side_effects {
-            if let Ok(o) = std::process::Command::new("fc-scan").args(["--format", "%{family}"]).arg(path).output() {
-                let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
-                if o.status.success() && !s.is_empty() {
+            if let Some(Ok(s)) = path.to_str().map(|p| run_timeout("fc-scan", &["--format", "%{family}", p], FC_SCAN_TIMEOUT)) {
+                if !s.is_empty() {
                     return (split_families(&s), pct);
                 }
             }
@@ -182,21 +182,13 @@ impl FontStore {
         (bytes.as_deref().and_then(ttf::family_name).map(|f| vec![f]).unwrap_or_default(), pct)
     }
 
-    /// 带缓存的 [`Self::probe_file`]：文件 (大小, mtime) 没变就复用上次结果。
+    /// 带缓存的 [`Self::probe_file`]：文件戳没变就复用上次结果（算的时候不持锁，fork + 读大文件不挡别的查询）。
+    /// 文件 stat 不到（刚被删）→ 照算不缓存。
     fn probe_cached(&self, name: &str, path: &Path) -> (Vec<String>, u8) {
-        let md = std::fs::metadata(path).ok();
-        let (len, mtime) = (md.as_ref().map(|m| m.len()).unwrap_or(0), md.and_then(|m| m.modified().ok()));
-        {
-            let cache = rmsvc_core::sync::lock(&self.probes);
-            if let Some(p) = cache.get(name) {
-                if p.len == len && p.mtime == mtime && mtime.is_some() {
-                    return (p.families.clone(), p.pct);
-                }
-            }
+        match FileStamp::read(path) {
+            Some(stamp) => self.probes.get_or(name, stamp, || self.probe_file(path)),
+            None => self.probe_file(path),
         }
-        let (families, pct) = self.probe_file(path); // 可能 fork+读大文件，不持锁
-        rmsvc_core::sync::lock(&self.probes).insert(name.to_string(), Probe { len, mtime, families: families.clone(), pct });
-        (families, pct)
     }
 
     fn fontconfig_families(&self) -> Vec<String> {
@@ -207,17 +199,15 @@ impl FontStore {
     pub fn scan(&self) -> Vec<FontEntry> {
         let refs = self.fontconfig_families();
         let mut groups: BTreeMap<String, FontEntry> = BTreeMap::new();
-        let Ok(rd) = std::fs::read_dir(&self.fonts_dir) else { return vec![] };
-        let mut files: Vec<String> = rd.flatten().filter_map(|e| e.file_name().to_str().map(|s| s.to_string())).filter(|n| !n.starts_with('.') && formats::has_ext(n, FONT_EXTS)).collect();
-        files.sort();
+        let files = font_files(&self.fonts_dir);
         // 缓存里去掉已不在目录的文件（删字体后不留脏项）
-        rmsvc_core::sync::lock(&self.probes).retain(|k, _| files.binary_search(k).is_ok());
+        self.probes.retain(|k| files.binary_search_by(|f| f.as_str().cmp(k)).is_ok());
         for f in files {
             let path = self.fonts_dir.join(&f);
             let (fams, pct) = self.probe_cached(&f, &path);
             let key = match fams.first() {
                 Some(k) => k.clone(),
-                None => f.rsplit_once('.').map(|(s, _)| s.to_string()).unwrap_or_else(|| f.clone()),
+                None => formats::stem_of(&f).to_string(),
             };
             // 本地化显示名：取第一个含非 ASCII 的家族名，没有就用 key
             let local = fams.iter().find(|s| !s.is_ascii()).cloned().unwrap_or_else(|| key.clone());
@@ -271,14 +261,8 @@ impl FontStore {
         if newer(&self.fonts_dir) {
             return None;
         }
-        let mut on_disk: Vec<String> = std::fs::read_dir(&self.fonts_dir)
-            .ok()?
-            .flatten()
-            .filter_map(|e| e.file_name().to_str().map(|s| s.to_string()))
-            .filter(|n| !n.starts_with('.') && formats::has_ext(n, FONT_EXTS))
-            .collect();
+        let on_disk = font_files(&self.fonts_dir);
         let mut indexed: Vec<String> = fonts.iter().flat_map(|e| e.files.iter().cloned()).collect();
-        on_disk.sort();
         indexed.sort();
         if on_disk != indexed || on_disk.iter().any(|f| newer(&self.fonts_dir.join(f))) {
             return None;
@@ -291,9 +275,19 @@ impl FontStore {
         std::fs::read_to_string(&self.json_path).ok().and_then(|t| serde_json::from_str::<FontsJson>(&t).ok()).map(|j| j.fonts).unwrap_or_else(|| self.write_index().unwrap_or_default())
     }
 
-    fn fc_cache(&self) {
+    /// 只重建用户字体目录（`fonts/`，含 `shelf-ui/` 子目录，fc-cache 对目录参数递归）的缓存。此前不带目录参数，
+    /// 每装/删一个字体都把系统字体目录也强制重扫一遍，那些目录根本没变（host 实测 CPU 0.7s → 0.006s）。
+    /// 界面仓库也从 `fonts/` 起扫：首次建 `shelf-ui/` 时父目录的缓存（记着有哪些子目录）也要跟着更新。
+    /// 上传不在 [`AssetStore::install`] 里逐个文件跑（一次传几个字体就要重建几遍），由路由在整批装完后调一次。
+    pub fn fc_cache(&self) {
         if self.side_effects {
-            let _ = std::process::Command::new("fc-cache").arg("-f").status();
+            let root = match self.role {
+                Role::Reading => self.fonts_dir.as_path(),
+                Role::Ui => self.fonts_dir.parent().unwrap_or(&self.fonts_dir),
+            };
+            if let Some(Err(e)) = root.to_str().map(|r| run_timeout("fc-cache", &["-f", r], FC_CACHE_TIMEOUT)) {
+                eprintln!("[font-serve] fc-cache 失败: {e}");
+            }
         }
     }
 
@@ -324,10 +318,7 @@ impl FontStore {
         let pin: &[&str] = if self.ui_fonts_present() { &[SYSTEM_CJK_PIN] } else { &[] };
         let xml = fontconfig::render(&keys, self.embolden(), pin, &self.config_root_backup());
         // 内容没变不重写：fontconfig 按配置文件 mtime 判断要不要重载，白写一次会让正在用它的进程（xochitl）重读配置。
-        if std::fs::read(&self.fontconfig_conf).is_ok_and(|b| b == xml.as_bytes()) {
-            return Ok(());
-        }
-        write_atomic(&self.fontconfig_conf, xml.as_bytes()).map_err(|e| e.to_string())
+        write_atomic_if_changed(&self.fontconfig_conf, xml.as_bytes()).map(|_| ()).map_err(|e| e.to_string())
     }
 
     /// ~/.config/shelf/fontconfig-fonts.conf.pre-shelf.bak（首次接管前的原配置备份）。
@@ -380,12 +371,11 @@ impl AssetStore for FontStore {
     fn install(&self, name: &str, staged: &Path) -> Result<AssetItem, String> {
         std::fs::create_dir_all(&self.fonts_dir).map_err(|e| e.to_string())?;
         let dest = self.fonts_dir.join(name);
-        // 暂存与字体目录同在 /home：直接改名；跨分区（测试 / 非常规布局）才退回拷贝。
-        if std::fs::rename(staged, &dest).is_err() {
-            std::fs::copy(staged, &dest).map_err(|e| format!("写入字体目录失败: {e}"))?;
-        }
+        // 暂存与字体目录同在 /home：直接改名；跨分区（测试 / 非常规布局）才退回"拷到同目录临时名再改名"，
+        // 字体目录里不会出现 fontconfig / 别的进程看得到的半截字体文件。
+        rmsvc_core::fs::move_into(staged, &dest).map_err(|e| format!("写入字体目录失败: {e}"))?;
         let bytes = std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
-        self.fc_cache();
+        // fc-cache 由调用方在整批上传后跑一次（见 fc_cache）；建索引用 fc-scan 直接读文件，不依赖缓存。
         let fonts = self.write_index()?;
         let entry = fonts.iter().find(|e| e.files.iter().any(|f| f == name)).cloned();
         let pct = entry.as_ref().map(|e| e.cjk_pct).unwrap_or(0);
@@ -435,8 +425,7 @@ mod tests {
 
     fn setup() -> (tempfile::TempDir, Paths, FontStore) {
         let t = tempfile::tempdir().unwrap();
-        let h = t.path().to_str().unwrap().to_string();
-        let paths = Paths::resolve(move |k| if k == "HOME" || k == "XDG_RUNTIME_DIR" { Some(h.clone()) } else { None });
+        let paths = Paths::sandbox(t.path());
         paths.ensure().unwrap();
         let mut s = FontStore::new(&paths, FontConfig::default());
         s.side_effects = false;
@@ -529,10 +518,9 @@ mod tests {
         std::fs::write(&f, b"\x00\x01\x00\x00").unwrap();
         // 无 name 表 → 家族=文件名去扩展名，探测结果进缓存
         assert_eq!(store.scan()[0].key, "X");
-        assert_eq!(store.probes.lock().unwrap().len(), 1);
-        // 指纹（大小+mtime）不变 → 命中缓存：塞个假结果，scan 必须原样用它而不是重新探测
-        let md = std::fs::metadata(&f).unwrap();
-        store.probes.lock().unwrap().insert("X.ttf".into(), Probe { len: md.len(), mtime: md.modified().ok(), families: vec!["Cached".into()], pct: 50 });
+        assert_eq!(store.probes.len(), 1);
+        // 文件戳不变 → 命中缓存：塞个假结果，scan 必须原样用它而不是重新探测
+        store.probes.put("X.ttf", FileStamp::read(&f).unwrap(), (vec!["Cached".into()], 50));
         let e = store.scan();
         assert_eq!((e[0].key.as_str(), e[0].cjk_pct), ("Cached", 50));
         // 文件变了（大小不同）→ 缓存失效重探
@@ -541,7 +529,7 @@ mod tests {
         // 文件被删 → 缓存项随下次扫描清掉
         std::fs::remove_file(&f).unwrap();
         assert!(store.scan().is_empty());
-        assert!(store.probes.lock().unwrap().is_empty());
+        assert!(store.probes.is_empty());
     }
 
     #[test]

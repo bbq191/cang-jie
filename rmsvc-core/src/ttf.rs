@@ -16,17 +16,7 @@ pub fn is_font(b: &[u8]) -> bool {
 
 /// 家族名；TTC 取第一个字体。
 pub fn family_name(b: &[u8]) -> Option<String> {
-    let base = if b.get(0..4) == Some(b"ttcf") { u32be(b, 12)? as usize } else { 0 };
-    let num_tables = u16be(b, base + 4)? as usize;
-    let mut name_off = None;
-    for i in 0..num_tables {
-        let rec = base + 12 + i * 16;
-        if b.get(rec..rec + 4)? == b"name" {
-            name_off = Some(u32be(b, rec + 8)? as usize);
-            break;
-        }
-    }
-    let n = name_off?;
+    let n = find_table(b, b"name")?;
     let count = u16be(b, n + 2)? as usize;
     let str_off = n + u16be(b, n + 4)? as usize;
     let mut best: Option<(u8, String)> = None; // (优先级, 名)
@@ -113,6 +103,10 @@ pub fn han_bmp_coverage(b: &[u8]) -> Option<usize> {
             let start_o = end_o + segx2 + 2;
             let delta_o = start_o + segx2;
             let range_o = delta_o + segx2;
+            // 合法 cmap 的段按码位升序、互不重叠，落在汉字区里的码位加起来不超过区内总数；逐码位走过的总数超过它
+            // 就是重叠段堆出来的畸形表，停。只靠下面"数够了就停"挡不住：段全映射到 glyph 0 时 count 一直不涨，
+            // 3 万多个重叠段 × 每段 2 万码位 ≈ 7 亿次循环，一次字体上传就能把设备 CPU 占满几十秒（2026-10-09 第六轮审计）。
+            let mut walked = 0usize;
             for s in 0..segc {
                 let end = u16be(b, end_o + s * 2)? as u32;
                 let start = u16be(b, start_o + s * 2)? as u32;
@@ -123,6 +117,13 @@ pub fn han_bmp_coverage(b: &[u8]) -> Option<usize> {
                 let range = u16be(b, range_o + s * 2)? as usize;
                 let lo = start.max(HAN_BMP_START);
                 let hi = end.min(HAN_BMP_END);
+                if lo > hi {
+                    continue; // 损坏段 start > end
+                }
+                walked += (hi - lo + 1) as usize;
+                if walked > HAN_BMP_TOTAL {
+                    break;
+                }
                 for c in lo..=hi {
                     let g = if range == 0 {
                         (c as u16).wrapping_add(delta)
@@ -217,6 +218,11 @@ mod tests {
 
     /// 同上，但段表可自定：`segs` 是 (start, end) 列表（idDelta 全取 1），末尾自动补 0xFFFF 结尾段。
     fn font_with_segments(segs: &[(u16, u16)]) -> Vec<u8> {
+        font_with_segments_ro(segs, 0)
+    }
+
+    /// 同上，`range_offset` 给全部段的 idRangeOffset（非零 ⇒ 去 glyphIdArray 位置取字形号；这里没有真表，越界读不到的当 glyph 0）。
+    fn font_with_segments_ro(segs: &[(u16, u16)], range_offset: u16) -> Vec<u8> {
         // format 4：每段用 idDelta 映射到非零，[0xFFFF] 结尾段
         let seg_count = segs.len() as u16 + 1;
         let mut sub: Vec<u8> = Vec::new();
@@ -232,7 +238,7 @@ mod tests {
         sub.extend_from_slice(&0u16.to_be_bytes()); // reservedPad
         for st in segs.iter().map(|s| s.0).chain([0xFFFF]) { sub.extend_from_slice(&st.to_be_bytes()); } // startCode
         for _ in 0..seg_count { sub.extend_from_slice(&1u16.to_be_bytes()); } // idDelta（非零映射）
-        for _ in 0..seg_count { sub.extend_from_slice(&0u16.to_be_bytes()); } // idRangeOffset=0
+        for _ in 0..seg_count { sub.extend_from_slice(&range_offset.to_be_bytes()); } // idRangeOffset
         let l = sub.len() as u16;
         sub[len_pos..len_pos + 2].copy_from_slice(&l.to_be_bytes());
         sfnt_with_cmap_sub(&sub)
@@ -294,6 +300,16 @@ mod tests {
         assert_eq!(han_bmp_coverage(&f), Some(HAN_BMP_TOTAL));
         assert_eq!(han_coverage_pct(&f), Some(100));
         assert!(t0.elapsed() < std::time::Duration::from_secs(1), "够数即停，不做 3000×2 万次迭代");
+    }
+    /// 恶意字体：大量重叠段且全映射到 glyph 0——count 一直不涨，"数够了就停"拦不住，靠逐码位总数上限停下。
+    #[test]
+    fn overlapping_segments_mapping_to_nothing_stop_early() {
+        // idRangeOffset 取最大偶数：字形号位置全在文件末尾之外 ⇒ 全当 glyph 0
+        let segs = vec![(0x4E00u16, 0x9FFFu16); 8000];
+        let f = font_with_segments_ro(&segs, 0xFFFE);
+        let t0 = std::time::Instant::now();
+        assert_eq!(han_bmp_coverage(&f), Some(0));
+        assert!(t0.elapsed() < std::time::Duration::from_millis(300), "不做 8000 段 × 2 万码位的迭代: {:?}", t0.elapsed());
     }
     /// 回归：format-12 里 start > end 的损坏组不再下溢（debug panic / release 报满 100%），跳过即可。
     #[test]

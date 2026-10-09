@@ -14,6 +14,11 @@ pub use library::*;
 
 pub const DEFAULT_HOST: &str = "10.11.99.1";
 
+/// 大文件通道认领占位条目：书库目录静默这么久再查一次（xochitl 建条目时连写好几个文件，攒一下只查一次）。
+const LARGE_CLAIM_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(150);
+/// 大文件通道认领占位条目的最长等待（与改动前 100 × 200ms 相同）。
+const LARGE_CLAIM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
 /// 上传结果：`Delivered`=确认成功；`LikelyDelivered`=超时但很可能已创建（别重试）。
 #[derive(Debug, PartialEq)]
 pub enum Delivery {
@@ -74,11 +79,19 @@ impl Xochitl {
         self.agent.get(&format!("http://{}/{}", self.host, path)).call().is_ok()
     }
 
-    /// 上传进指定名字的文件夹（找不到→书库根，best-effort）。数据已经在内存里（大文件通道的占位文档、
-    /// note-serve 笔记本 zip 这类合成产物）用这个；落地文件直接上传用 [`Self::upload_file`]，
-    /// 别自己先 `fs::read` 整个再传进来。
+    /// 上传进指定名字的文件夹（找不到→书库根，best-effort）。数据已经在内存里（大文件通道的占位文档这类
+    /// 合成产物）用这个；落地文件直接上传用 [`Self::upload_file`]，别自己先 `fs::read` 整个再传进来。
+    ///
+    /// ⚠ **`folder_name` 是文件夹的名字（visibleName），不是 uuid**：[`Self::parent_folder`]、[`Self::find_folder`]
+    /// 返回的都是 uuid，拿 uuid 传进来会按名字找不到、静默落到书库根。手里是 uuid 用 [`Self::upload_into`]。
     pub fn upload(&self, data: &[u8], filename: &str, content_type: &str, folder_name: &str) -> Result<Delivery, String> {
-        self.upload_body(Cursor::new(data), data.len() as u64, filename, content_type, &self.folder_id(folder_name))
+        self.upload_into(data, filename, content_type, &self.folder_id(folder_name))
+    }
+
+    /// 同 [`Self::upload`]，但目标文件夹直接给 **uuid**（空串＝根），见 [`Self::upload_file_into`]。
+    /// note-serve 的笔记本 zip（几 KB，内存里合成）进书本所在文件夹用这个，不用先落临时文件。
+    pub fn upload_into(&self, data: &[u8], filename: &str, content_type: &str, folder_uuid: &str) -> Result<Delivery, String> {
+        self.upload_body(Cursor::new(data), data.len() as u64, filename, content_type, folder_uuid)
     }
 
     /// 文件夹名 → uuid（空名＝根；找不到也落根，best-effort）。按名字的上传接口都先过这一步，再走按 uuid 的那条路。
@@ -89,6 +102,9 @@ impl Xochitl {
     /// 直接流式上传一个磁盘文件——内容全程不整体读进内存，只在 `send_multipart` 里按块过一遍
     /// （2026-09-19 OOM 审计：`Staging::deliver()` 整本落库曾经 `fs::read` 整本＋这里内部
     /// 再克隆一份拼 multipart body，峰值能到原文件 2 倍+；改流式后这条路径不再囤整本字节）。
+    ///
+    /// ⚠ **`folder_name` 是文件夹的名字（visibleName），不是 uuid**（[`Self::parent_folder`] 返回的是 uuid）；
+    /// 手里是 uuid 用 [`Self::upload_file_into`]。
     pub fn upload_file(&self, path: &Path, filename: &str, content_type: &str, folder_name: &str) -> Result<Delivery, String> {
         self.upload_file_into(path, filename, content_type, &self.folder_id(folder_name))
     }
@@ -135,15 +151,14 @@ impl Xochitl {
         let since = crate::clock::now_ms().saturating_sub(2_000);
         self.upload_body(Cursor::new(placeholder), placeholder.len() as u64, filename, content_type, folder_uuid)?;
         // 等 xochitl 建好条目（`.metadata` + 占位文件都落地），按占位字节数确认是"我们这一份"而不是别人同时传的。
-        let mut uuid = None;
-        for _ in 0..100 {
-            if let Some(d) = find_documents_since(&dir, since).into_iter().find(|d| std::fs::metadata(dir.join(format!("{}.{ext}", d.uuid))).map(|m| m.len() == placeholder.len() as u64).unwrap_or(false)) {
-                uuid = Some(d.uuid);
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(200));
-        }
-        let uuid = uuid.ok_or("占位文档已上传，但 20 秒内没在书库里找到它（未替换成真文件）")?;
+        // 等书库目录的 inotify 变化再查（此前每 200ms 扫一遍书库，最长 20 秒 100 轮）。
+        let claim = || {
+            find_documents_since(&dir, since)
+                .into_iter()
+                .find(|d| std::fs::metadata(dir.join(format!("{}.{ext}", d.uuid))).map(|m| m.len() == placeholder.len() as u64).unwrap_or(false))
+                .map(|d| d.uuid)
+        };
+        let uuid = crate::fswatch::wait_for(&dir, LARGE_CLAIM_DEBOUNCE, LARGE_CLAIM_TIMEOUT, claim).ok_or("占位文档已上传，但 20 秒内没在书库里找到它（未替换成真文件）")?;
         let tmp = dir.join(format!("{uuid}.{ext}.new"));
         let dest = dir.join(format!("{uuid}.{ext}"));
         let fail = |e: String| {
@@ -178,7 +193,11 @@ impl Xochitl {
         // 跨进程（note-serve 也会投笔记本）仍可能交错，这把锁管不到（2026-09-24 审计）。
         static UPLOAD: std::sync::Mutex<()> = std::sync::Mutex::new(());
         let _serial = crate::sync::lock(&UPLOAD);
-        self.set_folder(folder_uuid);
+        // 设文件夹失败（文件夹刚被删、xochitl 回错）时退回书库根：不退的话"当前文件夹"还是上一次投递设的那个，
+        // 这本书会落进别人的文件夹，而文档承诺的是"找不到→书库根"（2026-10-09 第六轮审计）。
+        if !self.set_folder(folder_uuid) && !folder_uuid.is_empty() {
+            self.set_folder("");
+        }
         match send_multipart(&self.agent, &self.host, body, body_len, filename, content_type) {
             Ok(resp) => Ok(Delivery::Delivered(resp)),
             Err(e) if upload_likely_delivered(&e) => Ok(Delivery::LikelyDelivered(e)),
@@ -365,12 +384,14 @@ mod tests {
         let s2 = seen.clone();
         std::thread::spawn(move || {
             for mut req in server.incoming_requests() {
-                if req.method() == &tiny_http::Method::Get {
+                let status = if req.method() == &tiny_http::Method::Get {
                     s2.lock().unwrap().push(req.url().to_string());
+                    if req.url().ends_with("/gone") { 404 } else { 200 }
                 } else {
                     std::io::Read::read_to_end(req.as_reader(), &mut Vec::new()).unwrap();
-                }
-                let _ = req.respond(tiny_http::Response::from_string("{}"));
+                    200
+                };
+                let _ = req.respond(tiny_http::Response::from_string("{}").with_status_code(status));
             }
         });
         let x = Xochitl::new(&addr, lib.path(), 10);
@@ -379,7 +400,14 @@ mod tests {
         x.upload_file_into(&f, "a.epub", "application/epub+zip", "c2").unwrap();
         x.upload_file_into(&f, "a.epub", "application/epub+zip", "").unwrap();
         x.upload_file(&f, "a.epub", "application/epub+zip", "小说").unwrap();
-        assert_eq!(*seen.lock().unwrap(), ["/documents/c2", "/documents/", "/documents/p2"]);
+        x.upload_into(b"PK\x03\x04", "n.rmdoc", "application/zip", "c1").unwrap();
+        // 按名字的接口拿 uuid 当名字：找不到同名文件夹 → 落根（这正是文档里警告的误用）
+        x.upload(b"PK\x03\x04", "n.rmdoc", "application/zip", "c1").unwrap();
+        assert_eq!(*seen.lock().unwrap(), ["/documents/c2", "/documents/", "/documents/p2", "/documents/c1", "/documents/"]);
+        // 设文件夹失败（假服务对 /documents/gone 回 404）→ 退回根，而不是沿用上一次设的文件夹
+        seen.lock().unwrap().clear();
+        x.upload_file_into(&f, "a.epub", "application/epub+zip", "gone").unwrap();
+        assert_eq!(*seen.lock().unwrap(), ["/documents/gone", "/documents/"]);
         assert_eq!(x.find_child_folder("p1", "卷01").as_deref(), Some("c1"));
         assert_eq!(x.folder_path("c2"), "", "uuid 形状不对的不往上找");
     }

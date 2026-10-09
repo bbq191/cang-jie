@@ -31,6 +31,22 @@ pub fn is_corrupt<T: DeserializeOwned>(path: &Path) -> bool {
     path.exists() && std::fs::read_to_string(path).ok().and_then(|t| serde_json::from_str::<T>(&t).ok()).is_none()
 }
 
+/// 损坏文件留证：把 `path` 复制成同目录 `<文件名>.corrupt`（`mode` 给定时设权限，含 key 的配置给 `Some(0o600)`）。
+/// **只留第一份**：副本已存在就不再复制、返回 `None`——留住最早那份坏内容，且调用方可凭返回值"只在头一次打日志"
+/// （条目库这类每次刷新都会路过的读路径别刷屏）。新复制了返回副本路径。原文件不动。
+pub fn backup_corrupt(path: &Path, mode: Option<u32>) -> Option<std::path::PathBuf> {
+    let mut name = path.file_name()?.to_os_string();
+    name.push(".corrupt");
+    let bak = path.with_file_name(name);
+    if bak.exists() || std::fs::copy(path, &bak).is_err() {
+        return None;
+    }
+    if let Some(m) = mode {
+        set_mode(&bak, m);
+    }
+    Some(bak)
+}
+
 /// 原子保存（tmp→rename，建齐父目录）。`mode` 给敏感文件设权限（如含密码哈希的 `Some(0o600)`）。
 pub fn save<T: Serialize>(path: &Path, value: &T, mode: Option<u32>) -> Result<(), String> {
     let bytes = serde_json::to_vec_pretty(value).map_err(|e| e.to_string())?;
@@ -69,6 +85,22 @@ mod tests {
         let c: C = load_or_seed(&p);
         assert_eq!(c, C { a: 9, b: "y".into() });
     }
+    #[test]
+    fn backup_corrupt_keeps_first_copy_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let t = tempfile::tempdir().unwrap();
+        let p = t.path().join("c.json");
+        assert_eq!(backup_corrupt(&p, None), None, "原文件不在");
+        std::fs::write(&p, b"{ bad 1").unwrap();
+        let bak = backup_corrupt(&p, Some(0o600)).unwrap();
+        assert_eq!(bak, t.path().join("c.json.corrupt"));
+        assert_eq!(std::fs::metadata(&bak).unwrap().permissions().mode() & 0o777, 0o600);
+        std::fs::write(&p, b"{ bad 2").unwrap();
+        assert_eq!(backup_corrupt(&p, None), None, "已有副本不再复制");
+        assert_eq!(std::fs::read(&bak).unwrap(), b"{ bad 1", "留住最早那份");
+        assert_eq!(std::fs::read(&p).unwrap(), b"{ bad 2", "原文件不动");
+    }
+
     #[test]
     fn default_on_corrupt_without_overwrite() {
         let t = tempfile::tempdir().unwrap();

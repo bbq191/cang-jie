@@ -14,7 +14,7 @@
 | Term | Meaning |
 |---|---|
 | xochitl | The device's stock reading/notes app. This project doesn't modify it; it only adds things alongside |
-| xovi / extension | A third-party extension loader: when xochitl starts, it also loads the `.so` plugins in `extensions.d/`. This project now has just one extension: `hl-snap` |
+| xovi / extension | A third-party extension loader: when xochitl starts, it also loads the `.so` plugins in `extensions.d/`. This project now has two extensions: `hl-snap` (highlighter snapping) and `ui-font` (UI font) |
 | qmd / UI patch | A patch to xochitl's UI description files (QML), applied by qt-resource-rebuilder when xochitl starts |
 | files only / take effect | Extensions and UI patches are only read when xochitl starts, so once the files are in place the **whole device has to reboot once** for them to take effect |
 | OTA | Over-the-air firmware update. It replaces the system partitions `/usr` and `/etc` wholesale and leaves `/home` (your data) alone |
@@ -38,7 +38,7 @@ manager) itself, follow vellum's own documentation.
 | # | Run on the device | What it is | If missing |
 |---|---|---|---|
 | 1 | `vellum add xovi` | [xovi](https://github.com/asivery/xovi): the extension loader | All plugin-type features depend on it; those steps fail outright |
-| 2 | `vellum add qt-resource-rebuilder` | Loader for UI patches (qmd) | No UI patch is installed (not a failure): the font menu, trash/new-folder proxies, comic-margin proxy, and reader tap-to-turn / manga page-turn rule. Everything else is unaffected (for how the summary shows this, see issue ②) |
+| 2 | `vellum add qt-resource-rebuilder` | Loader for UI patches (qmd) | No UI patch is installed (not a failure): the font menu, UI font tokens, trash/new-folder proxies, comic-margin proxy, and reader tap-to-turn. Everything else is unaffected (for how the summary shows this, see issue ②) |
 
 Since 2026-09-29 **appload and KOReader are no longer needed** (the device only uses its built-in reader). If the device ever had them, or had the battery sampler or handwriting stroke tuning, see "[Upgrading: cleaning up removed components](#upgrading-cleaning-up-removed-components)".
 
@@ -49,7 +49,7 @@ The scripts build the programs on your computer and install them on the device o
 | What | Used for | If missing |
 |---|---|---|
 | Rust (`cargo`) + `rustup target add aarch64-unknown-linux-musl` + `aarch64-linux-gnu-gcc` | Cross-compiling the eight web services (`shelf/build.sh`) | The `shelf` step fails |
-| Optional: a clone of [asivery/xovi](https://github.com/asivery/xovi) (point `XOVI_DIR` at it) | Rebuilding the `hl-snap` plugin | No effect: prebuilt `.so` files are committed and used when a rebuild isn't possible |
+| Optional: a clone of [asivery/xovi](https://github.com/asivery/xovi) (point `XOVI_DIR` at it) | Rebuilding the `hl-snap` / `ui-font` plugins | No effect: prebuilt `.so` files are committed and used when a rebuild isn't possible |
 | **Passwordless ssh login to the device as root** | Every step (the scripts never stop to ask for a password) | Fails before touching anything, with troubleshooting steps. If you haven't set it up, run `ssh-copy-id root@10.11.99.1` first |
 
 ## Install
@@ -87,8 +87,9 @@ Every **step name** below can be used with `--skip`; the matching script `packag
 | `wifi-watch` | WiFi stall watchdog: reconnects when the link dies; pins the 2.4 GHz band only when the access point sits on a 5 GHz channel the device may not use (5150–5350 MHz); turns WiFi power saving on (since 2026-09-28; measured about 37% lower idle current). Override in `~/.config/wifi-watch.conf` on the device (`BAND=`, `POWERSAVE=`) | — |
 | `xovi-persist` | Re-activates xovi automatically after boot, so you don't have to after a restart | xovi |
 | `hl-snap` | The highlighter snaps precisely to Chinese text instead of "a short stroke grabs the whole line"; files only | xovi |
+| `ui-font` | UI font plugin: xochitl's interface (library, settings, dialogs, titles) uses the font you pick on the web page, while the reader's fonts stay as they are (since 2026-10-07); files only | xovi |
 | `清理已移除:battop`, `清理已移除:handwriting-stroke` | Not install steps: clean up what the battery sampler and handwriting stroke tuning left on older devices (both removed on 2026-09-30, see "[Upgrading](#upgrading-cleaning-up-removed-components)"); nothing to clean means nothing is touched. They run just before `xovi-apply`; `--skip battop` / `--skip handwriting-stroke` skips them | — |
-| `shelf` | Eight web services: the gateway, books (book), fonts and wallpapers (font / wallpaper), and the four notes services (ink / transcribe / mind / note); its five UI patches (font menu, trash proxy, new-folder proxy, comic-margin proxy, reader page turn) are files only | The patches need qt-resource-rebuilder; without it only the patches are skipped, the services still install |
+| `shelf` | Eight web services: the gateway, books (book), fonts and wallpapers (font / wallpaper), and the four notes services (ink / transcribe / mind / note); its six UI patches (font menu, UI font tokens, trash proxy, new-folder proxy, comic-margin proxy, reader tap-to-turn) are files only | The patches need qt-resource-rebuilder; without it only the patches are skipped, the services still install |
 | `xovi-apply` | Once all "files only" content is in place, **reboots the whole device once, only if something changed (or xovi isn't active yet)**, so it takes effect (about 20–60 seconds, interrupts reading; nothing changed means no reboot). After the reboot it runs `verify-on-device.sh` automatically | — |
 
 "Files only" means the files are put in place but don't take effect yet; `xovi-apply` reboots the device once at the end. This avoids several restarts in a short time.
@@ -96,7 +97,7 @@ Failed steps are not retried automatically and are never silently skipped.
 
 ## After installing
 
-**Check the verification result first**: after the final reboot the script waits for the device to come back and runs `verify-on-device.sh` automatically (`CJ_APPLY_VERIFY=0` turns this off). It is a read-only check in 9 sections (firmware and boot, xochitl and extensions, UI patches, resident services, this boot's alerts, flight recorder, ports, `/usr` units, disk), reported item by item as ✓/⚠/✗; it exits non-zero if anything is ✗. A fully installed device has about 37 items: on real hardware on 2026-09-30 it was 36✓ 1⚠ 0✗, the ⚠ being "booted less than 10 minutes ago", which is normal right after a reboot. If no reboot happened, or after deploying a single step later, run `sh verify-on-device.sh <host>` from `packaging/` yourself. If removed components are still on the device it flags them with ⚠ and prints the cleanup command (see "[Upgrading](#upgrading-cleaning-up-removed-components)"). What each item means: [`packaging/README.md`](../packaging/README.md#部署后核对verify-on-devicesh2026-09-25) (Chinese).
+**Check the verification result first**: after the final reboot the script waits for the device to come back and runs `verify-on-device.sh` automatically (`CJ_APPLY_VERIFY=0` turns this off). It is a read-only check in 9 sections (firmware and boot, xochitl and extensions, UI patches, resident services, this boot's alerts, flight recorder, ports, `/usr` units, disk), reported item by item as ✓/⚠/✗; it exits non-zero if anything is ✗. A fully installed device has about 39 items: on real hardware on 2026-10-07, after ui-font was added, it was 38✓ 1⚠ 0✗, the ⚠ being "booted less than 10 minutes ago", which is normal right after a reboot. If no reboot happened, or after deploying a single step later, run `sh verify-on-device.sh <host>` from `packaging/` yourself. If removed components are still on the device it flags them with ⚠ and prints the cleanup command (see "[Upgrading](#upgrading-cleaning-up-removed-components)"). What each item means: [`packaging/README.md`](../packaging/README.md#部署后核对verify-on-devicesh2026-09-25) (Chinese).
 
 Open `https://10.11.99.1/` in a browser (on the same WiFi you can also use `https://shelf.local/`; Android doesn't resolve `.local`, so use the device's IP there).
 
@@ -132,6 +133,8 @@ Before doing anything, `install-all.sh` (except with `--dry-run`) checks three t
 2. **Firmware safety gate**: see below.
 3. **Device preflight** (read-only): must be root and `/home` must be writable; **less than 50MB free on `/home` refuses, less than 200MB warns**; it also reports whether xovi and qt-resource-rebuilder are installed and whether xovi is active in xochitl. Missing pieces are only reported early; the matching steps fail or skip on their own.
 
+Once the checks pass, three more safeguards cover the whole install (since 2026-10-09, only simulated locally so far): the device holds a wake lock with a timeout (released automatically after 20 minutes, so it can't fall asleep between steps; `CJ_AWAKE=0` turns it off); a dropped ssh connection is detected in about 15 seconds instead of hanging forever; and a script sent to the device only runs once it has arrived in full, so a transfer cut halfway runs nothing at all.
+
 ### Firmware safety gate
 
 Before installing, the script reads the sha256 of `/usr/bin/xochitl` on the device and compares it with `packaging/firmware-allowlist.txt` in the repository and `firmware-allowlist.local.txt` on your computer. It continues only on a match; otherwise it refuses by default. A hash is used rather than a version number because the UI patches locate things byte by byte, and a hotfix with the same version number can still move internal layouts.
@@ -158,7 +161,7 @@ Re-running `install-all.sh` is safe and doesn't flash the screen every time. Onl
 
 ![Making plugins / UI patches take effect: swap in, then reboot](diagrams/so-swap-order.svg)
 
-**The same applies when running a step on its own**: `deploy-hl-snap.sh` run alone reboots the device once if something changed; when the files are byte-identical to what's installed, nothing else is pending and xovi is active, there is **no** reboot. It uses the same check as the final `xovi-apply` step.
+**The same applies when running a step on its own**: `deploy-hl-snap.sh` or `deploy-ui-font.sh` run alone reboots the device once if something changed; when the files are byte-identical to what's installed, nothing else is pending and xovi is active, there is **no** reboot. It uses the same check as the final `xovi-apply` step.
 
 ### Installing only part of it
 
@@ -219,10 +222,10 @@ The sidebar entry isn't cleaned automatically because its icon pack's file name,
 ```sh
 cd packaging
 # Only the battery sampler and handwriting stroke tuning (the plan should list only handwriting-stroke and battop)
-sh uninstall-all.sh 10.11.99.1 --dry-run --skip chrony-boot-wakelock,wifi-watch,xovi-persist,hl-snap,shelf,sidebar-entry
-sh uninstall-all.sh 10.11.99.1 --skip chrony-boot-wakelock,wifi-watch,xovi-persist,hl-snap,shelf,sidebar-entry
+sh uninstall-all.sh 10.11.99.1 --dry-run --skip chrony-boot-wakelock,wifi-watch,xovi-persist,hl-snap,ui-font,shelf,sidebar-entry
+sh uninstall-all.sh 10.11.99.1 --skip chrony-boot-wakelock,wifi-watch,xovi-persist,hl-snap,ui-font,shelf,sidebar-entry
 # Only the sidebar entry
-sh uninstall-all.sh 10.11.99.1 --skip chrony-boot-wakelock,battop,wifi-watch,xovi-persist,hl-snap,handwriting-stroke,shelf
+sh uninstall-all.sh 10.11.99.1 --skip chrony-boot-wakelock,wifi-watch,xovi-persist,hl-snap,ui-font,shelf,battop,handwriting-stroke
 ```
 
 Then reboot the whole device once (`reboot`, not `systemctl restart xochitl`).
@@ -252,7 +255,7 @@ This is the **authoritative** OTA recovery guide; the other documents link here.
 |---|---|---|---|
 | Master library, font and wallpaper pools, certificates, gateway password, sleep-screen setting, `cangjie-backups/` | `/home` | Kept | Nothing to do |
 | The web services' programs (`~/.local/bin`) | `/home` | Kept | Nothing to do |
-| `hl-snap` plugin; UI patches for the font menu, trash, new folder, comic margins and reader page turn | `/home` (`extensions.d/`, `exthome/`) | Files remain, but need a hashtable rebuild to take effect | Step 2, then run `install-all.sh` |
+| `hl-snap` and `ui-font` plugins; UI patches for the font menu, UI font tokens, trash, new folder, comic margins and reader tap-to-turn | `/home` (`extensions.d/`, `exthome/`) | Files remain, but need a hashtable rebuild to take effect | Step 2, then run `install-all.sh` |
 | Service units for the web services and `shelf.target` | `/usr` | **Wiped** | `shelf` step (or alone: `SHELF_NO_BUILD=1 sh deploy.sh <device IP>`) |
 | `xovi-reenable.service` (re-activates xovi at boot) | `/usr` | **Wiped** | `xovi-persist` step |
 | `chrony-boot-wakelock.service` | `/usr` | **Wiped** | `chrony-boot-wakelock` step |
@@ -269,18 +272,21 @@ These are known issues with specific triggers, not random faults. The numbers ar
 
 | # | Symptom | Cause | What to do |
 |---|---|---|---|
-| ② | Font menu, trash/new-folder, comic margins and reader tap-to-turn are **all** missing | They share one prerequisite, qt-resource-rebuilder. Without it, they are patches bundled in the `shelf` step and are **not listed separately** — `shelf` still counts as "installed", and only that step's output has a line saying the font-menu/trash/new-folder qmd were skipped because there is no qt-resource-rebuilder directory | `vellum add qt-resource-rebuilder`, then re-run `install-all.sh` |
+| ② | Font menu, trash/new-folder, comic margins and reader tap-to-turn are **all** missing (and the UI font only partly applies) | They share one prerequisite, qt-resource-rebuilder. Without it, they are patches bundled in the `shelf` step and are **not listed separately** — `shelf` still counts as "installed", and only that step's output has a line saying the font-menu/trash/new-folder qmd were skipped because there is no qt-resource-rebuilder directory | `vellum add qt-resource-rebuilder`, then re-run `install-all.sh` |
 | ③ | After several xochitl stops/starts in a short time, the whole device rebooted once | The xochitl service allows at most 4 restarts in 10 minutes, no matter who triggers them: a manual `systemctl restart xochitl`, installing or removing xochitl plugins with `vellum add/del` (formerly also appload, and WeRead launches and exits). On 2026-09-11 two restarts in a row were enough to trigger a full reboot — **the device recovered on its own; it was not bricked** | Since 2026-09-25 the deploy scripts reboot the device instead, so they no longer count towards this limit. When installing or removing plugins by hand, wait a few minutes between each |
 | ④ | The firmware safety gate refuses | By design: the same version number doesn't guarantee the same internal layout | Confirm the device firmware is the one you verified, then use `--force` |
 | ⑤ | The device rebooted at the end of the install | `xovi-apply` makes the changes take effect: since 2026-09-25 always by **rebooting the whole device** (back in about 20–60 seconds) rather than restarting xochitl alone, because xochitl may crash while exiting and the system then reboots anyway. It only reboots when something actually changed or xovi isn't active yet | Normal; don't use the device during install. The script waits for the device and runs `verify-on-device.sh` automatically. To avoid the interruption, `--skip xovi-apply` and run `sh deploy-xovi-apply.sh <host>` later. **To apply by hand**: just `reboot`; **never** run `xovi/start` by hand (when xovi is already active it crashes xochitl and the device reboots itself — real-hardware incident, 2026-09-20) |
 | ⑦ | It exits with an error before installing: `cannot connect to root@…` / `only N MB free` / `needs root` / `firmware not on the allowlist` | The automatic pre-install checks stopped it; nothing on the device changed | Can't connect: follow the steps in the message (asleep/USB → IP → host key → passwordless); not enough space: clean up `/home/root` and `cangjie-backups/` and retry; firmware: see ④ |
 | ⑧ | The last step reports that the device couldn't schedule the reboot and the changes aren't in effect yet; the step counts as failed | The `systemctl reboot` command on the device itself failed. The files are already swapped in, but xochitl is still running the old ones; the script has put the "pending apply" marker back (since 2026-09-25; before that it waited for a reboot that never came and then reported success). This path has only been simulated locally | Run `reboot` on the device, then `sh verify-on-device.sh <host>` once it's back; or re-run `sh deploy-xovi-apply.sh <host>` later, which tries again |
 
+| ⑨ | The last step reports "no xovi in xochitl, and no xovi/start on the device", and the step counts as failed | xovi isn't installed on the device (or vellum removed it): a reboot couldn't make the plugins and UI patches take effect anyway, so the script stops with an error instead of rebooting (since 2026-10-09; before, it rebooted for nothing). Only simulated locally | Run `vellum add xovi` on the device, then re-run `install-all.sh` |
+| ⑩ | ssh drops partway through (e.g. `Timeout, server … not responding`) | The device went to sleep, the cable was unplugged or WiFi dropped. ssh has keep-alives and detects this in about 15 seconds (since 2026-10-09; before, it hung forever). Scripts sent to the device only run once they arrive in full, so the step that was cut off ran nothing | Wake the device, check the connection, and re-run `install-all.sh` (idempotent; what's already installed isn't touched again) |
+
 ### Other troubleshooting
 
 - Start with the closing summary of `install-all.sh` to find the failing step; the header comment of the matching `packaging/deploy-*.sh` explains what the step does and common failures.
 - The web page's "Manage" section shows whether each plugin is actually loaded into xochitl ("loaded / not loaded"). A switch that is on but shows "not loaded" means the plugin isn't installed or the device hasn't been rebooted since. "Manage → Device health" shows a fuller picture (services, extensions, the previous boot's log).
-- To check the scripts without touching a device: `bash packaging/tests/run_sim_tests.sh` (local simulation, 356 assertions, all passing when run on 2026-09-30). It is no substitute for testing on real hardware.
+- To check the scripts without touching a device: `bash packaging/tests/run_sim_tests.sh` (local simulation, 370 assertions, all passing when run on 2026-10-09). It is no substitute for testing on real hardware.
 
 ### Backups and idempotence (short version)
 
@@ -292,6 +298,7 @@ Every install script can be re-run; before overwriting an existing file on the d
   - **Run end to end on real hardware**: `install-all.sh` (once each on 2026-09-22, 09-24, 09-25 and 09-30) and `uninstall-all.sh` (2026-09-25); "swap in the new `.so` → reboot → xovi restored at boot → check" was re-verified on real hardware on 2026-09-25 (43✓).
   - **Two real-hardware deploys on 2026-09-30**: at 14:10 `deploy.sh` deployed the fifth-audit version; after a reboot the check was 38✓ 1⚠ (just booted) 0✗. At 15:23 `install-all.sh` deployed, **automatically removed the battery sampler and `hw-stroke.so` and rebooted only once**; the check was 36✓ 1⚠ (just booted) 0✗, `/usr` units 12/12, no restarts among the 9 resident services. The installer changes from the fourth and fifth audits (checking connectivity only once per `install-all` run, batched pushes, not re-uploading unchanged files, and so on) all ran in that round, which passed. This only proves "installed and healthy"; the new shelf and notes features haven't been tried one by one on the device yet (list in [CHANGELOG 09-30](CHANGELOG.md#09-30), Chinese).
   - **Only simulated locally, never on real hardware**: keeping programs under dm-verity during uninstall, clearing the staging area on uninstall, the "nothing changed, so no reboot" path (including standalone deploys), ignoring disconnect signals in the swap-in critical section, handling a failed reboot command, the summary's "prerequisite not met" line, the uninstall changes from the fifth audit (not aborting on non-empty directories, `--only` refreshing the uninstall manifest, and so on), and using `uninstall-all.sh` to clean up only removed components.
+  - **The installer changes from the sixth audit on 2026-10-09** (whole-script transfer, ssh keep-alives, the wake lock, erroring out instead of rebooting when there is no xovi, and so on): **not deployed and never run on real hardware**; only simulated locally.
   - Full record: [`packaging/README.md` "验证现状"](../packaging/README.md#验证现状如实说明不夸大) (Chinese). When trying them on a device, go one step at a time: `--dry-run` first, then single steps or `--skip`.
 - **Writing `/usr` still relies on two safeguards, "check dm-verity first + a time-limited read-write window"**, rather than never touching `/usr`; writing `/usr` once triggered a rollback that bricked the device (2026-08-16).
 - **Running `shelf/install.sh --password <plaintext>` directly on the device briefly exposes the password in the device's process list**; passing it through `deploy.sh --password` on your computer doesn't.

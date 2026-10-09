@@ -11,6 +11,7 @@
 //! `mkdir.rs` 是同一份基础设施，见该模块文档）；这里只留领域校验（uuid 形状/名字核对/是否已在回收站）。
 use crate::agent_failures::AgentFailures;
 use crate::pending_queue::{Handout, PendingQueue, HANDOUT_MAX_ATTEMPTS};
+use rmsvc_core::xochitl::Metadata;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -45,11 +46,19 @@ impl TrashQueue {
         self
     }
 
-    /// 文档 `.metadata` 的 (visibleName, parent)；文件不存在 → None。
-    fn meta(&self, uuid: &str) -> Option<(String, String)> {
-        let v = rmsvc_core::xochitl::read_metadata(&self.lib_dir, uuid)?;
-        let s = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
-        Some((s("visibleName"), s("parent")))
+    /// 文档 `.metadata`：不在 → `Ok(None)`；读/解析失败（可能正被 xochitl 改写）→ `Err`。
+    fn meta(&self, uuid: &str) -> Result<Option<Metadata>, String> {
+        rmsvc_core::xochitl::read_meta(&self.lib_dir, uuid)
+    }
+
+    /// 拉取时这一项还要不要等：仍在书库且没进回收站/没删 → 要；`.metadata` 没了 → 不要；读不了 → 这次先留着。
+    /// 此前读失败与"不在"同义，xochitl 恰好在改写 `.metadata` 时来拉，这一项就被当成已完成静默移出队列、书没进回收站。
+    fn still_pending(&self, uuid: &str) -> bool {
+        match self.meta(uuid) {
+            Ok(Some(m)) => m.is_live(),
+            Ok(None) => false,
+            Err(_) => true,
+        }
     }
 
     /// 入队：uuid 必须真在书库且 visibleName 与 `name` 相符（忽略大小写、首尾空白），否则拒绝——错 uuid 就是错删别的书。
@@ -57,12 +66,13 @@ impl TrashQueue {
         if !rmsvc_core::xochitl::is_uuid_shape(uuid) {
             return Err("uuid 形状不对".into());
         }
-        let (vis, parent) = self.meta(uuid).ok_or("书库里没有这份文档")?;
+        let m = self.meta(uuid)?.ok_or("书库里没有这份文档")?;
+        let vis = m.visible_name.clone();
         if !vis.trim().eq_ignore_ascii_case(name.trim()) {
             return Err(format!("名字对不上（书库里叫《{vis}》），拒绝入队"));
         }
-        if parent == "trash" {
-            return Err("已经在回收站".into());
+        if !m.is_live() {
+            return Err("已经在回收站（或已删除）".into());
         }
         // `uuid: &str` 是 Copy，两个闭包各自拿一份拷贝就够——不要先转成 String 再共享，
         // 那样第一个闭包借用、第二个闭包要移动，会被借用检查器拦下来。
@@ -74,7 +84,7 @@ impl TrashQueue {
     /// 待办 uuid（QML 代理拉取）：顺手清掉已进回收站 / 已不存在的，以及交满 [`HANDOUT_MAX_ATTEMPTS`] 次仍没进回收站、
     /// 放弃的（xochitl 的 `entryForId` 拿不到条目但 `.metadata` 还在时，代理每次都执行失败）。返回 (待办 uuid 列表, 本次清掉几条)。
     pub fn pending(&self) -> Result<(Vec<String>, usize), String> {
-        let (kept, pruned) = self.q.prune(|p| matches!(self.meta(&p.uuid), Some((_, parent)) if parent != "trash"))?;
+        let (kept, pruned) = self.q.prune(|p| self.still_pending(&p.uuid))?;
         let taken = self.handout.take(kept.iter().map(|p| p.uuid.clone()).collect());
         let mut dropped = pruned;
         if !taken.give_up.is_empty() {
@@ -138,6 +148,20 @@ mod tests {
         let (ids, pruned) = q.pending().unwrap();
         assert_eq!((ids, pruned), (vec!["22222222-2222-2222-2222-222222222222".to_string()], 1));
         assert_eq!(q.list().len(), 1);
+    }
+
+    /// `.metadata` 读不了（正被改写）不算"已完成"，这一项留在队列里；文件真没了才出队。
+    #[test]
+    fn unreadable_metadata_keeps_item_pending() {
+        let t = tempfile::tempdir().unwrap();
+        let d = lib(&t);
+        let q = TrashQueue::new(&t.path().join("state"), &d).with_handout_quiet(Duration::ZERO);
+        q.add("22222222-2222-2222-2222-222222222222", "用户的书").unwrap();
+        let meta = d.join("22222222-2222-2222-2222-222222222222.metadata");
+        std::fs::write(&meta, b"{ half").unwrap();
+        assert_eq!(q.pending().unwrap(), (vec!["22222222-2222-2222-2222-222222222222".to_string()], 0));
+        std::fs::remove_file(&meta).unwrap();
+        assert_eq!(q.pending().unwrap(), (vec![], 1));
     }
 
     /// xochitl 一直执行不成（.metadata 在、parent 不是 trash）：交满次数后放弃、移出队列，不再每 30 秒重交一次。

@@ -47,7 +47,7 @@ paru -S ghidra --assume-installed java-environment=21
 下面 `<proj>` 是放 `.gpr` 的目录（即本目录），`J` 是 JDK 21 路径。**先关掉 GUI 里的这个工程**——headless 和 GUI 不能同时打开，会抢 `.lock`。
 
 ```sh
-J=~/.local/share/sdkman/candidates/java/21.0.12-tem
+J=<你的 JDK 21 目录>   # 例如 sdkman 装的 ~/.sdkman/candidates/java/21.x-tem
 
 # 首次导入并自动分析（耗时较长）
 JAVA_HOME=$J ghidra-analyzeHeadless <proj> xochitl_328_analysis -import <路径>/xochitl-3.28.0.172

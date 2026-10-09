@@ -6,16 +6,7 @@ use notecore::model::Book;
 use rmsvc_core::paths::Paths;
 use rmsvc_core::registry::{enc, SvcClient};
 
-#[derive(serde::Deserialize, Debug, Clone)]
-pub struct BookBrief {
-    pub uuid: String,
-    // ink-serve 的 `/books` 本来就吐这个字段（`main.rs` 的 `list_active` 投影），2026-09-16 之前
-    // 这里没声明只是没人用；当时给 host `shelf notes pull` 认书用（该 CLI 2026-09-18 已砍）。
-    pub title: String,
-}
-
 pub trait EntryStore: Send + Sync {
-    fn list_books(&self) -> Result<Vec<BookBrief>, String>;
     fn book(&self, uuid: &str) -> Result<Book, String>;
 }
 
@@ -28,11 +19,7 @@ impl InkHttp {
 }
 
 impl EntryStore for InkHttp {
-    fn list_books(&self) -> Result<Vec<BookBrief>, String> {
-        let v = self.0.get_json("/books")?;
-        serde_json::from_value(v.get("items").cloned().unwrap_or_default()).map_err(|e| format!("books 形状不对: {e}"))
-    }
     fn book(&self, uuid: &str) -> Result<Book, String> {
-        serde_json::from_value(self.0.get_json(&format!("/books/{}", enc(uuid)))?).map_err(|e| format!("book 形状不对: {e}"))
+        self.0.get_typed(&format!("/books/{}", enc(uuid)))
     }
 }

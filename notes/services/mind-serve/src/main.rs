@@ -17,7 +17,7 @@ mod worker;
 use config::MindConfig;
 use ink::{EntryStore, InkHttp};
 use ledger::Ledger;
-use rmsvc_core::http::{bind, ApiError, Reply, Router};
+use rmsvc_core::http::{bind, ApiError, Reply, Router, ServeOpts};
 use rmsvc_core::paths::Paths;
 use rmsvc_core::service::{self, ServiceSpec};
 use std::sync::Arc;
@@ -56,13 +56,13 @@ fn main() {
     let st = Arc::new(State { cfg, ledger: Ledger::open(&paths.app_state_dir(APP).join("mind.json")), store: InkHttp::new(paths.clone()), clients: Default::default() });
     let router = Router::new()
         .get("/status", bind(&st, |s, _| {
-            let cfg = s.cfg();
-            Ok(Reply::ok(&serde_json::json!({"config": cfg.public(), "usage": s.ledger.snapshot(), "usageByModel": vendorcfg::usage::usage_profile(&cfg, config::PRESETS, &s.ledger.snapshot())})))
+            let (cfg, usage) = (s.cfg(), s.ledger.snapshot());
+            Ok(Reply::ok(&serde_json::json!({"config": cfg.public(), "usageByModel": vendorcfg::usage::usage_profile(&cfg, config::PRESETS, &usage), "usage": usage})))
         }))
         .get("/config", bind(&st, |s, _| Ok(Reply::ok(&s.cfg().public()))))
         .put("/config", bind(&st, |s, r| {
             let j = r.json()?;
-            let next = s.cfg.update(|c| c.apply(&j.0)).map_err(ApiError::bad)?;
+            let next = s.cfg.update(|c| c.apply(&j)).map_err(ApiError::bad)?;
             Ok(Reply::ok(&next.public()))
         }))
         .post("/books/{uuid}/entries/{id}/ask", bind(&st, |s, r| {
@@ -80,8 +80,5 @@ fn main() {
             }
         }));
     println!("[mind-serve] 配置 {}；后端 {} {}；key {:?}", st.cfg.path().display(), st.cfg().backend, st.cfg().model(), st.cfg().key_source());
-    if let Err(e) = service::run(&SPEC, &bind_addr, &paths, router) {
-        eprintln!("[mind-serve] {e}");
-        std::process::exit(1);
-    }
+    service::run_or_exit(&SPEC, &bind_addr, &paths, router, ServeOpts::default())
 }

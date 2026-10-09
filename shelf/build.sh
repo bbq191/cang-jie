@@ -1,6 +1,6 @@
 #!/bin/sh
 # 交叉编译书架全部服务的 aarch64 **全静态** 二进制（reMarkable Paper Pro Move）。
-# 前置同 reading/device-rs/build.sh：rustup target add aarch64-unknown-linux-musl + aarch64 交叉 gcc。
+# 前置：rustup target add aarch64-unknown-linux-musl + aarch64 交叉 gcc。
 # 链接器与 CC/AR 在 .cargo/config.toml。
 set -e
 cd "$(dirname "$0")"

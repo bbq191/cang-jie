@@ -47,11 +47,8 @@ impl<Extra: Clone + Serialize + DeserializeOwned> Ledger<Extra> {
     /// 累计用量是用户看花费的依据，不该被静默清零（2026-09-24 第三轮审计，跟 `ConfigCell`/条目库同一纪律）。
     pub fn open(path: &Path) -> Ledger<Extra> {
         if rmsvc_core::config::is_corrupt::<UsageBook<Extra>>(path) {
-            let bak = path.with_extension("json.corrupt");
-            if !bak.exists() {
-                let _ = std::fs::copy(path, &bak);
-            }
-            eprintln!("[vendorcfg] 用量账本 {} 解析失败，从零记起（原内容另存 {}）", path.display(), bak.display());
+            rmsvc_core::config::backup_corrupt(path, None);
+            eprintln!("[vendorcfg] 用量账本 {} 解析失败，从零记起（原内容另存同目录 .corrupt，已有副本就不覆盖）", path.display());
         }
         Ledger { path: path.to_path_buf(), usage: Mutex::new(rmsvc_core::config::load_or_default(path)) }
     }

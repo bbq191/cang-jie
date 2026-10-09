@@ -48,6 +48,7 @@ pub fn ingest_doc(lib: &Path, crops_dir: &Path, db: &BookDb, cfg: &IngestConfig,
         return Ok(Some(DocStats::default()));
     }
     let Some(content) = doc.content().filter(|c| c.file_type == "epub") else { return Ok(None) };
+    let page_ids = content.page_ids();
     // 页→章：每次摄取现读（.epubindex 在 xochitl 重排后会变）
     let map = match (doc.epub_file(), doc.epubindex_bytes()) {
         (Some(e), Some(i)) => BookMap::from_epub_reader(e, &i),
@@ -83,7 +84,7 @@ pub fn ingest_doc(lib: &Path, crops_dir: &Path, db: &BookDb, cfg: &IngestConfig,
                         continue;
                     }
                 };
-                let page_index = content.pages.iter().position(|p| p == page_id).unwrap_or(0);
+                let page_index = page_ids.iter().position(|p| *p == page_id.as_str()).unwrap_or(0);
                 let ch = map.chapter_of(page_index);
                 let ctx = PageCtx { book: uuid, page: page_id, page_index, chapter: ch.as_ref().map(|c| c.index), chapter_title: ch.as_ref().map(|c| c.title).unwrap_or(""), subhead: ch.as_ref().and_then(|c| c.subhead), now };
                 let drafts = drafts_of_page(&page, &th);

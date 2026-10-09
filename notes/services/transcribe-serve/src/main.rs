@@ -12,8 +12,8 @@ mod worker;
 use config::TranscribeConfig;
 use ink::{EntryStore, InkHttp};
 use ledger::Ledger;
-use rmsvc_core::events::{follow, EventBus};
-use rmsvc_core::http::{bind, ApiError, Reply, Router};
+use rmsvc_core::events::{follow, Event, EventBus};
+use rmsvc_core::http::{bind, ApiError, Reply, Router, ServeOpts};
 use rmsvc_core::paths::Paths;
 use rmsvc_core::service::{self, ServiceSpec};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
@@ -79,8 +79,7 @@ impl State {
 /// loopback 长心跳，与网关汇聚同一套实现）。
 fn watch_ink(st: Arc<State>) {
     follow(&st.paths.clone(), "ink-serve", |json| {
-        let v: serde_json::Value = serde_json::from_str(json).unwrap_or_default();
-        if v["area"] == "notes" && v["kind"] == "entries" && st.cfg().auto {
+        if Event::parse(json).is_some_and(|e| e.is("notes", "entries")) && st.cfg().auto {
             st.kick();
         }
     });
@@ -135,13 +134,13 @@ fn main() {
                 Ok(b) => (true, b.iter().map(|x| x.pending).sum::<usize>()),
                 Err(_) => (false, 0),
             };
-            let cfg = s.cfg();
-            Ok(Reply::ok(&serde_json::json!({"config": cfg.public(), "usage": s.ledger.snapshot(), "usageByModel": vendorcfg::usage::usage_profile(&cfg, config::PRESETS, &s.ledger.snapshot()), "failures": s.failures.list(), "inkReachable": ink, "pending": pending})))
+            let (cfg, usage) = (s.cfg(), s.ledger.snapshot());
+            Ok(Reply::ok(&serde_json::json!({"config": cfg.public(), "usageByModel": vendorcfg::usage::usage_profile(&cfg, config::PRESETS, &usage), "usage": usage, "failures": s.failures.list(), "inkReachable": ink, "pending": pending})))
         }))
         .get("/config", bind(&st, |s, _| Ok(Reply::ok(&s.cfg().public()))))
         .put("/config", bind(&st, |s, r| {
             let j = r.json()?;
-            let next = s.cfg.update(|c| c.apply(&j.0)).map_err(ApiError::bad)?;
+            let next = s.cfg.update(|c| c.apply(&j)).map_err(ApiError::bad)?;
             let has_key = next.key().is_some();
             s.bus.publish("notes", "transcribe");
             if has_key && next.auto {
@@ -166,8 +165,5 @@ fn main() {
             Ok(Reply::ok(&serde_json::json!({"ok": true})))
         }));
     println!("[transcribe-serve] 配置 {}；后端 {} {}；key {:?}", st.cfg.path().display(), st.cfg().backend, st.cfg().model(), st.cfg().key_source());
-    if let Err(e) = service::run(&SPEC, &bind_addr, &paths, router) {
-        eprintln!("[transcribe-serve] {e}");
-        std::process::exit(1);
-    }
+    service::run_or_exit(&SPEC, &bind_addr, &paths, router, ServeOpts::default())
 }

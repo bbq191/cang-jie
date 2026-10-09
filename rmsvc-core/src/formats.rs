@@ -37,9 +37,75 @@ pub fn dotted(exts: &[&str]) -> String {
     exts.iter().map(|e| format!(".{e}")).collect::<Vec<_>>().join(" ")
 }
 
+/// 去掉扩展名的主干（`书.epub` → `书`；无扩展名/点开头 → 原样）。与 [`ext_of`] 的切分规则一致。
+pub fn stem_of(name: &str) -> &str {
+    match name.rsplit_once('.') {
+        Some((stem, _)) if !stem.is_empty() => stem,
+        _ => name,
+    }
+}
+
+/// 扩展名 → MIME（投 xochitl `/upload`、下载回执、EPUB manifest 共用的单一表）；认不出的给 `application/octet-stream`。
+pub fn mime_of(name: &str) -> &'static str {
+    match ext_of(name).as_str() {
+        "epub" => "application/epub+zip",
+        "pdf" => "application/pdf",
+        "zip" => "application/zip",
+        // xochitl 自己的导出包（zip 容器），/upload 认 application/zip
+        "rmdoc" => "application/zip",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "ttf" => "font/ttf",
+        "otf" => "font/otf",
+        "ttc" => "font/collection",
+        "json" => "application/json",
+        "md" => "text/markdown; charset=utf-8",
+        "txt" => "text/plain; charset=utf-8",
+        "html" | "htm" => "text/html; charset=utf-8",
+        _ => "application/octet-stream",
+    }
+}
+
+/// 按文件头魔数认格式（不信扩展名）：返回与 [`ext_of`] 同形的扩展名（`png`/`jpg`/`pdf`/`zip`/`ttf`…），认不出 `None`。
+/// 注意 EPUB/CBZ/DOCX 都是 zip，这里只答 `zip`；字体魔数与 `ttf::is_font` 同一套。
+pub fn sniff(head: &[u8]) -> Option<&'static str> {
+    Some(match head {
+        [0x89, b'P', b'N', b'G', ..] => "png",
+        [0xFF, 0xD8, 0xFF, ..] => "jpg",
+        [b'%', b'P', b'D', b'F', ..] => "pdf",
+        [b'P', b'K', 3, 4, ..] => "zip",
+        [b'G', b'I', b'F', b'8', ..] => "gif",
+        [b'R', b'I', b'F', b'F', _, _, _, _, b'W', b'E', b'B', b'P', ..] => "webp",
+        [0, 1, 0, 0, ..] | [b't', b'r', b'u', b'e', ..] => "ttf",
+        [b'O', b'T', b'T', b'O', ..] => "otf",
+        [b't', b't', b'c', b'f', ..] => "ttc",
+        _ => return None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stem_mime_and_sniff() {
+        assert_eq!(stem_of("书.名.EPUB"), "书.名");
+        assert_eq!(stem_of("noext"), "noext");
+        assert_eq!(stem_of(".hidden"), ".hidden");
+        assert_eq!(mime_of("a.EPUB"), "application/epub+zip");
+        assert_eq!(mime_of("a.pdf"), "application/pdf");
+        assert_eq!(mime_of("x.JPEG"), "image/jpeg");
+        assert_eq!(mime_of("x"), "application/octet-stream");
+        assert_eq!(sniff(b"\x89PNG\r\n"), Some("png"));
+        assert_eq!(sniff(b"\xFF\xD8\xFF\xE0"), Some("jpg"));
+        assert_eq!(sniff(b"PK\x03\x04rest"), Some("zip"));
+        assert_eq!(sniff(b"%PDF-1.7"), Some("pdf"));
+        assert_eq!(sniff(b"OTTO"), Some("otf"));
+        assert_eq!(sniff(b"PK"), None, "太短不认");
+    }
 
     #[test]
     fn ext_and_whitelist() {

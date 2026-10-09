@@ -340,8 +340,10 @@ echo old > "$CJ_SYSD/shelf-gateway.service"; echo old > "$R/home/root/.local/bin
 echo "user note" > "$R/home/root/.local/share/shelf/user-file.txt"
 mkdir -p "$R/home/root/.local/state/notes"; echo keep > "$R/home/root/.local/state/notes/entries.json"
 : > "$CJ_SIM_LOG"
+rm -rf "$CJ_PENDING_DIR"   # 清掉 install 自己留下的待生效标记，下面断言的标记只能来自 uninstall
 run sh "$R/home/root/.local/bin/shelf-uninstall" >"$R/out.txt" 2>&1; rc=$?
 check "uninstall 全量：退出 0" test "$rc" -eq 0
+check "uninstall：删了 qmd → 记下待生效标记 shelf-qmd（下次部署才知道要整机重启卸下注入）" test -f "$CJ_PENDING_DIR/shelf-qmd"
 POST_SIG="$(tree_sig | grep -v -e 'home/root/\.config/shelf/' -e 'home/root/\.local/share/shelf/' -e 'home/root/\.local/state/shelf/' -e 'home/root/\.local/state/notes/')"
 sig_eq "uninstall：装过的每个文件都被删（文件树回到安装前，仅剩用户数据）" "$PRE_SIG" "$POST_SIG"
 check "uninstall：comic-margins qmd 也删了" test ! -e "$Q/shelf-comic-margins.qmd"
@@ -680,7 +682,7 @@ printf 'driftfile /x\nmakestep 1 3\n' > "$CONF"
 ( cd "$PKG" && CJ_CHRONY_CONF="$CONF" CJ_MOUNTS="$R/mounts" CJ_BACKUP_DIR="$R/cbk" CJ_TMPDIR="$R" run sh deploy-chrony-cn.sh 127.0.0.1 ) >/dev/null 2>&1
 check "chrony-cn：原配置里一条 server 都没有（用 pool）→ 追加 4 条，而不是每次都\"改不动\"" test "$(grep -c '^server ' "$CONF")" -eq 4
 ( cd "$PKG" && CJ_SIM_UNSYNCED=1 CJ_CHRONY_CONF="$CONF" CJ_MOUNTS="$R/mounts" CJ_BACKUP_DIR="$R/cbk" CJ_TMPDIR="$R" bash -c "PATH='$STUBS:'\$PATH sh deploy-chrony-cn.sh 127.0.0.1" ) >"$R/out.txt" 2>&1; rc=$?
-check "chrony-cn：时钟没同步 → 退出 2 并提示看 journalctl" test "$rc" -eq 2 -a -n "$(grep journalctl "$R/out.txt")"
+check "chrony-cn：时钟没同步但配置已写好 → 退出 0、打 ⚠ 并提示 journalctl" test "$rc" -eq 0 -a -n "$(grep "配置已写好" "$R/out.txt")" -a -n "$(grep journalctl "$R/out.txt")"
 printf 'overlay /etc overlay rw 0 0\n' > "$R/mounts-ov"; printf 'driftfile /x\nserver a.google.com iburst\n' > "$CONF"; : > "$CJ_SIM_LOG"
 ( cd "$PKG" && CJ_SIM_VERITY=1 CJ_CHRONY_CONF="$CONF" CJ_MOUNTS="$R/mounts-ov" CJ_BACKUP_DIR="$R/cbk" CJ_TMPDIR="$R" bash -c "PATH='$STUBS:'\$PATH sh deploy-chrony-cn.sh 127.0.0.1" ) >"$R/out.txt" 2>&1; rc=$?
 check "chrony-cn：overlay + dm-verity → 只改 /etc 视图（重启会丢）、不 remount、退出 0" test "$rc" -eq 0 -a "$(count_log remount)" = 0 -a "$(grep -c '^server ntp' "$CONF")" -ge 1 -a -n "$(grep 'dm-verity' "$R/out.txt")"
@@ -849,6 +851,7 @@ check "  └ 在位统计仍是 12/12" test -n "$(vline '✓ 单元：12/12 个�
 vcase "旧版遗留的 battop.timer 还在 → ⚠" 0 "⚠ battop.timer：已移除的电池刺客（2026-09-30）遗留（单元 在，载荷 不在）" "s/^UNIT${T}removed${T}battop.timer${T}0/UNIT${T}removed${T}battop.timer${T}1/"
 vcase "已退役的侧栏 qmd 还在、appload 也在 → ⚠" 0 "⚠ koreader-sidebar-entry.qmd：已退役的 KOReader/WeRead 侧栏入口还在" "\$a QRR_FILE${T}koreader-sidebar-entry.qmd${T}1" "s/^HAS_APPLOAD${T}0/HAS_APPLOAD${T}1/"
 vcase "已退役的侧栏 qmd 还在、appload 已卸 → ✗（它 IMPORT 的模块不在了）" 1 "✗ koreader-sidebar-entry.qmd：已退役的侧栏入口还在，而 appload 已不在" "\$a QRR_FILE${T}koreader-sidebar-entry.qmd${T}1"
+check "  └ 清理命令只留 sidebar-entry 一步（--skip 由步骤表算出，不手写）" test -n "$(vline "uninstall-all.sh --skip chrony-boot-wakelock,wifi-watch,xovi-persist,hl-snap,ui-font,shelf,battop,handwriting-stroke")"
 vcase "journal 有 panic → ✗" 1 "✗ panic：1 条相关日志；最近一条：thread 'main' panicked at src/x.rs" "\$a ALERT${T}J${T}panic${T}1${T}thread 'main' panicked at src/x.rs"
 vcase "dmesg 与 journal 同一次 OOM 各一份 → 取较大计数、样例用 journal" 1 "✗ OOM：3 条相关日志；最近一条：J-sample" "\$a ALERT${T}K${T}oom${T}3${T}K-sample" "\$a ALERT${T}J${T}oom${T}2${T}J-sample"
 vcase "SHELF-MKDIR 超时只 ⚠" 0 "⚠ SHELF-MKDIR 超时：4 条相关日志" "\$a ALERT${T}J${T}mkdir-timeout${T}4${T}SHELF-MKDIR: transfer timeout after 9000ms"
@@ -1138,6 +1141,59 @@ new_sandbox; export CJ_ALLOWLIST_LOCAL="$R/allow.local.txt"; xovi_live on; seed_
 ( cd "$PKG" && run sh verify-on-device.sh 127.0.0.1 ) >"$R/vout.txt" 2>&1
 check "verify 采集：旧设备上残留的 battop.service / battop.timer / hw-stroke.so / 待换入的 hw-stroke.so 都报 ⚠" test -n "$(vline '⚠ battop.service：已移除的电池刺客')" -a -n "$(vline '⚠ battop.timer：已移除的电池刺客')" -a -n "$(vline '⚠ 扩展 hw-stroke.so：已移除的手写优化')" -a -n "$(vline '⚠ 待换入区 hw-stroke.so')"
 unset CJ_ALLOWLIST_LOCAL CJ_SKIP_BUILD SHELF_NO_BUILD
+
+# ═══════════════════════════ 11. 2026-10-09 第六轮审计新增 ═══════════════════════════
+section "2026-10-09 第六轮：脚本整组传输 / 部署期唤醒锁 / 无 xovi 不白重启 / 单元不重复备份"
+new_sandbox
+# dev_pipe 把整段包成 { …; } </dev/null：组内读 stdin 的命令拿不到后面的脚本；断在半截的脚本一条都不执行
+# shellcheck disable=SC2034  # HOST 由 lib.sh 的 rssh_in 读
+( cd "$PKG" && . ./lib.sh && HOST=127.0.0.1 && PATH="$STUBS:$PATH" dev_script <<'DEVICE_SCRIPT'
+got="$(cat)"
+echo "CAT-GOT:[$got]" >> "$CJ_SIM_LOG"
+echo AFTER-CAT >> "$CJ_SIM_LOG"
+DEVICE_SCRIPT
+) >/dev/null 2>&1
+check "dev_script：组内 cat 读不到后面的脚本（stdin=/dev/null），其后的命令照常执行" test "$(count_log 'CAT-GOT:\[\]')" = 1 -a "$(count_log AFTER-CAT)" = 1
+: > "$CJ_SIM_LOG"
+printf '{\necho PARTIAL-RAN >> "%s"\nif true; then\n' "$CJ_SIM_LOG" | PATH="$STUBS:$PATH" ssh root@127.0.0.1 "sh -s" >/dev/null 2>&1
+check "整组传输：传输断在半截（缺配对的 }）→ 一条都不执行" test "$(count_log PARTIAL-RAN)" = 0
+# 部署期唤醒锁：install-all 拿一把带超时的锁；被它编排的子脚本（deploy.sh 等）不各拿各放；整机重启后不再去放
+mkdir -p "$R/sys/power"; : > "$R/sys/power/wake_lock"; : > "$R/sys/power/wake_unlock"
+export CJ_SKIP_BUILD=1 SHELF_NO_BUILD=1 CJ_ALLOWLIST_LOCAL="$R/allow.local.txt"
+xovi_live on; : > "$CJ_SIM_LOG"
+( cd "$PKG" && run sh install-all.sh 127.0.0.1 --force --skip chrony-cn,timezone-cn ) >"$R/out.txt" 2>&1; rc=$?
+check "唤醒锁：install-all 整轮只拿一次，锁带超时（到点内核自动放，host 中断也不会让设备永远不睡）" test "$rc" -eq 0 -a "$(count_log 'wake_lock')" = 1 -a "$(cat "$R/sys/power/wake_lock")" = "cangjie-deploy 1200000000000"
+check "唤醒锁：最后一步整机重启了 → 锁随重启消失，不再连设备去放" test "$(count_log 'wake_unlock')" = 0
+: > "$CJ_SIM_LOG"
+( cd "$PKG" && run sh install-all.sh 127.0.0.1 --skip chrony-cn,timezone-cn ) >"$R/out.txt" 2>&1; rc=$?
+check "唤醒锁：没重启的一轮 → 结束时放一次（子脚本不提前放）" test "$rc" -eq 0 -a "$(count_log 'wake_lock')" = 1 -a "$(count_log 'wake_unlock')" = 1 -a "$(cat "$R/sys/power/wake_unlock")" = "cangjie-deploy"
+: > "$CJ_SIM_LOG"
+( cd "$PKG" && run sh install-all.sh 127.0.0.1 --skip chrony-cn,timezone-cn,xovi-apply ) >"$R/out.txt" 2>&1
+check "install-all --skip xovi-apply：汇总里提醒改动要等整机重启才生效" grep -q '跳过了 xovi-apply' "$R/out.txt"
+: > "$CJ_SIM_LOG"
+( cd "$PKG" && run sh uninstall-all.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+check "唤醒锁：uninstall-all 拿一次、结束放一次" test "$rc" -eq 0 -a "$(count_log 'wake_lock')" = 1 -a "$(count_log 'wake_unlock')" = 1
+: > "$CJ_SIM_LOG"
+( cd "$PKG" && CJ_AWAKE=0 run sh uninstall-all.sh 127.0.0.1 ) >/dev/null 2>&1
+check "唤醒锁：CJ_AWAKE=0 关掉 → 不碰唤醒锁" test "$(count_log 'wake_')" = 0
+unset CJ_SKIP_BUILD SHELF_NO_BUILD CJ_ALLOWLIST_LOCAL
+# xovi 没生效、xovi/start 又没了：有待生效改动也不白白整机重启
+new_sandbox; rm "$R/home/root/xovi/start"; xovi_live off
+echo '[Unit]' > "$CJ_SYSD/xovi-reenable.service"; mkdir -p "$CJ_PENDING_DIR"; : > "$CJ_PENDING_DIR/shelf-qmd"; : > "$CJ_SIM_LOG"
+( cd "$PKG" && run sh deploy-xovi-apply.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+check "xovi-apply：xovi 未生效且没有 xovi/start（哪怕装了 xovi-reenable、有待生效改动）→ 报错指路，不整机重启" test "$rc" -ne 0 -a "$(count_log 'systemctl reboot')" = 0 -a -n "$(grep 'vellum add xovi' "$R/out.txt")" -a -e "$CJ_PENDING_DIR/shelf-qmd"
+# xovi/start 路径的健康检查也核对 ui-font
+new_sandbox; xovi_live off; echo x > "$R/home/root/xovi/extensions.d/hl-snap.so"; echo x > "$R/home/root/xovi/extensions.d/ui-font.so"
+( cd "$PKG" && run sh deploy-xovi-apply.sh 127.0.0.1 ) >"$R/out.txt" 2>&1
+check "xovi-apply（xovi/start 路径）：健康检查同时列出 hl-snap 与 ui-font 的加载情况" test -n "$(grep 'hl-snap\.so 加载' "$R/out.txt")" -a -n "$(grep 'ui-font\.so 加载' "$R/out.txt")"
+# /usr 单元内容没变、只缺 wants 链接：补链接，但不再堆一份同内容的备份
+new_sandbox
+( cd "$PKG" && run sh deploy-chrony-boot-wakelock.sh 127.0.0.1 ) >/dev/null 2>&1
+rm -f "$CJ_SYSD/multi-user.target.wants/chrony-boot-wakelock.service"
+( cd "$PKG" && run sh deploy-chrony-boot-wakelock.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+check "usr 单元只缺 wants 链接：补回链接、不备份同内容的单元" test "$rc" -eq 0 -a -L "$CJ_SYSD/multi-user.target.wants/chrony-boot-wakelock.service" -a -z "$(find "$R/home/root" -path '*cangjie-backups/chrony-boot-wakelock*' 2>/dev/null)"
+: > "$CJ_SIM_LOG"; CJ_SIM_VERITY=1 bash -c "cd '$PKG' && PATH='$STUBS:'\$PATH sh deploy-chrony-boot-wakelock.sh 127.0.0.1" >"$R/out.txt" 2>&1; rc=$?
+check "usr 单元已装好且没变、之后才开了 dm-verity：如实报已是最新（不报跳过写 /usr）、不 remount、退出 0" test "$rc" -eq 0 -a "$(count_log remount)" = 0 -a -n "$(grep '已是最新' "$R/out.txt")" -a -z "$(grep 'dm-verity 激活' "$R/out.txt")"
 
 # ═══════════════════════════ 5. 静态守卫 / 清单对称 ═══════════════════════════
 section "静态守卫"

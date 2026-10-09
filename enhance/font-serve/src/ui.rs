@@ -30,7 +30,7 @@ pub struct UiFont {
 impl UiFont {
     pub fn load(paths: &Paths) -> UiFont {
         let path = paths.data_dir().join("ui-font.json");
-        let sel: UiSelection = std::fs::read_to_string(&path).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+        let sel: UiSelection = rmsvc_core::config::load_or_default(&path);
         UiFont { path, boot: sel.clone(), cur: Mutex::new(sel) }
     }
 
@@ -82,8 +82,7 @@ mod tests {
 
     fn setup() -> (tempfile::TempDir, Paths) {
         let t = tempfile::tempdir().unwrap();
-        let h = t.path().to_str().unwrap().to_string();
-        let paths = Paths::resolve(move |k| if k == "HOME" || k == "XDG_RUNTIME_DIR" { Some(h.clone()) } else { None });
+        let paths = Paths::sandbox(t.path());
         paths.ensure().unwrap();
         (t, paths)
     }

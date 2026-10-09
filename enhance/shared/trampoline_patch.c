@@ -28,6 +28,24 @@ static void *make_call_through_stub(const uint8_t *original_bytes, size_t patch_
     return stub;
 }
 
+/* /proc/self/maps 里 addr 所在映射的权限（PROT_* 组合）；查不到返回 -1。 */
+static int page_prot_of(uintptr_t addr) {
+    FILE *f = fopen("/proc/self/maps", "r");
+    if (!f) return -1;
+    char line[512];
+    int prot = -1;
+    while (fgets(line, sizeof line, f)) {
+        unsigned long lo, hi;
+        char perms[5];
+        if (sscanf(line, "%lx-%lx %4s", &lo, &hi, perms) != 3) continue;
+        if (addr < lo || addr >= hi) continue;
+        prot = (perms[0] == 'r' ? PROT_READ : 0) | (perms[1] == 'w' ? PROT_WRITE : 0) | (perms[2] == 'x' ? PROT_EXEC : 0);
+        break;
+    }
+    fclose(f);
+    return prot;
+}
+
 int cj_patch_target(void *target_addr, void *handler, size_t patch_len, const char *tag, void **out_stub) {
     long pagesize = sysconf(_SC_PAGESIZE);
     if (pagesize <= 0) pagesize = 4096;
@@ -37,6 +55,11 @@ int cj_patch_target(void *target_addr, void *handler, size_t patch_len, const ch
     if ((((uintptr_t)target_addr - page_base) + patch_len) > region_len) {
         region_len += (size_t)pagesize;
     }
+
+    /* 改之前记下原权限，改完恢复（2026-10-09）：代码页原本是 r-x，以前改完一直留着 rwx。两页权限不一致或查不到时
+     * 不恢复（保持旧行为）；原本就可写（例如别的扩展先改过、留了 rwx）也不动——只把我们自己打开的写权限关回去。 */
+    int orig_prot = page_prot_of(page_base);
+    if (region_len > (size_t)pagesize && page_prot_of(page_base + (uintptr_t)pagesize) != orig_prot) orig_prot = -1;
 
     if (mprotect((void *)page_base, region_len, PROT_READ | PROT_WRITE | PROT_EXEC) != 0) {
         fprintf(stderr, "[%s] mprotect 失败，放弃 hook（safe mode）：%s\n", tag, strerror(errno));
@@ -55,6 +78,12 @@ int cj_patch_target(void *target_addr, void *handler, size_t patch_len, const ch
     cj_build_far_jump(jump_to_handler, handler);
     memcpy(target_addr, jump_to_handler, CJ_FAR_JUMP_LEN);
     __builtin___clear_cache((char *)target_addr, (char *)target_addr + CJ_FAR_JUMP_LEN);
+
+    if (orig_prot >= 0 && !(orig_prot & PROT_WRITE) && (orig_prot & PROT_EXEC)) {
+        if (mprotect((void *)page_base, region_len, orig_prot) != 0) {
+            fprintf(stderr, "[%s] 恢复代码页原权限失败，保持 rwx：%s\n", tag, strerror(errno));
+        }
+    }
 
     return 1;
 }

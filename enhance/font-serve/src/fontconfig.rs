@@ -7,8 +7,11 @@
 /// shelf 生成的 fontconfig 首行标记（据此判断是否可安全重写）。
 pub const FC_MARK: &str = "shelf font-serve 自动生成";
 
-fn esc(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+use rmsvc_core::http::html_escape as esc;
+
+/// [`esc`] 的逆：读回自己生成的 fonts.conf 时还原家族名（含 `&`、`'` 等的家族名才能和字体 key 对上）。
+fn unesc(s: &str) -> String {
+    s.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&#39;", "'").replace("&amp;", "&")
 }
 
 /// `cjk_keys`：中文回退字体的 fontconfig 家族名，**已按覆盖率降序**；`embolden`：对每个回退字体加 embolden
@@ -69,7 +72,7 @@ pub fn referenced_families(xml: &str) -> Vec<String> {
     while let Some(i) = rest.find("<family>") {
         let after = &rest[i + 8..];
         if let Some(j) = after.find("</family>") {
-            v.push(after[..j].trim().to_string());
+            v.push(unesc(after[..j].trim()));
             rest = &after[j..];
         } else {
             break;
@@ -135,5 +138,9 @@ mod tests {
         // 自己生成的配置：generic 名也会被提取（既有行为：判 fontconfigRef 只看字体 key 相等，不受影响）
         let g = render(&["Han"], false, &[], Path::new("/b"));
         assert!(referenced_families(&g).contains(&"Han".to_string()));
+        // 带 & ' 的家族名转义写出、读回还原，能和字体 key 对上
+        let q = render(&["Tom's A&B"], false, &[], Path::new("/b"));
+        assert!(q.contains("Tom&#39;s A&amp;B"));
+        assert!(referenced_families(&q).contains(&"Tom's A&B".to_string()));
     }
 }

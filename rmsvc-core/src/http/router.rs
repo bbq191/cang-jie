@@ -165,6 +165,14 @@ pub fn parse_query(q: &str) -> HashMap<String, String> {
         .collect()
 }
 
+/// 查询串编码（与 [`parse_query`] 成对）：键值都百分号编码，按键排序（`HashMap` 无序，排序让输出稳定、可测）。
+/// 反向代理把解析过的查询原样转给后端用。
+pub fn encode_query(q: &HashMap<String, String>) -> String {
+    let mut kv: Vec<(&String, &String)> = q.iter().collect();
+    kv.sort();
+    kv.iter().map(|(k, v)| format!("{}={}", crate::multipart::percent_encode(k), crate::multipart::percent_encode(v))).collect::<Vec<_>>().join("&")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -175,6 +183,14 @@ mod tests {
         let mut r = Request { method: m, path: path.into(), query: parse_query(q), params: HashMap::new(), content_type: String::new(), content_length: None, headers: vec![], body: &mut empty };
         let rep = router.dispatch(&mut r);
         (rep.status, String::from_utf8_lossy(&rep.body).to_string())
+    }
+
+    #[test]
+    fn encode_query_roundtrips() {
+        let q = parse_query("b=2%203&a=%E4%B8%AD&c=");
+        let e = encode_query(&q);
+        assert_eq!(e, "a=%E4%B8%AD&b=2%203&c=");
+        assert_eq!(parse_query(&e), q);
     }
 
     #[test]

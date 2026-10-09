@@ -697,6 +697,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "tiny_http 0.12.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "ureq",
  "uuid",
  "zip",

@@ -57,12 +57,17 @@ typedef void (*orig_hl_expand_fn_t)(long, void *);
 static orig_hl_expand_fn_t g_orig_hl_expand_call_through = NULL;
 static int g_hl_expand_neuter = 1;   /* 1=CJK 跳过扩张（修复）；0=恢复原生扩张 */
 
-/* glyph 数组第 idx 个字的 QChar 是否属 CJK。scene+8 是 glyph 数组基址。 */
+/* glyph 数组第 idx 个字的 QChar 是否属 CJK。glyph 数组是 Qt 6 的 QList（{d, ptr, size}）：scene+8 是元素基址、
+ * scene+0x10 是元素个数，每个元素 0x38 字节、QChar 在 +0x30。2026-10-09 按 3.28.0.172 反汇编钉死：兄弟函数
+ * 0xf03750 开头 `ldp x5, x3, [x21, #8]` 一次取基址与个数、`sub x8, x3, #1` 做上界；逐子区间扩张的 0xf02e90
+ * 用 `smull x20, w1, #0x38` + `ldrh w21, [x22, #48]` 读字。下标越界（≥ 个数）按"不是 CJK"处理、交回原生扩张，
+ * 不去读数组外的内存。 */
 static int cj_hl_glyph_is_cjk(long scene, int idx) {
     if (idx < 0) return 0;
-    long garr = 0;
+    long garr = 0, count = 0;
     memcpy(&garr, (const void *)(scene + 8), sizeof(garr));
-    if (!garr) return 0;
+    memcpy(&count, (const void *)(scene + 0x10), sizeof(count));
+    if (!garr || (long)idx >= count) return 0;
     uint16_t ch = 0;
     memcpy(&ch, (const void *)(garr + (long)idx * 0x38 + 0x30), sizeof(ch));
     return (ch >= 0x4E00 && ch <= 0x9FFF)   /* CJK 统一表意 */

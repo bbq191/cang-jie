@@ -8,7 +8,7 @@
 use rmsvc_core::http::{ApiError, ApiResult, Reply, Request};
 use rmsvc_core::paths::Paths;
 use rmsvc_core::registry;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// 一个可管理的领域模块（网关自身不在此列）。
 pub struct Module {
@@ -44,56 +44,34 @@ pub fn service_of(seg: &str) -> Option<&'static str> {
     by_seg(seg).map(|m| m.service)
 }
 
+/// `GET /api/services`：注册表里在跑的服务，每项补上目录表里的 URL 段 `seg`（不在目录表里的——网关自己——为 `null`）。
+/// 网页拿它建 tab 并把 SSE 事件的 `svc`/`area` 对到 tab 上：此前网页启动时为这张映射另取一次 `/api/manage`，
+/// 两边各自从 MODULES 派生；现在映射随服务列表一起给，网页少一个请求、也只认这一处事实源。
+pub fn services(paths: &Paths) -> Reply {
+    let list: Vec<serde_json::Value> = registry::list(paths)
+        .into_iter()
+        .map(|s| {
+            let seg = MODULES.iter().find(|m| m.service == s.name).map(|m| m.seg);
+            let mut v = serde_json::to_value(&s).unwrap_or_default();
+            if let Some(o) = v.as_object_mut() {
+                o.insert("seg".into(), seg.into());
+            }
+            v
+        })
+        .collect();
+    Reply::ok(&serde_json::json!({ "services": list }))
+}
+
 /// 外部命令默认超时。`systemctl start/stop` 正常几十毫秒到几秒；给 30 秒是为了容纳慢启动服务，
 /// 又不至于在 systemd 卡死（2026-08-29 cgroup/RCU 事故那类）时让请求线程无限堆积。
 const RUN_TIMEOUT: Duration = Duration::from_secs(30);
 /// 卸载脚本要 stop 单元、删二进制/qmd，宽一些。
 const UNINSTALL_TIMEOUT: Duration = Duration::from_secs(180);
 
-/// `pub(crate)`：`device::health` 复用同一套 systemctl 调用（避免重新实现一遍 `Command` 样板）。
-/// 带 [`RUN_TIMEOUT`] 超时，超时会 kill 子进程并报错。
+/// `pub(crate)`：`device::health` 复用同一套 systemctl 调用。带 [`RUN_TIMEOUT`] 超时，超时会 kill 子进程并报错
+/// （实现见 [`rmsvc_core::proc::run_timeout`]：stdout/stderr 各自排空、非零退出且 stderr 为空时报退出码）。
 pub(crate) fn run(cmd: &str, args: &[&str]) -> Result<String, String> {
-    run_timeout(cmd, args, RUN_TIMEOUT)
-}
-
-/// 起子进程等它结束，最多等 `timeout`。stdout/stderr 各用一条线程排空（否则输出超过管道缓冲会把子进程写阻塞，
-/// 被误判成超时）；超时 kill 并返回错误，不 join 读线程（孙进程可能还握着管道，别被它拖住）。
-pub(crate) fn run_timeout(cmd: &str, args: &[&str], timeout: Duration) -> Result<String, String> {
-    use std::io::Read;
-    use std::process::Stdio;
-    let mut child = std::process::Command::new(cmd).args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| format!("{cmd}: {e}"))?;
-    let drain = |mut r: Box<dyn Read + Send>| std::thread::spawn(move || {
-        let mut v = Vec::new();
-        let _ = r.read_to_end(&mut v);
-        v
-    });
-    let out_t = child.stdout.take().map(|s| drain(Box::new(s)));
-    let err_t = child.stderr.take().map(|s| drain(Box::new(s)));
-    let deadline = Instant::now() + timeout;
-    // 轮询间隔 20ms 起、逐步翻倍到 200ms：短命令（systemctl is-active 几十毫秒）响应不变慢，
-    // 慢命令（卸载脚本最长 180 秒）不再以 50 次/秒的频率白白唤醒。
-    let mut poll = Duration::from_millis(20);
-    let status = loop {
-        match child.try_wait().map_err(|e| format!("{cmd}: {e}"))? {
-            Some(st) => break st,
-            None if Instant::now() >= deadline => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(format!("{cmd} 超过 {} 秒未结束，已终止", timeout.as_secs()));
-            }
-            None => {
-                std::thread::sleep(poll);
-                poll = (poll * 2).min(Duration::from_millis(200));
-            }
-        }
-    };
-    let text = |t: Option<std::thread::JoinHandle<Vec<u8>>>| t.and_then(|h| h.join().ok()).map(|v| String::from_utf8_lossy(&v).trim().to_string()).unwrap_or_default();
-    let (out, err) = (text(out_t), text(err_t));
-    if status.success() {
-        Ok(out)
-    } else {
-        Err(err)
-    }
+    rmsvc_core::proc::run_timeout(cmd, args, RUN_TIMEOUT)
 }
 
 fn installed(paths: &Paths, m: &Module) -> bool {
@@ -114,12 +92,9 @@ pub fn status(paths: &Paths) -> Reply {
             let inst = installed(paths, m);
             serde_json::json!({
                 "seg": m.seg, "service": m.service, "only": m.only, "label": m.label,
-                // 原来的"门控未上线"开关（`installable`）所有模块都是 true，2026-10-07 删掉；这个键先照旧回 true，
-                // 网页不再判断它之后可以一起删。
-                "installable": true,
+                // 原来还有恒为 true 的 `installable` 与跟 `installed` 恒等的 `hasWeb`：网页、脚本都不读，2026-10-09 删掉。
                 "installed": inst,
                 "running": running(&reg, m),
-                "hasWeb": inst,
             })
         })
         .collect();
@@ -173,25 +148,13 @@ pub fn uninstall(paths: &Paths, seg: &str, req: &mut Request<'_>) -> ApiResult {
     if !script.is_file() {
         return Err(ApiError::bad("设备上没有 shelf-uninstall（重装一次 shelf 会装上它），网页卸载不可用；可 SSH 跑 uninstall.sh --only"));
     }
-    let out = run_timeout("sh", &[&script.to_string_lossy(), "--only", m.only], UNINSTALL_TIMEOUT).map_err(ApiError::internal)?;
+    let out = rmsvc_core::proc::run_timeout("sh", &[&script.to_string_lossy(), "--only", m.only], UNINSTALL_TIMEOUT).map_err(ApiError::internal)?;
     Ok(Reply::ok(&serde_json::json!({"ok": true, "service": m.service, "log": out})))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn run_timeout_captures_output_kills_hung_child_and_survives_big_output() {
-        assert_eq!(run_timeout("sh", &["-c", "echo hi"], Duration::from_secs(5)).unwrap(), "hi");
-        assert_eq!(run_timeout("sh", &["-c", "echo bad >&2; exit 3"], Duration::from_secs(5)).unwrap_err(), "bad");
-        let t = Instant::now();
-        let e = run_timeout("sh", &["-c", "sleep 30"], Duration::from_millis(200)).unwrap_err();
-        assert!(e.contains("未结束") && t.elapsed() < Duration::from_secs(5), "{e}");
-        // 输出远超管道缓冲（64KB）也不能因为没人读而被误判超时
-        let big = run_timeout("sh", &["-c", "head -c 300000 /dev/zero | tr '\\0' 'x'"], Duration::from_secs(10)).unwrap();
-        assert_eq!(big.len(), 300000);
-    }
-
     #[test]
     fn service_of_from_catalog() {
         assert_eq!(service_of("books"), Some("book-serve"));
@@ -210,7 +173,7 @@ mod tests {
     #[test]
     fn status_reports_three_states() {
         let t = tempfile::tempdir().unwrap();
-        let paths = crate::testutil::sandbox(&t);
+        let paths = Paths::sandbox(t.path());
         std::fs::create_dir_all(paths.bin_dir()).unwrap();
         std::fs::write(paths.bin_dir().join("book-serve"), b"x").unwrap(); // 已装、未跑（注册表空）
         let v: serde_json::Value = serde_json::from_slice(&status(&paths).body).unwrap();
@@ -218,15 +181,28 @@ mod tests {
         let find = |svc: &str| mods.iter().find(|m| m["service"] == svc).unwrap();
         assert_eq!(find("book-serve")["installed"], true);
         assert_eq!(find("book-serve")["running"], false);
-        assert_eq!(find("book-serve")["hasWeb"], true);
         assert_eq!(find("font-serve")["installed"], false);
-        assert_eq!(find("font-serve")["hasWeb"], false, "未装则网页无该功能");
+        assert!(mods.iter().all(|m| m.get("installable").is_none() && m.get("hasWeb").is_none()), "不再回没人读的冗余键");
         assert!(mods.iter().all(|m| m["service"] != "weread-serve"));
+    }
+    #[test]
+    fn services_carry_url_segment_from_catalog() {
+        let t = tempfile::tempdir().unwrap();
+        let paths = Paths::sandbox(t.path());
+        let reg = |name: &str| registry::ServiceInfo { name: name.into(), port: 1, label: String::new(), version: String::new(), pid: std::process::id(), ui: None };
+        let _a = registry::register(&paths, &reg("note-serve")).unwrap();
+        let _b = registry::register(&paths, &reg("gateway")).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&services(&paths).body).unwrap();
+        let list = v["services"].as_array().unwrap();
+        let find = |n: &str| list.iter().find(|s| s["name"] == n).unwrap();
+        assert_eq!(find("note-serve")["seg"], "notes");
+        assert!(find("gateway")["seg"].is_null(), "网关自己不在目录表里");
+        assert_eq!(find("note-serve")["port"], 1, "注册表原有字段照旧");
     }
     #[test]
     fn foundation_probes_only_xovi_and_qrr() {
         let t = tempfile::tempdir().unwrap();
-        let paths = crate::testutil::sandbox(&t);
+        let paths = Paths::sandbox(t.path());
         let v: serde_json::Value = serde_json::from_slice(&foundation(&paths).body).unwrap();
         assert_eq!((v["xovi"].as_bool(), v["qrr"].as_bool()), (Some(false), Some(false)), "没装时探测为 false");
         std::fs::create_dir_all(paths.home().join("xovi/exthome/qt-resource-rebuilder")).unwrap();

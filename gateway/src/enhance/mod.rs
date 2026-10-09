@@ -67,7 +67,7 @@ mod tests {
     #[test]
     fn set_qol_applies_only_present_boolean_keys_and_rejects_empty() {
         let t = tempfile::tempdir().unwrap();
-        let paths = crate::testutil::sandbox(&t);
+        let paths = Paths::sandbox(t.path());
         let rep = put(&paths, br#"{"notesImportMdEnabled":true,"hlSnapCjk":false,"junk":1}"#).unwrap();
         let v: serde_json::Value = serde_json::from_slice(&rep.body).unwrap();
         assert_eq!((v["notesImportMdEnabled"].as_bool(), v["hlSnapCjk"].as_bool()), (Some(true), Some(false)));
@@ -88,7 +88,7 @@ mod tests {
     #[test]
     fn tap_page_turn_default_off_and_rtl_switch_gone() {
         let t = tempfile::tempdir().unwrap();
-        let paths = crate::testutil::sandbox(&t);
+        let paths = Paths::sandbox(t.path());
         assert!(!qol::Qol::load(&paths).tap_page_turn());
         put(&paths, br#"{"notesImportMdEnabled":true}"#).unwrap();
         let v: serde_json::Value = serde_json::from_slice(&put(&paths, br#"{"tapPageTurn":true}"#).unwrap().body).unwrap();

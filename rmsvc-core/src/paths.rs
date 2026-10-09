@@ -53,6 +53,18 @@ impl Paths {
     pub fn home(&self) -> &Path {
         &self.home
     }
+    /// **测试用**沙箱：`HOME`＝`root`，各 `XDG_*` 目录＝`root/<变量名>`（`root/XDG_STATE_HOME` 这样，看名字就知道是谁），
+    /// 全部落在 `root` 里，谁都碰不到它以外的真实目录。只给 `HOME` 的写法 `XDG_RUNTIME_DIR` 会落到真实的
+    /// `/tmp/shelf-<uid>`，带清理的测试就清过开发机真实目录（2026-09-20）。各 crate 测试统一用它，不再各写一份 `resolve`。
+    pub fn sandbox(root: &Path) -> Paths {
+        let h = root.to_string_lossy().to_string();
+        Paths::resolve(move |k| match k {
+            "HOME" => Some(h.clone()),
+            "XDG_CONFIG_HOME" | "XDG_DATA_HOME" | "XDG_STATE_HOME" | "XDG_CACHE_HOME" | "XDG_RUNTIME_DIR" => Some(format!("{h}/{k}")),
+            _ => None,
+        })
+    }
+
     /// `~/.local/bin`（XDG basedir 0.8 起明示的用户可执行目录）。
     pub fn bin_dir(&self) -> PathBuf {
         self.home.join(".local/bin")
@@ -158,6 +170,16 @@ mod tests {
         assert_eq!(p.services_dir(), PathBuf::from("/run/user/1000/shelf/services"));
         assert_eq!(p.app_state_dir("notes"), PathBuf::from("/h/.local/state/notes"), "笔记线私有目录与书架并列");
         assert_eq!(p.app_config_dir("notes"), PathBuf::from("/etc/x/notes"));
+    }
+
+    #[test]
+    fn sandbox_keeps_everything_under_root() {
+        let t = tempfile::tempdir().unwrap();
+        let p = Paths::sandbox(t.path());
+        for d in [p.config_dir(), p.data_dir(), p.state_dir(), p.runtime_dir(), p.services_dir(), p.upload_tmp_dir(), p.xochitl_dir(), p.bin_dir(), p.user_fonts_dir()] {
+            assert!(d.starts_with(t.path()), "{}", d.display());
+        }
+        assert_eq!(p.home(), t.path());
     }
 
     #[test]

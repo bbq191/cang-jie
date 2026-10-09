@@ -9,6 +9,7 @@ use crate::config::GatewayConfig;
 use rmsvc_core::auth::{parse_basic, parse_cookie, IpFailLimiter, SessionStore, VerifyCache};
 use rmsvc_core::http::{ApiError, ApiResult, Guard, GuardRequest, Method, Reply, Request};
 use rmsvc_core::paths::Paths;
+use rmsvc_core::sync::lock;
 use std::sync::{Arc, Mutex};
 
 pub const COOKIE: &str = "shelf_session";
@@ -100,12 +101,12 @@ impl AuthState {
     /// （`must_change()`）都要拿的，持锁算哈希会让登录尝试/Basic 校验期间所有其它请求排队等它。
     /// 通过过的密码 [`VERIFY_CACHE_TTL`] 内不再重算（`verified`）；没有哈希一律不通过。
     fn verify(&self, pw: &str) -> bool {
-        let hash = self.cfg.lock().map(|c| c.password_hash.clone()).unwrap_or_default();
+        let hash = lock(&self.cfg).password_hash.clone();
         !hash.is_empty() && self.verified.verify(pw, &hash)
     }
 
     pub fn must_change(&self) -> bool {
-        self.cfg.lock().map(|c| c.must_change_password).unwrap_or(false)
+        lock(&self.cfg).must_change_password
     }
 
     pub fn guard(self: &Arc<Self>) -> Guard {
@@ -192,7 +193,7 @@ impl AuthState {
             return fail("当前密码错误", 401);
         }
         // 注意：持 cfg 锁期间不能再调 must_change()/verify()（std Mutex 不可重入，曾卡死测试）。
-        let mut cfg = self.cfg.lock().map_err(|_| ApiError::internal("锁"))?;
+        let mut cfg = lock(&self.cfg);
         if new != confirm {
             return fail("两次输入的新密码不一致", 400);
         }
@@ -237,7 +238,7 @@ mod tests {
 
     fn state(must_change: bool) -> Shared {
         let t = tempfile::tempdir().unwrap();
-        let paths = crate::testutil::sandbox(&t);
+        let paths = Paths::sandbox(t.path());
         let mut cfg = GatewayConfig::default();
         cfg.ensure_password(&paths).unwrap();
         if !must_change {
@@ -330,6 +331,31 @@ mod tests {
         st.cfg.lock().unwrap().password_hash = old;
         st.cfg.lock().unwrap().password_hash.clear();
         assert!(!st.verify("secret1"), "没有密码哈希时一律不通过");
+    }
+
+    /// `cfg` 锁被某个 panic 的处理函数 poison 之后：校验照常、首登必改照常（以前 poison 后 verify 恒 false、
+    /// must_change 恒 false，既登不进去又会跳过强制改默认密码）。
+    #[test]
+    fn poisoned_cfg_lock_keeps_auth_working() {
+        for must_change in [false, true] {
+            let st = state(must_change);
+            let st2 = st.clone();
+            let _ = std::thread::spawn(move || {
+                let _g = st2.cfg.lock().unwrap();
+                panic!("模拟处理函数持锁 panic");
+            })
+            .join();
+            assert!(st.cfg.is_poisoned());
+            assert_eq!(st.must_change(), must_change, "poison 后 must_change 不能变");
+            let pw = if must_change { "shelf" } else { "secret1" };
+            assert!(st.verify(pw), "poison 后正确密码仍应通过");
+            assert!(!st.verify("nope"));
+            let mut b: &[u8] = br#"{"new":"longer9"}"#;
+            let basic = format!("Basic {}", base64::Engine::encode(&base64::engine::general_purpose::STANDARD, format!("cli:{pw}")));
+            let rep = st.change_password(&mut req(Method::Post, "/password", "application/json", &[("Authorization", &basic)], &mut b)).unwrap();
+            assert_eq!(rep.status, 200, "poison 后仍能改密码");
+            assert!(!st.must_change() && st.verify("longer9"));
+        }
     }
 
     #[test]

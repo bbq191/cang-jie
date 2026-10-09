@@ -150,8 +150,13 @@ if sel_has wallpaper; then
     # 还原原生休眠屏（删 xochitl.conf SleepScreenPath；xochitl 重启后生效）
     if [ -x "$BIN_DIR/wallpaper-serve" ]; then "$BIN_DIR/wallpaper-serve" disable 2>/dev/null || true; fi
 fi
+# qmd 删了也要 xochitl 重新启动才卸下注入：记待生效标记（同 install.sh），packaging/deploy-xovi-apply.sh 据此整机重启
+QMD_REMOVED=0
+rm_qmd() {
+    if exists_p "$QRR/$1"; then rm -f "$QRR/$1"; QMD_REMOVED=1; fi
+}
 for s in $SEL; do
-    for q in $(shelf_svc_qmds "$s"); do rm -f "$QRR/$q"; done
+    for q in $(shelf_svc_qmds "$s"); do rm_qmd "$q"; done
     if [ "$UNITS_GONE" = "1" ]; then
         for h in $(shelf_svc_helpers "$s"); do rm -f "$BIN_DIR/$h"; done
         rm -f "$BIN_DIR/$(shelf_svc_of "$s")"
@@ -160,7 +165,7 @@ done
 
 # ── 整包卸载才做：旧命名遗留、共享件（库、shelf-uninstall 本身，最后删）──
 if [ -z "$ONLY" ]; then
-    for lq in $SHELF_LEGACY_QMDS; do rm -f "$QRR/$lq"; done
+    for lq in $SHELF_LEGACY_QMDS; do rm_qmd "$lq"; done
     if [ "$UNITS_GONE" = "1" ]; then
         for lb in $SHELF_LEGACY_BINS; do rm -f "$BIN_DIR/$lb"; done
         for f in $SHELF_LIB_FILES; do
@@ -173,6 +178,10 @@ if [ -z "$ONLY" ]; then
     fi
 fi
 
+if [ "$QMD_REMOVED" = "1" ]; then
+    if command -v cj_pending_mark >/dev/null 2>&1; then cj_pending_mark shelf-qmd || true; fi
+    echo "-- ⚠ 界面补丁（qmd）已删，xochitl 里仍注入着，整机重启后才卸下：电脑上跑 packaging/deploy-xovi-apply.sh <设备>，或在设备上 reboot"
+fi
 if [ "$PURGE" = "1" ]; then
     # 只删 shelf 自己的三个 XDG 目录：目录名必须恰为 shelf、不能是符号链接、变量不能为空
     for d in $(purge_dirs); do

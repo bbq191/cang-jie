@@ -63,9 +63,7 @@ pub fn wifi(paths: &Paths, _req: &mut Request<'_>) -> ApiResult {
 const WIFI_STATE_FILE: &str = "wifi-connectivity.json";
 
 fn wifi_status(file: &Path) -> serde_json::Value {
-    std::fs::read_to_string(file)
-        .ok()
-        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+    Some(rmsvc_core::config::load_or_default::<serde_json::Value>(file))
         .filter(|v| v.get("state").and_then(|s| s.as_str()).is_some())
         .unwrap_or_else(|| serde_json::json!({"state": "unknown"}))
 }
@@ -84,7 +82,7 @@ pub fn cleanup_list(paths: &Paths, _req: &mut Request<'_>) -> ApiResult {
 pub fn cleanup_delete(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
     let j = req.json()?;
     let area = j.str("area")?.to_string();
-    let names: Vec<String> = j.0.get("names").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default();
+    let names = j.str_list("names");
     if names.is_empty() {
         return Err(ApiError::bad("names 不能为空（只删逐个列出的文件）"));
     }
@@ -124,7 +122,7 @@ mod tests {
     #[test]
     fn delete_endpoint_requires_names_and_reports_per_file() {
         let t = tempfile::tempdir().unwrap();
-        let paths = crate::testutil::sandbox(&t);
+        let paths = Paths::sandbox(t.path());
         let done = cleanup::areas(&paths)[0].1.clone();
         assert!(done.starts_with(t.path()));
         std::fs::create_dir_all(&done).unwrap();

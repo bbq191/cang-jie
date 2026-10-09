@@ -8,6 +8,8 @@
 #   （host 侧也可以用 packaging/deploy-chrony-cn.sh <host> 跑这条命令，供 install-all.sh 编排调用）
 # 幂等：底层已是国内配置就不再写 rootfs；overlay 当前视图与底层不一致才额外拷贝一份让本次开机
 # 立即生效；chronyd 只在有改动或未同步时才重启。
+# 退出码：配置写好就算成功（0）——一时没同步上（没网、热点没通）只打 ⚠，chronyd 联网后会自己同步，
+#   不让 install-all 把这一步记成失败（2026-10-09 起；以前未同步退出 2）。写配置本身失败才是 1。
 #
 # 【为什么这么绕】/etc 是 overlay（lower=rootfs /etc 只读，upper=/var/volatile tmpfs）：直接写
 #   当前看到的 /etc 重启即丢。改底层要：
@@ -99,5 +101,5 @@ echo "-- servers: $(grep "^server " "$CONF" | awk '{print $2}' | tr '\n' ' ')"
 if synced; then
     echo "✅ 时钟已同步：$(journalctl -u chronyd --no-pager -b 2>/dev/null | grep 'Selected source' | tail -n 1 | sed 's/.*Selected source //')  $(date '+%F %T %Z')"
 else
-    echo "⚠ 未同步（网络不通？）：journalctl -u chronyd 看原因"; exit 2
+    echo "⚠ 配置已写好，但暂时没同步上（网络不通？）：联网后 chronyd 会自己同步；不放心就 journalctl -u chronyd 看原因"
 fi
