@@ -113,7 +113,7 @@ impl MindConfig {
         if !backend.is_empty() {
             self.backend = backend.to_string();
         }
-        vendorcfg::apply_common(PRESETS, &j.0, &mut self.preset, &mut self.custom_model, &mut self.custom_base_url, &mut self.keys, &mut self.prices)?;
+        vendorcfg::apply_common(PRESETS, j, &mut self.preset, &mut self.custom_model, &mut self.custom_base_url, &mut self.keys, &mut self.prices)?;
         if let Some(v) = j.opt_u64("timeoutSecs") { self.timeout_secs = v.clamp(5, 600); }
         if let Some(v) = j.0.get("prompt") {
             self.prompt = v.as_str().unwrap_or("").trim().to_string();

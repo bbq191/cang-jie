@@ -27,7 +27,6 @@ use crate::staging::{Staging, MAX_DIRECT_BYTES};
 use rmsvc_core::formats::{mime_of, sniff};
 use rmsvc_core::fs::{clean_dir, plain_name, same_content, Content, ScratchFile};
 use rmsvc_core::xochitl::{find_documents_since, is_uuid_shape, read_meta, Delivery, Metadata, Xochitl};
-use serde::Deserialize;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -225,7 +224,7 @@ impl Importer {
     fn same_in_folder(&self, lib: &Path, folder: &str, part: &Path, size: u64) -> Option<String> {
         rmsvc_core::xochitl::live_entries(lib)
             .into_iter()
-            .filter(|(_, v)| Metadata::deserialize(v).is_ok_and(|m| m.is_document() && m.parent == folder))
+            .filter(|(_, m)| m.is_document() && m.parent == folder)
             .map(|(uuid, _)| uuid)
             .find(|uuid| {
                 let epub = lib.join(format!("{uuid}.epub"));

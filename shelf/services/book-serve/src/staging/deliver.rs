@@ -5,6 +5,9 @@ use super::*;
 /// （入队即刻响应，旧版是 8 秒一次 Timer 轮询），20 秒足够留出建夹 + 落盘的余量；等不到不算错误，`ensure_folder` 会原样放行，交给
 /// `Xochitl::upload` 现有的"找不到就落书库根"兜底（改动前就有的行为，不是新错误）。
 pub(crate) const FOLDER_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+/// 大文件通道投 EPUB 后等占位 `.content` 写出 pageCount 的上限与防抖（见 `try_deliver_direct`）。
+const PLACEHOLDER_PAGES_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+const PLACEHOLDER_PAGES_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(200);
 
 /// 大文件通道的安全上限（1GiB）：再大 xochitl 首次渲染的内存/时间没有验证过。
 pub(crate) const MAX_DIRECT_BYTES: u64 = 1 << 30;
@@ -74,9 +77,16 @@ impl Staging {
         // - PDF：页数就是我们写进 `.content` 的真页数 → 直接 ok；
         // - EPUB：xochitl 要**首次打开**才渲染，此刻 `.content` 里是占位的页数。记 `onopen` + 占位页数，`list()` 之后每次
         //   读该文档 `.content` 的 pageCount，一变（用户打开过、xochitl 渲染完）就自动显示成真页数。
+        //   占位页数必须真读到：要是 xochitl 还没把占位的 pageCount 写进 `.content` 就记成 0，之后列表一读到占位自己的
+        //   页数（≠ 0）就会误判成"已渲染"。所以先等它出现（书库目录有变化才查，最多 PLACEHOLDER_PAGES_WAIT）；
+        //   通常替换前复制大文件的那几秒里早就写好了，这里不会真等。
         let (pages, status) = match up.pages {
             Some(n) => (n as u64, "ok"),
-            None => (rmsvc_core::xochitl::page_count(self.xochitl.library_dir(), &up.uuid).unwrap_or(0), "onopen"),
+            None => {
+                let lib = self.xochitl.library_dir();
+                let n = rmsvc_core::fswatch::wait_for(lib, PLACEHOLDER_PAGES_DEBOUNCE, PLACEHOLDER_PAGES_WAIT, || rmsvc_core::xochitl::page_count(lib, &up.uuid));
+                (n.unwrap_or(0), "onopen")
+            }
         };
         let _ = self.set_render(name, sidecar::RenderCheck { uuid: up.uuid, pages, status: status.into(), at: rmsvc_core::clock::now_secs() });
         let stem = formats::stem_of(name);

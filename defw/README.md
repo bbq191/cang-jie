@@ -1,7 +1,8 @@
 # defw —— xochitl 3.28.0.172 逆向工程
 
 > **读者与用途**：要给 xochitl 写新的 hook / qmd、查 xochitl 崩溃栈，或想复现"某个函数地址是怎么定位到的"的人。
-> 这里是**逆向工程的工作目录与方法说明**（Ghidra 项目 + headless 脚本），不是功能代码，也不上设备；用它支撑过的成果主要是手写优化扩展 `enhance/handwriting-stroke/`（2026-09-30 已移除，研究记录留在 [系统增强线白皮书](../enhance/docs/reMarkable系统增强线白皮书.md) §03c–§03g）。
+> 这里是**逆向工程的工作目录与方法说明**（Ghidra 项目 + headless 脚本），不是功能代码，也不上设备；用它支撑过的成果：手写优化扩展 `enhance/handwriting-stroke/`（2026-09-30 已移除，研究记录留在 [系统增强线白皮书](../enhance/docs/reMarkable系统增强线白皮书.md) §03c–§03g），以及下面的 xochitl 退出崩溃调查。
+> **跟现役两个扩展的关系**：`enhance/hl-snap` 的目标函数是固件 3.28.0.169 时代在旧 `ghidra-project/` 里找到的，靠特征码运行时自定位，3.28.0.172 上复核仍唯一命中，没用到本目录；2026-10-09 给它加的 glyph 上界检查、给 `enhance/ui-font` 加的非 PIE 防递归判定，用的是同一份 xochitl 二进制的原始反汇编与 ELF 头（见下文「不开 Ghidra 的快速核对」），也没用到本目录的 Ghidra 项目——方法相同：关键偏移以原始指令为准。
 > 整体位置见 [`../docs/OVERVIEW.md`](../docs/OVERVIEW.md)。原名 `ghidra-project-328`，2026-09-10 改名 `defw`。
 
 **跟旧的 `ghidra-project/` 是两个独立项目，别混**：旧目录是固件 3.28.0.169 时代的分析成果，已随 2026-09-11 的仓库整理搬出 git 仓库，函数地址对不上现在的固件，本目录不复用它。
@@ -62,6 +63,18 @@ JAVA_HOME=$J ghidra-analyzeHeadless <proj> xochitl_328_analysis -process xochitl
 ```
 
 `DecompileTargets.java` 等"改源码给地址"的脚本同理，把 `-postScript` 换掉、去掉末尾参数即可。
+
+### 不开 Ghidra 的快速核对
+
+只想看几十条指令、确认一个偏移时，交叉工具链的 binutils 就够了（xochitl 3.28.0.172 是**非 PIE**，`readelf -h` 显示 `Type: EXEC`，第一个 LOAD 段从文件偏移 0 映射到 `0x400000`，所以"文件偏移 + 0x400000 = 运行时地址 = Ghidra 地址"）：
+
+```sh
+readelf -h xochitl | grep Type                      # EXEC = 非 PIE
+readelf -W --dyn-syms xochitl | grep setFont        # 导入符号 st_value 为 0 = 主程序没取它的地址（没有规范 PLT）
+aarch64-linux-gnu-objdump -d --start-address=0xf03670 --stop-address=0xf03860 xochitl   # 看一段函数
+```
+
+2026-10-09 就是这样钉死 hl-snap 读的 glyph 数组个数在 `scene+0x10`（兄弟函数 `0xf03750` 开头 `ldp x5, x3, [x21, #8]`），见系统增强线白皮书 §03p。
 
 ## 方法：怎么从"零线索"走到"hook 目标真机部署"
 

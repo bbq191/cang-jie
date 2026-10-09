@@ -108,9 +108,9 @@ impl Builder {
     /// `href`/`raw_title` 都是 XML 原文：href 解实体 + 百分号（`a&amp;b.xhtml`、`a%20b.xhtml` 都要跟 spine 文件名对上），
     /// 标题去标签后解实体（`甲 &amp; 乙` → `甲 & 乙`）。
     fn push(&mut self, href: &str, raw_title: &str) {
-        let path = crate::escape::href_path(href);
+        let path = epubpkg::href_path(href);
         let file = path.rsplit('/').next().unwrap_or("").to_string();
-        let title = crate::escape::xml_unescape(&strip_tags(raw_title)).into_owned();
+        let title = epubpkg::xml_unescape(&strip_tags(raw_title)).into_owned();
         if file.is_empty() || title.is_empty() {
             return;
         }

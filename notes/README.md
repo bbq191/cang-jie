@@ -42,7 +42,7 @@ reMarkable 的强项是**荧光笔勾书，再在勾出来的地方旁边手写*
 | 服务 | 路由 |
 |---|---|
 | ink | `GET /books`（只列还有活条目的书）· `GET /books/{uuid}` · `GET /books/{uuid}/crops/{file}` · `POST /books/{uuid}/entries/{id}`（改 `text` / `style` / `destination` / `draft` / `answer` / `askAi` / `question`；终态条目拒改）· `POST …/entries/{id}/request`（转入笔记）· `…/skip`（不需要）· `…/archive`（不要了）· `…/restore`（恢复）· `POST /books/{uuid}/purge`（清空回收站，不可恢复）· `POST /books/{uuid}/rescan` · `GET /search?q=&limit=` · `GET /events`；原 `POST /koreader/import` 已从仓库删除（2026-09-30），见 git 历史（KOReader 09-29 从设备卸载），以前导入的 KOReader 条目照常可用 |
-| transcribe | `GET /status` · `GET /config` · `PUT /config`（`preset` / `backend` / `apiKey`（只写）/ `clearKey` / `price` / 自定义 `model`+`baseUrl` / `auto` / `maxPerRun` / `pauseMs` / `timeoutSecs` / `maxAttempts` / `prompt`）· `POST /run` · `POST /books/{uuid}/entries/{id}`（强制转写一条，返回 token 用量）· `POST /retry` · `GET /events` |
+| transcribe | `GET /status` · `GET /config` · `PUT /config`（`preset` / `backend` / `apiKey`（只写）/ `clearKey` / `price`（`{inputPer1k,outputPer1k}`，与 GET 回的同名；老写法 `{input,output}` 也认）/ 自定义 `model`+`baseUrl` / `auto` / `maxPerRun` / `pauseMs` / `timeoutSecs` / `maxAttempts` / `prompt`）· `POST /run` · `POST /books/{uuid}/entries/{id}`（强制转写一条，返回 token 用量）· `POST /retry` · `GET /events` |
 | mind | `GET /status` · `GET /config` · `PUT /config`（同上，只有 `timeoutSecs` / `prompt`，没有 `auto` / `maxPerRun` / `pauseMs` / `maxAttempts` 这些节流字段）· `POST /books/{uuid}/entries/{id}/ask`（要求已勾「问 AI」且问题非空）|
 | notes | `GET /status` · `GET /books/{uuid}/sync`（每章两个去处的同步状态）· `POST /books/{uuid}/chapters/{idx}/generate` · `POST /books/{uuid}/chapters/{idx}/export` · `GET /books/{uuid}/chapters/{idx}/export.md`（浏览器下载）· `POST /books/{uuid}/import-md {title, markdown}` · `GET /events`；网页从没用过的整本生成/导出、列表、`vault.json` 等 6 个端点 2026-10-09 删掉 |
 
@@ -53,7 +53,7 @@ reMarkable 的强项是**荧光笔勾书，再在勾出来的地方旁边手写*
 ```
 notes/
 ├── crates/rmv6/          .rm v6 解析 + 写入（解析部分剥离移植自 remarkable_lines 0.1.3，MIT，见 PROVENANCE.md）
-├── crates/epubmap/       .epubindex + 目录（按 OPF 声明找 nav/NCX；href 解 XML 实体与百分号编码）→ 页号对应的章/小节
+├── crates/epubmap/       .epubindex + 目录（按 OPF 声明找 nav/NCX；OPF 与 href 解码用 ../rmsvc-core/epubpkg）→ 页号对应的章/小节
 ├── crates/notecore/      领域核心（纯函数）：条目模型、聚簇配对、增量合并、行首标记、投影、md 导出/导入（KOReader 合并 2026-09-30 已删，只留旧数据兼容）
 ├── crates/vendorcfg/     两个 AI 服务共用：预置表、key 分厂商、配置迁移、用量账本、OpenAI 兼容调用端 ChatClient + ClientCache
 ├── services/             ink-serve · transcribe-serve · mind-serve · note-serve
@@ -79,7 +79,7 @@ notes/
 与书架共用交叉编译环境（`rustup target add aarch64-unknown-linux-musl` + aarch64 交叉 gcc），见 [`../shelf/README.md`](../shelf/README.md)「构建 · 部署 · 卸载」。
 
 ```sh
-cd notes && cargo test --workspace      # host：246 过 + 1 忽略（rmv6 29 · epubmap 13 · notecore 67 · vendorcfg 24 · ink 30 · transcribe 25 · mind 22 · note 36 另 1 个 ignored；2026-10-09 实跑）
+cd notes && cargo test --workspace      # host：241 过 + 1 忽略（rmv6 29 · epubmap 11 · notecore 67 · vendorcfg 24 · ink 30 · transcribe 25 · mind 22 · note 33 另 1 个 ignored；2026-10-09 实跑）
 cd ../shelf && sh build.sh               # host 测试 + 交叉编译（notes/ 在就一起编）
 cd ../packaging && sh deploy.sh <设备IP> --only ink,transcribe,mind,note   # 只装/更新笔记线（网关总会一起装）；不加 --only 就全装
 ```

@@ -271,6 +271,25 @@ fn onopen_render_record_upgrades_to_ok_once_xochitl_rewrites_page_count() {
 }
 
 #[test]
+fn onopen_with_unknown_placeholder_pages_waits_for_epubindex() {
+    // 投递时没等到占位页数（记成 0）：.content 里的占位页数不能当"已渲染"，要等 xochitl 重新生成 .epubindex。
+    let t = tempfile::tempdir().unwrap();
+    let lib = t.path().join("lib");
+    std::fs::create_dir_all(&lib).unwrap();
+    let x = Arc::new(Xochitl::new("127.0.0.1:1", &lib, 1));
+    let s = Staging::new(t.path().join("staging"), x, 1024 * 1024);
+    s.ensure().unwrap();
+    s.stage_new("big.epub", &comic_epub_with_real_images(&[12, 13])).unwrap();
+    s.set_render("big.epub", sidecar::RenderCheck { uuid: "u1".into(), pages: 0, status: "onopen".into(), at: 1 }).unwrap();
+    let rc = |s: &Staging| s.list()[0].delivered.clone().unwrap().render.unwrap();
+    std::fs::write(lib.join("u1.content"), r#"{"pageCount":2}"#).unwrap();
+    assert_eq!(rc(&s).status, "onopen", "只有占位的页数、没有 .epubindex：不算渲染过");
+    std::fs::write(lib.join("u1.epubindex"), b"x").unwrap();
+    std::fs::write(lib.join("u1.content"), r#"{"pageCount":351}"#).unwrap();
+    assert_eq!((rc(&s).status.as_str(), rc(&s).pages), ("ok", 351), ".epubindex 重新出现 = 真书渲染过");
+}
+
+#[test]
 fn new_book_does_not_inherit_orphan_sidecar_and_gc_removes_orphans() {
     let t = tempfile::tempdir().unwrap();
     let s = staging(&t);

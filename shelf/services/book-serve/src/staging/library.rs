@@ -199,7 +199,10 @@ impl Staging {
                 if rc.status == "onopen" {
                     seen_docs.insert(rc.uuid.clone());
                     if let Some(n) = self.content_pages(&rc.uuid) {
-                        if n != rc.pages {
+                        // 记录里是 0 = 投递时没等到占位页数（极少见）：这时 `.content` 里的数可能还是占位的，不能当已渲染；
+                        // 改看 `.epubindex`——大文件通道替换时删掉了它，重新出现只能是 xochitl 渲染了真书。
+                        let rendered = rc.pages != 0 || self.xochitl.library_dir().join(format!("{}.epubindex", rc.uuid)).exists();
+                        if n != rc.pages && rendered {
                             rc.status = "ok".into();
                             rc.pages = n;
                             // 升级结果写回边车：此前只改返回给网页的这份拷贝，边车里永远是 onopen，于是之后每次列表

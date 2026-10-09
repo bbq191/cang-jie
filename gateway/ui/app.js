@@ -1127,7 +1127,7 @@ function mountModelPanel(root,seg,title,icon,showAuto){
     await putR({preset:first.id})};
   presetSel.onchange=async()=>{await putR({preset:presetSel.value})};
   guardClick(card.querySelector('[data-savecustom]'),async()=>{await putR({preset:'custom',model:modelInp.value.trim(),baseUrl:urlInp.value.trim()})});
-  guardClick(card.querySelector('[data-pricesave]'),async()=>{await putR({price:{input:parseFloat(priceIn.value)||0,output:parseFloat(priceOut.value)||0}})});
+  guardClick(card.querySelector('[data-pricesave]'),async()=>{await putR({price:{inputPer1k:parseFloat(priceIn.value)||0,outputPer1k:parseFloat(priceOut.value)||0}})});
   refresh();
   return refresh;
 }

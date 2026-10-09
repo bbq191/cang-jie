@@ -70,6 +70,7 @@ jobs:
       - name: cargo test（共享基座 + 网关 + enhance 的两个独立服务，各自独立 crate）
         run: |
           cargo test --manifest-path rmsvc-core/Cargo.toml
+          cargo test --manifest-path rmsvc-core/epubpkg/Cargo.toml
           cargo test --manifest-path gateway/Cargo.toml
           cargo test --manifest-path enhance/wallpaper-serve/Cargo.toml
           cargo test --manifest-path enhance/font-serve/Cargo.toml

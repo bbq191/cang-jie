@@ -7,6 +7,7 @@ use crate::doc::Doc;
 use epubmap::BookMap;
 use notecore::ingest::{drafts_of_page, merge_page, MergeStats, PageCtx};
 use notecore::model::{Book, Status};
+use rmsvc_core::cache::FileStamp;
 use std::path::Path;
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -109,19 +110,16 @@ pub fn ingest_doc(lib: &Path, crops_dir: &Path, db: &BookDb, cfg: &IngestConfig,
     Ok(Some(stats))
 }
 
-/// 文件的 (长度, 修改时间)：判断读的过程中有没有被改写。
-type Stamp = (u64, Option<std::time::SystemTime>);
-
-/// 读一页 `.rm`，并确认读的过程中它没被改写：读前读后各取一次同一个 fd 的 (长度, mtime)，对不上、或读到的字节数
+/// 读一页 `.rm`，并确认读的过程中它没被改写：读前读后各取一次同一个 fd 的文件戳（长度, mtime, inode），对不上、或读到的字节数
 /// 跟长度对不上，就当"正在写入"报错跳过（不记 mtime，下次事件再扫）。v6 是一串块，截在块边界上的半截文件照样
 /// 能解析成功、只是少了后面的笔画——当成真的会把那些笔画对应的条目撤销（下次读全了虽会复活，但 `Pending`
 /// 复活只回 `Mined`，用户"转入笔记"的决定就丢了；2026-09-30 第五轮审计）。
 fn read_settled(path: &Path) -> Result<Vec<u8>, String> {
     use std::io::Read;
-    let stamp = |f: &std::fs::File| -> std::io::Result<Stamp> { f.metadata().map(|m| (m.len(), m.modified().ok())) };
+    let stamp = |f: &std::fs::File| -> std::io::Result<FileStamp> { f.metadata().map(|m| FileStamp::of(&m)) };
     let mut f = std::fs::File::open(path).map_err(|e| format!("读 .rm 失败 {e}"))?;
     let before = stamp(&f).map_err(|e| format!("读 .rm 失败 {e}"))?;
-    let mut bytes = Vec::with_capacity(before.0 as usize);
+    let mut bytes = Vec::with_capacity(before.len() as usize);
     f.read_to_end(&mut bytes).map_err(|e| format!("读 .rm 失败 {e}"))?;
     let after = stamp(&f).map_err(|e| format!("读 .rm 失败 {e}"))?;
     if !settled(before, after, bytes.len()) {
@@ -130,8 +128,8 @@ fn read_settled(path: &Path) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
-fn settled(before: Stamp, after: Stamp, read: usize) -> bool {
-    before == after && after.0 == read as u64
+fn settled(before: FileStamp, after: FileStamp, read: usize) -> bool {
+    before == after && after.len() == read as u64
 }
 
 /// 裁图：本页所有有手写、且裁图缺失或指纹变了的条目。自渲染（`render_ink`）直接吃这一页已经解析好的
@@ -302,11 +300,22 @@ mod tests {
     fn half_written_page_is_skipped_not_merged() {
         let t0 = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(100);
         let t1 = t0 + std::time::Duration::from_secs(1);
-        assert!(settled((10, Some(t0)), (10, Some(t0)), 10));
-        assert!(!settled((10, Some(t0)), (20, Some(t1)), 20), "读的过程中追加了");
-        assert!(!settled((10, Some(t0)), (10, Some(t1)), 10), "原地改写，长度没变");
-        assert!(!settled((10, Some(t0)), (10, Some(t0)), 6), "读到的字节数对不上");
         let d = tempfile::tempdir().unwrap();
+        // 同一个 fd 上造三个戳：10 字节@t0、20 字节@t1（追加）、20 字节@t0（原地改写、长度没变，只 mtime 变）
+        let f = std::fs::OpenOptions::new().create(true).truncate(true).write(true).open(d.path().join("s.rm")).unwrap();
+        let st = |f: &std::fs::File| FileStamp::of(&f.metadata().unwrap());
+        f.set_len(10).unwrap();
+        f.set_modified(t0).unwrap();
+        let a = st(&f);
+        f.set_len(20).unwrap();
+        f.set_modified(t1).unwrap();
+        let b = st(&f);
+        f.set_modified(t0).unwrap();
+        let c = st(&f);
+        assert!(settled(a, a, 10));
+        assert!(!settled(a, b, 20), "读的过程中追加了");
+        assert!(!settled(c, b, 20), "原地改写，长度没变");
+        assert!(!settled(a, a, 6), "读到的字节数对不上");
         let p = d.path().join("p.rm");
         std::fs::write(&p, b"abc").unwrap();
         assert_eq!(read_settled(&p).unwrap(), b"abc");
