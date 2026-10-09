@@ -1,3 +1,4 @@
+use rmsvc_core::http::JsonBody;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -178,18 +179,19 @@ pub fn remap_retired_preset(preset: &mut String, prices: &mut BTreeMap<String, P
 }
 
 /// PUT /config 的 PATCH 语义里"预置选择 + 自定义 model/baseUrl + key + 价格"这一段两个服务一字不差；
-/// 节流字段（`maxPerRun` 等，只有 transcribe-serve 有）和 `backend`/`prompt` 这类各服务自己按需处理的
+/// 价格写 `price:{inputPer1k,outputPer1k}`（与 `GET /config` 回的同名；10-09 起），老写法 `price:{input,output}`
+/// 继续认，两种都给时新名优先。节流字段（`maxPerRun` 等，只有 transcribe-serve 有）和 `backend`/`prompt` 这类各服务自己按需处理的
 /// 单字段留给调用方在这个函数前后自己补，不塞进这里的签名——不然参数表会无限膨胀，得不偿失。
 pub fn apply_common(
     presets: &[Preset],
-    j: &serde_json::Value,
+    j: &JsonBody,
     preset: &mut String,
     custom_model: &mut String,
     custom_base_url: &mut String,
     keys: &mut BTreeMap<String, String>,
     prices: &mut BTreeMap<String, Price>,
 ) -> Result<(), String> {
-    let s = |k: &str| j.get(k).and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    let s = |k: &str| j.opt_str(k).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
     if let Some(v) = s("preset") {
         if v != "custom" && !presets.iter().any(|p| p.id == v) {
             return Err(format!("未知的模型预置：{v}"));
@@ -211,15 +213,15 @@ pub fn apply_common(
     if let Some(v) = s("apiKey") {
         keys.insert(provider.clone(), v);
     }
-    if j.get("clearKey").and_then(|v| v.as_bool()).unwrap_or(false) {
+    if j.opt_bool("clearKey").unwrap_or(false) {
         keys.remove(&provider);
     }
-    if let Some(price) = j.get("price") {
+    if let Some(price) = j.opt_obj("price") {
         let mut p = prices.get(preset.as_str()).copied().unwrap_or_default();
-        if let Some(x) = price.get("input").and_then(|v| v.as_f64()) {
+        if let Some(x) = price.opt_f64("inputPer1k").or_else(|| price.opt_f64("input")) {
             p.input_per1k = x.max(0.0);
         }
-        if let Some(x) = price.get("output").and_then(|v| v.as_f64()) {
+        if let Some(x) = price.opt_f64("outputPer1k").or_else(|| price.opt_f64("output")) {
             p.output_per1k = x.max(0.0);
         }
         prices.insert(preset.clone(), p);
@@ -438,16 +440,30 @@ mod tests {
         let (mut preset, mut cm, mut cb) = ("a".to_string(), String::new(), String::new());
         let mut keys = BTreeMap::new();
         let mut prices = BTreeMap::new();
-        let err = apply_common(PRESETS, &serde_json::json!({"preset":"no-such"}), &mut preset, &mut cm, &mut cb, &mut keys, &mut prices).unwrap_err();
+        let err = apply_common(PRESETS, &JsonBody(serde_json::json!({"preset":"no-such"})), &mut preset, &mut cm, &mut cb, &mut keys, &mut prices).unwrap_err();
         assert!(err.contains("未知的模型预置"), "{err}");
 
-        apply_common(PRESETS, &serde_json::json!({"apiKey":"k1"}), &mut preset, &mut cm, &mut cb, &mut keys, &mut prices).unwrap();
+        apply_common(PRESETS, &JsonBody(serde_json::json!({"apiKey":"k1"})), &mut preset, &mut cm, &mut cb, &mut keys, &mut prices).unwrap();
         assert_eq!(keys.get("dashscope").map(String::as_str), Some("k1"));
 
-        apply_common(PRESETS, &serde_json::json!({"preset":"b"}), &mut preset, &mut cm, &mut cb, &mut keys, &mut prices).unwrap();
-        apply_common(PRESETS, &serde_json::json!({"clearKey":true}), &mut preset, &mut cm, &mut cb, &mut keys, &mut prices).unwrap();
+        apply_common(PRESETS, &JsonBody(serde_json::json!({"preset":"b"})), &mut preset, &mut cm, &mut cb, &mut keys, &mut prices).unwrap();
+        apply_common(PRESETS, &JsonBody(serde_json::json!({"clearKey":true})), &mut preset, &mut cm, &mut cb, &mut keys, &mut prices).unwrap();
         assert!(!keys.contains_key("openai"), "clearKey 只清当前 provider 那把，不动 dashscope 那把");
         assert_eq!(keys.get("dashscope").map(String::as_str), Some("k1"), "换预置不影响别的厂商已存的 key");
+    }
+
+    /// 单价两种写法都认：新名 `inputPer1k/outputPer1k`（与 GET 回的同名）和老写法 `input/output`；都给时新名优先，
+    /// 只给一档时另一档不动，负数按 0。
+    #[test]
+    fn apply_common_price_accepts_get_field_names_and_legacy_names() {
+        let (mut preset, mut cm, mut cb) = ("a".to_string(), String::new(), String::new());
+        let mut keys = BTreeMap::new();
+        let mut prices = BTreeMap::new();
+        let mut put = |j: serde_json::Value| apply_common(PRESETS, &JsonBody(j), &mut preset, &mut cm, &mut cb, &mut keys, &mut prices).unwrap();
+        put(serde_json::json!({"price": {"inputPer1k": 0.1, "outputPer1k": 0.2}}));
+        put(serde_json::json!({"price": {"output": 0.3}}));
+        put(serde_json::json!({"price": {"input": 9.0, "inputPer1k": -1}}));
+        assert_eq!(prices.get("a"), Some(&Price { input_per1k: 0.0, output_per1k: 0.3 }));
     }
 
     #[test]
@@ -455,7 +471,7 @@ mod tests {
         let (mut preset, mut cm, mut cb) = ("custom".to_string(), String::new(), String::new());
         let mut keys = BTreeMap::new();
         let mut prices = BTreeMap::new();
-        let err = apply_common(PRESETS, &serde_json::json!({"baseUrl":"dashscope"}), &mut preset, &mut cm, &mut cb, &mut keys, &mut prices).unwrap_err();
+        let err = apply_common(PRESETS, &JsonBody(serde_json::json!({"baseUrl":"dashscope"})), &mut preset, &mut cm, &mut cb, &mut keys, &mut prices).unwrap_err();
         assert!(err.contains("http"), "{err}");
     }
 

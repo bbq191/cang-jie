@@ -181,7 +181,7 @@ pub fn submit(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
     let j = req.json()?;
     let action = j.opt_str("action").and_then(Action::parse).ok_or_else(|| ApiError::bad("action 只能是 deliver"))?;
     // 区分"没给 names"（看 all）与"给了数组"：只有是数组才算给了。
-    let names = j.0.get("names").is_some_and(|n| n.is_array()).then(|| j.str_list("names"));
+    let names = j.opt_str_list("names");
     if names.is_none() && !j.bool_or("all", false) {
         return Err(ApiError::bad("要么给 names，要么 all:true"));
     }

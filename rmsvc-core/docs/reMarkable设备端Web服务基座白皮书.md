@@ -79,7 +79,7 @@
 | 守卫 | `Guard`：分发前先问一次，`None` 放行、`Some(reply)` 直接回。登录策略由服务自己定义（只有网关用） |
 | panic | 处理函数 panic 兜成 JSON 500"服务内部错误"，并发名额照常归还；**守卫 panic 也一样**（10-09：此前守卫在 `catch_unwind` 之外，panic 时客户端拿到 tiny_http 的空 500）。需要消费方 release 是 `panic="unwind"`，见 §05 |
 | 回执 | `Reply::ok/json/error/html/bytes/redirect`；两种流：`Reply::stream`（SSE 用：接管裸 socket、一帧一 flush、读到连接关闭为止）和 `Reply::sized_stream`（文件下载用：已知长度，按定长响应边读边发，发完即结束） |
-| 请求体与取值 | `read_small_body`（1MB 上限 `SMALL_BODY_MAX`，超限**报错**）、`json()` → `JsonBody`（`str`/`str_or`/`bool`/`bool_or`，10-09 补 `opt_str`/`opt_bool`/`opt_u64`/`str_list`）、`form_body`、`multipart_boundary`；查询串 `q`/`q_flag`，10-09 补 `q_required`/`q_parse`；`encode_query` 与 `parse_query` 成对；`html_escape`；`Method::as_str` |
+| 请求体与取值 | `read_small_body`（1MB 上限 `SMALL_BODY_MAX`，超限**报错**）、`json()` → `JsonBody`（`str`/`str_or`/`bool`/`bool_or`，10-09 补 `opt_str`/`opt_bool`/`opt_u64`/`str_list`，之后又补 `opt_f64`、`opt_str_list`（区分"没给"与"给了空数组"）、`opt_obj`（嵌套对象接着用同一套取法））、`form_body`、`multipart_boundary`；查询串 `q`/`q_flag`，10-09 补 `q_required`/`q_parse`；`encode_query` 与 `parse_query` 成对；`html_escape`；`Method::as_str` |
 
 **09-24 教训**：文件下载第一版用了 `Reply::stream`，reader 读完连接却不关，真机上下载永远收不完。SSE 和定长下载是两种语义，各用各的。
 

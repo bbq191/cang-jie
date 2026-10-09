@@ -242,7 +242,7 @@
 
 - **选模型**：先选厂商（DashScope / OpenAI / Gemini / DeepSeek / 自定义），再选该厂商的模型；选厂商时立即切到它的第一个模型。`PUT /config {preset}` 一次同时改好模型名和接口地址，不会出现“换了模型忘了换地址”；不认识的预置名返回 400，配置不变。“自定义”才露出手填框。
 - **key**：`keys` 是“厂商 → key”的表，同厂商换模型不用重新粘贴；切到没配 key 的厂商就显示“没配”，不会借用别家的 key。当前预置在表里查不到时，按接口地址认厂商（`provider_for_base_url` 兜底）。网页只显示脱敏后四位，已存的 key 只能删除再填，不能直接改写。环境变量 `DASHSCOPE_API_KEY` 只对 DashScope 兜底。配置文件权限 0600，2026-09-24 起创建时就是 0600（不再先按默认权限写出再改）。
-- **用量与花费**：按预置 id（自定义模型为 `custom:<模型名>`）分账：调用次数、成功失败、输入输出 token、最近错误。不内置官方价格表（第三方定价比模型名还容易变），用户自己填每千 token 单价；没填时花费显示为空（`null`），和“填了 0 元”区分开。记哪些调用见第 4 章“记账规则”。账本在 `~/.local/state/notes/{transcribe,mind}.json`，解析失败时先另存 `.corrupt` 再从零记起（09-24 第三轮审计；此前会被静默清零）。
+- **用量与花费**：按预置 id（自定义模型为 `custom:<模型名>`）分账：调用次数、成功失败、输入输出 token、最近错误。不内置官方价格表（第三方定价比模型名还容易变），用户自己填每千 token 单价（`PUT /config` 写 `price:{inputPer1k,outputPer1k}`，与 `GET /config` 回的字段同名；老写法 `price:{input,output}` 继续兼容，10-09 统一）；没填时花费显示为空（`null`），和“填了 0 元”区分开。记哪些调用见第 4 章“记账规则”。账本在 `~/.local/state/notes/{transcribe,mind}.json`，解析失败时先另存 `.corrupt` 再从零记起（09-24 第三轮审计；此前会被静默清零）。
 - **老配置迁移**：旧版单一 `model` / `baseUrl` / `apiKey` 启动时由 `migrate()` 搬进新结构，匹配不到预置就落到“自定义”并保留模型名。真机两份真实配置迁移前后脱敏 key 一致。DeepSeek 的两个旧 id 启动时经 `remap_retired_preset` 自动改成 `deepseek-flash`，自填单价一起搬。
 - **配置文件损坏**（2026-09-24）：启动时如果解析失败，按默认值运行但**不写回**，另存一份 `.corrupt`，等用户在网页上主动保存才写新文件。此前会无条件写回，把 key 冲掉。离线测试覆盖。
 - **调用端**：两个服务都用 `vendorcfg::ChatClient`（后端标识 + 接口地址 + 模型 + key + 带超时的 HTTP agent）发 `POST {baseUrl}/chat/completions`，各服务只拼自己的请求体（转写带 `image_url`、`temperature` 0；问 AI 纯文字、0.3）。`ChatClient` 故意不派生 `Debug`，避免 key 被 `{:?}` 打进日志。**调用端复用**（09-30，`vendorcfg::ClientCache`）：配置（后端 / 地址 / 模型 / key / 超时）没变就复用上一次建的 `ChatClient`，连同还活着的 HTTPS 连接；此前转写每一轮、问 AI 每问一次都新建，每次都重做 DNS + TCP + TLS 握手，设备走 WiFi 时就是几次实打实的射频唤醒。改了配置，下一次调用自然换新的。

@@ -116,9 +116,22 @@ impl JsonBody {
     pub fn opt_u64(&self, key: &str) -> Option<u64> {
         self.0.get(key).and_then(|v| v.as_u64())
     }
+    /// 可选数字字段（整数也认）；缺或不是数字 → `None`。
+    pub fn opt_f64(&self, key: &str) -> Option<f64> {
+        self.0.get(key).and_then(|v| v.as_f64())
+    }
+    /// 可选嵌套对象字段（缺或不是对象 → `None`），包成 [`JsonBody`] 接着用同一套取法。会拷一份——请求体都是小 JSON。
+    pub fn opt_obj(&self, key: &str) -> Option<JsonBody> {
+        self.0.get(key).filter(|v| v.is_object()).cloned().map(JsonBody)
+    }
     /// 字符串数组字段（缺 → 空；非字符串元素跳过）。
     pub fn str_list(&self, key: &str) -> Vec<String> {
-        self.0.get(key).and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default()
+        self.opt_str_list(key).unwrap_or_default()
+    }
+    /// 可选字符串数组字段：缺或不是数组 → `None`；是数组 → `Some`（非字符串元素跳过，空数组得 `Some(空)`）。
+    /// "没给"与"给了空数组"要区分时用它（如批量投递：没给 names 才看 all）。
+    pub fn opt_str_list(&self, key: &str) -> Option<Vec<String>> {
+        self.0.get(key).and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
     }
 }
 
@@ -291,6 +304,14 @@ mod tests {
         assert!(b.bool("b").unwrap() && b.bool("n").is_err());
         assert_eq!(b.str_list("l"), ["a", "b"]);
         assert!(b.str_list("nope").is_empty());
+        assert_eq!((b.opt_f64("n"), b.opt_f64("s")), (Some(7.0), None));
+        let nested = JsonBody(serde_json::json!({"p": {"x": 0.5}, "s": "x"}));
+        assert_eq!(nested.opt_obj("p").and_then(|p| p.opt_f64("x")), Some(0.5));
+        assert!(nested.opt_obj("s").is_none() && nested.opt_obj("nope").is_none(), "不是对象 / 没给 → None");
+        assert_eq!(b.opt_str_list("l"), Some(vec!["a".to_string(), "b".to_string()]));
+        assert_eq!(b.opt_str_list("nope"), None, "没给 → None");
+        assert_eq!(b.opt_str_list("s"), None, "不是数组 → None");
+        assert_eq!(JsonBody(serde_json::json!({"l": []})).opt_str_list("l"), Some(vec![]), "空数组也算给了");
         let mut empty: &[u8] = b"";
         let r = Request { method: Method::Get, path: "/".into(), query: parse_query("limit=50&bad=x&blank=%20"), params: HashMap::new(), content_type: String::new(), content_length: None, headers: vec![], body: &mut empty };
         assert_eq!(r.q_parse::<usize>("limit"), Some(50));
