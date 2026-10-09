@@ -13,7 +13,7 @@ Type=simple
 ExecStart=/home/root/.local/bin/book-serve serve --bind 127.0.0.1:8790
 Restart=on-failure
 RestartSec=5
-# 与 wr-serve 同款软限：只降权不硬顶（交互式重活需要突发），MemoryMax 兜内存（上传走流式落盘）。
+# 各常驻服务统一的软限：只降权不硬顶（交互式重活需要突发），MemoryMax 兜内存（上传走流式落盘）。
 CPUWeight=20
 MemoryMax=192M
 Nice=5
