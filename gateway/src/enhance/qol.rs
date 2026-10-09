@@ -42,8 +42,8 @@ impl Qol {
         self.0.get(key).and_then(Value::as_bool).unwrap_or(default)
     }
 
-    /// CJK 荧光笔精确吸附开关（`hlSnapCjk`，langhook C hook 消费）。缺省视为开——跟 QML 侧 `c.hlSnapCjk !== false`
-    /// 同一条缺省规则（`xovi-extensions/reading-qol/settings-reading-enhance.qmd`）。
+    /// CJK 荧光笔精确吸附开关（`hlSnapCjk`，由 `enhance/hl-snap` 读取）。缺省视为开——
+    /// 跟 hl-snap 的规则一致：键缺失时保持修复开启。
     pub fn hl_snap_cjk(&self) -> bool {
         self.flag("hlSnapCjk", true)
     }

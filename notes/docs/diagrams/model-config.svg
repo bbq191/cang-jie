@@ -23,7 +23,7 @@
 <text x="880" y="104" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">③ 用量与花费</text>
 <text x="880" y="127" text-anchor="start" font-size="10" fill="#3a3a3a">usage.byModel: 预置 id（或 custom:&lt;model&gt;）→</text>
 <text x="880" y="142" text-anchor="start" font-size="10" fill="#3a3a3a">  调用/成功/失败/token 入出/最近错误</text>
-<text x="880" y="157" text-anchor="start" font-size="10" fill="#3a3a3a">单价由用户自填（每 1K token 输入/输出）</text>
+<text x="880" y="157" text-anchor="start" font-size="10" fill="#3a3a3a">单价自填：PUT price:{inputPer1k, outputPer1k}（每 1K token）</text>
 <text x="880" y="172" text-anchor="start" font-size="10" fill="#3a3a3a">  不做官方价格表：第三方定价太易变</text>
 <text x="880" y="187" text-anchor="start" font-size="10" fill="#3a3a3a">没填单价 → costEstimate = null（不是 0）</text>
 <text x="880" y="207" text-anchor="start" font-size="10" fill="#3a3a3a">只记模型调用本身：取不到裁图等本地错误不记</text>
@@ -58,6 +58,6 @@
 <text x="646" y="533" text-anchor="start" font-size="10" fill="#3a3a3a">vendorcfg::preset — 预置/key/迁移/PATCH/对外 JSON</text>
 <text x="646" y="548" text-anchor="start" font-size="10" fill="#3a3a3a">vendorcfg::usage — 泛型 UsageBook / Ledger</text>
 <text x="646" y="563" text-anchor="start" font-size="10" fill="#3a3a3a">vendorcfg::cell — ConfigCell 内存副本 + 落盘</text>
-<text x="646" y="578" text-anchor="start" font-size="10" fill="#3a3a3a">vendorcfg::chat — ChatClient 调用端 + 应答解析（不派生 Debug，key 进不了日志）</text>
+<text x="646" y="578" text-anchor="start" font-size="10" fill="#3a3a3a">vendorcfg::chat — ChatClient（不派生 Debug）+ ClientCache 复用（闲置 45 秒重建）+ 瞬时故障重试一次</text>
 <text x="646" y="593" text-anchor="start" font-size="10" fill="#3a3a3a">各服务自己的 Config/Usage 落盘形状逐字节不变</text>
 </svg>

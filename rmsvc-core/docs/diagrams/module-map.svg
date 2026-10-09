@@ -1,8 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 790" width="1240" height="790" font-family="Noto Sans SC, Noto Sans CJK SC, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 930" width="1240" height="930" font-family="Noto Sans SC, Noto Sans CJK SC, sans-serif">
 <defs><marker id="mk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker></defs>
-<rect x="0" y="0" width="1240" height="790" fill="#fbfbfa"/>
+<rect x="0" y="0" width="1240" height="930" fill="#fbfbfa"/>
 <text x="620" y="30" font-size="18" font-weight="bold" fill="#1a1a1a" text-anchor="middle">rmsvc-core：四个顶层项目共用的“地基”（2026-10-09 现状）</text>
-<text x="620" y="52" font-size="12.5" font-weight="normal" fill="#6a6a6a" text-anchor="middle">纯基础设施，不含“书 / 笔记 / 字体”业务；消费方单向 path 依赖它（没有根 workspace）。橙色 = 10-09 第六轮审计新增或改动（未部署）</text>
+<text x="620" y="52" font-size="12.5" font-weight="normal" fill="#6a6a6a" text-anchor="middle">纯基础设施，不含“书 / 笔记 / 字体”业务；消费方单向 path 依赖它（没有根 workspace）。橙色 = 10-09 新增或改动（已部署；多数行为没在真机上专门触发过）</text>
 <rect x="24" y="76" width="286" height="138" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
 <text x="167" y="98" font-size="13" font-weight="bold" fill="#1a1a1a" text-anchor="middle">shelf/ 书架线</text>
 <text x="167" y="124" font-size="11" font-weight="normal" fill="#3a3a3a" text-anchor="middle">book-serve（母版库 / 加入原生书库）</text>
@@ -41,11 +41,12 @@
 <text x="56" y="404" font-size="11" font-weight="bold" fill="#1a1a1a" text-anchor="start" font-family="DejaVu Sans Mono, monospace">http</text>
 <text x="152" y="404" font-size="11" xml:space="preserve"><tspan fill="#3a3a3a">唯一适配层：Router（最具体优先）· Reply · Guard · SSE / 定长流</tspan></text>
 <text x="152" y="423" font-size="11" xml:space="preserve"><tspan fill="#3a3a3a">并发上限 64 · 读空闲 60 秒；</tspan><tspan fill="#b0451f" font-weight="bold">守卫 panic 也回 JSON 500 · 取值小件</tspan></text>
-<text x="56" y="442" font-size="11" font-weight="bold" fill="#1a1a1a" text-anchor="start" font-family="DejaVu Sans Mono, monospace">events</text>
-<text x="152" y="442" font-size="11" xml:space="preserve"><tspan fill="#3a3a3a">EventBus + SSE · follow() 订阅别的服务 · Wake / registry_wake</tspan></text>
-<text x="152" y="461" font-size="11" xml:space="preserve"><tspan fill="#b0451f" font-weight="bold">publish_with · Event::parse</tspan></text>
-<text x="56" y="480" font-size="11" font-weight="bold" fill="#1a1a1a" text-anchor="start" font-family="DejaVu Sans Mono, monospace">proc</text>
-<text x="152" y="480" font-size="11" xml:space="preserve"><tspan fill="#b0451f" font-weight="bold">新模块：run_timeout · uptime_secs · find_process（不 fork）</tspan></text>
+<text x="152" y="442" font-size="11" xml:space="preserve"><tspan fill="#3a3a3a">JsonBody：opt_str / opt_bool / opt_u64 / str_list · </tspan><tspan fill="#b0451f" font-weight="bold">opt_str_list / opt_f64 / opt_obj</tspan></text>
+<text x="56" y="461" font-size="11" font-weight="bold" fill="#1a1a1a" text-anchor="start" font-family="DejaVu Sans Mono, monospace">events</text>
+<text x="152" y="461" font-size="11" xml:space="preserve"><tspan fill="#3a3a3a">EventBus + SSE · follow() 订阅别的服务 · Wake / registry_wake</tspan></text>
+<text x="152" y="480" font-size="11" xml:space="preserve"><tspan fill="#b0451f" font-weight="bold">publish_with · Event::parse</tspan></text>
+<text x="56" y="499" font-size="11" font-weight="bold" fill="#1a1a1a" text-anchor="start" font-family="DejaVu Sans Mono, monospace">proc</text>
+<text x="152" y="499" font-size="11" xml:space="preserve"><tspan fill="#b0451f" font-weight="bold">新模块：run_timeout · uptime_secs · find_process（不 fork）</tspan></text>
 <rect x="628" y="286" width="568" height="250" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
 <text x="912" y="306" font-size="12" font-weight="bold" fill="#1a1a1a" text-anchor="middle">文件与数据</text>
 <text x="640" y="328" font-size="11" font-weight="bold" fill="#1a1a1a" text-anchor="start" font-family="DejaVu Sans Mono, monospace">paths</text>
@@ -60,11 +61,11 @@
 <text x="640" y="423" font-size="11" font-weight="bold" fill="#1a1a1a" text-anchor="start" font-family="DejaVu Sans Mono, monospace">asset</text>
 <text x="736" y="423" font-size="11" xml:space="preserve"><tspan fill="#3a3a3a">上传 → 校验 → 安装模板（字体 / 壁纸 / 母版库）· </tspan><tspan fill="#b0451f" font-weight="bold">any_ok</tspan></text>
 <text x="640" y="442" font-size="11" font-weight="bold" fill="#1a1a1a" text-anchor="start" font-family="DejaVu Sans Mono, monospace">formats</text>
-<text x="736" y="442" font-size="11" xml:space="preserve"><tspan fill="#3a3a3a">格式白名单唯一事实源（书只收 EPUB/PDF）· </tspan><tspan fill="#b0451f" font-weight="bold">mime_of · sniff</tspan></text>
+<text x="736" y="442" font-size="11" xml:space="preserve"><tspan fill="#3a3a3a">格式白名单唯一事实源（书只收 EPUB/PDF）· </tspan><tspan fill="#b0451f" font-weight="bold">mime_of · sniff · stem_of</tspan></text>
 <text x="640" y="461" font-size="11" font-weight="bold" fill="#1a1a1a" text-anchor="start" font-family="DejaVu Sans Mono, monospace">ttf</text>
 <text x="736" y="461" font-size="11" xml:space="preserve"><tspan fill="#3a3a3a">字体家族名 · CJK 覆盖率 · </tspan><tspan fill="#b0451f" font-weight="bold">format-4 逐码位总数设上限</tspan></text>
 <text x="640" y="480" font-size="11" font-weight="bold" fill="#1a1a1a" text-anchor="start" font-family="DejaVu Sans Mono, monospace">cache</text>
-<text x="736" y="480" font-size="11" xml:space="preserve"><tspan fill="#3a3a3a">TtlCache · StampCache（长度 + mtime + inode 失效）</tspan></text>
+<text x="736" y="480" font-size="11" xml:space="preserve"><tspan fill="#3a3a3a">TtlCache · StampCache（长度 + mtime + inode 失效）· </tspan><tspan fill="#b0451f" font-weight="bold">FileStamp::len</tspan></text>
 <text x="640" y="499" font-size="11" font-weight="bold" fill="#1a1a1a" text-anchor="start" font-family="DejaVu Sans Mono, monospace">clock/sync</text>
 <text x="736" y="499" font-size="11" xml:space="preserve"><tspan fill="#3a3a3a">时间戳唯一出处 / 容忍 poison 的 sync::lock</tspan></text>
 <rect x="44" y="550" width="568" height="200" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
@@ -93,4 +94,13 @@
 <text x="640" y="708" font-size="11" font-weight="normal" fill="#3a3a3a" text-anchor="start">· 这里出问题，shelf / notes / enhance / gateway 四个项目一起受影响：改前先查谁在用</text>
 <text x="640" y="727" font-size="11" font-weight="normal" fill="#3a3a3a" text-anchor="start">· 能下沉就下沉，但只抽行为不抽业务数据结构；测试一律用 Paths::sandbox</text>
 <text x="640" y="746" font-size="11" font-weight="normal" fill="#3a3a3a" text-anchor="start">· 不引用旧项目 crate；xochitl、fswatch 是“剥离移植”的独立实现</text>
+<rect x="24" y="786" width="1192" height="124" rx="10" fill="#fff8ec" stroke="#c0602d" stroke-width="1.6" stroke-dasharray="6 4"/>
+<text x="620" y="808" font-size="13" font-weight="bold" fill="#1a1a1a" text-anchor="middle">rmsvc-core/epubpkg/：同目录下的独立小 crate（10-09 新增）——不依赖 rmsvc-core 本体，也不是它的模块，只依赖 regex / zip / flate2</text>
+<text x="44" y="834" font-size="11" font-weight="bold" fill="#1a1a1a" text-anchor="start" font-family="DejaVu Sans Mono, monospace">Package</text>
+<text x="140" y="834" font-size="11" xml:space="preserve"><tspan fill="#b0451f" font-weight="bold">container.xml → OPF；manifest / spine / Dublin Core · escape（href 解实体与百分号）· xml（正则标签扫描）· read_entry / read_text（按实际解出字节设上限）</tspan></text>
+<text x="44" y="856" font-size="11" font-weight="bold" fill="#1a1a1a" text-anchor="start" font-family="DejaVu Sans Mono, monospace">epubindex</text>
+<text x="140" y="856" font-size="11" xml:space="preserve"><tspan fill="#b0451f" font-weight="bold">解析 xochitl 的 &lt;uuid&gt;.epubindex：每个 spine 文件从第几页开始（逆向得出的格式；从笔记线 epubmap 下沉）</tspan></text>
+<text x="44" y="878" font-size="11" font-weight="bold" fill="#1a1a1a" text-anchor="start" font-family="DejaVu Sans Mono, monospace">谁在用</text>
+<text x="140" y="878" font-size="11" xml:space="preserve"><tspan fill="#3a3a3a">书架 shelf-conv（书名、封面）· book-serve（原地替换后找回阅读位置）· 笔记线 epubmap（找目录、页号 → 章节）</tspan></text>
+<text x="140" y="898" font-size="11" xml:space="preserve"><tspan fill="#6a6a6a">单独成 crate 的原因：纯解析库不该连带编进 HTTP / TLS 那一整套依赖</tspan></text>
 </svg>

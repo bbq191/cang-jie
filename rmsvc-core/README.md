@@ -38,17 +38,17 @@ service::run_or_exit(&SPEC, &bind_addr, &paths, router, ServeOpts::default());
 | | `asset` | 资产仓库 + 上传流程模板（字体/壁纸/母版库共用），暂存在 `~/.local/state/shelf/upload`，启动清半成品 |
 | | `formats` | 文件格式白名单唯一事实源（书籍只收 EPUB/PDF）；`mime_of` 扩展名→MIME 唯一表、`sniff` 按魔数认格式、`stem_of` |
 | | `ttf` | TTF/OTF 家族名、魔数、CJK 覆盖率（跳过 format-12 损坏组，format-4 逐码位总数设上限） |
-| | `cache` | 单值 TTL 缓存 `TtlCache`；按文件戳（长度 + mtime + inode）失效的 `StampCache` |
+| | `cache` | 单值 TTL 缓存 `TtlCache`；按文件戳（长度 + mtime + inode）失效的 `StampCache`，`FileStamp::len()` 取戳里的长度 |
 | | `clock` / `sync` | unix 时间戳唯一出处 / 容忍 poison 的取锁 `sync::lock` |
 | xochitl | `xochitl` | 免重启进原生书库（"设文件夹 → `/upload`"，设失败退回书库根）；按**文件夹名**的 `upload*` 与按**文件夹 uuid** 的 `upload*_into` 两套入口；超过约 100MB 的"占位 + 磁盘替换"；书库只读查询（强类型 `Metadata`、区分"没有/读不了"的 `read_meta`、`live_entries`、`file_type` 等） |
 | | `xochitl_conf` | 改 `xochitl.conf [General]` 单键（休眠屏 `SleepScreenPath`；文件含凭证，绝不打印行内容，保留原权限） |
-| | `fswatch` | inotify 防抖目录监听：常驻 `watch_debounced`（目录被删/挪走后退避重挂）、限时 `watch_until`、等条件成立 `wait_for` |
+| | `fswatch` | inotify 防抖目录监听（调用方线程 `poll`，不另开读线程）：常驻 `watch_debounced`（目录被删/挪走后退避重挂）、限时 `watch_until`、等条件成立 `wait_for`（先挂监听再查） |
 | 对外与安全（只有网关用） | `auth` | PBKDF2 密码哈希、Basic/Cookie 解析、会话表、按 IP 失败限速、只缓存"校验通过"的 `VerifyCache` |
 | | `tls` / `mdns` / `netinfo` | 带名称约束的私有 CA + 服务器证书（原子写，私钥创建即 0600）/ mDNS 应答器（`shelf.local`，地址变化才重扫）/ 本机 IPv4 表 |
 
 另有 crate 内部的 `sys`（`poll` 小工具，`fswatch` 与 `mdns` 共用），不对外。
 
-同目录下还有一个**独立小 crate** [`epubpkg/`](epubpkg/src/lib.rs)（2026-10-09）：EPUB 容器 / OPF 的只读解析（container.xml → OPF、manifest/spine/Dublin Core、href 解 XML 实体与百分号、有上限地读 zip 条目），笔记线 `notes/crates/epubmap` 和书架 `shelf/crates/shelf-conv` 共用；另有 xochitl `.epubindex`（各 spine 文件起始页）的解析 `epubindex`（10-09 从 epubmap 下沉，epubmap 与书架 book-serve 找回阅读位置共用）。它**不依赖 rmsvc-core**、也不是它的模块——只依赖 regex/zip，免得纯解析库连带编进 HTTP/TLS 那一整套。
+同目录下还有一个**独立小 crate** [`epubpkg/`](epubpkg/src/lib.rs)（2026-10-09）：EPUB 容器 / OPF 的只读解析（container.xml → OPF、manifest/spine/Dublin Core、href 解 XML 实体与百分号、有上限地读 zip 条目），笔记线 `notes/crates/epubmap` 和书架 `shelf/crates/shelf-conv` 共用；另有 xochitl `.epubindex`（各 spine 文件起始页）的解析 `epubindex`（10-09 从 epubmap 下沉，epubmap 与书架 book-serve 找回阅读位置共用）。它**不依赖 rmsvc-core**、也不是它的模块——只依赖 regex / zip / flate2，免得纯解析库连带编进 HTTP/TLS 那一整套。
 
 ## 常用 Rust 入口
 
@@ -66,8 +66,8 @@ service::run_or_exit(&SPEC, &bind_addr, &paths, router, ServeOpts::default());
 ## 构建与测试
 
 - `cargo build --manifest-path rmsvc-core/Cargo.toml`；独立 crate，各消费方编译时一起编。
-- `cargo test --manifest-path rmsvc-core/Cargo.toml`：2026-10-09 实跑 131 个单测通过、1 个默认忽略（需要网络命名空间的 mDNS 端到端测试），另有 1 个文档示例默认忽略。
-- `cargo test --manifest-path rmsvc-core/epubpkg/Cargo.toml`：同目录的 `epubpkg`，11 个单测。
+- `cargo test --manifest-path rmsvc-core/Cargo.toml`：2026-10-09 实跑 133 个单测通过、1 个默认忽略（需要网络命名空间的 mDNS 端到端测试），另有 1 个文档示例默认忽略。
+- `cargo test --manifest-path rmsvc-core/epubpkg/Cargo.toml`：同目录的 `epubpkg`，11 个单测（含 `epubindex` 的真机样本用例）。
 - CI（GitHub Actions）的 `rust` job 单列一步跑它（`epubpkg` 同一步）；仓库 2026-10-09 公开后 CI 恢复执行。
 
 ## 注意

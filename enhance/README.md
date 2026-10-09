@@ -28,11 +28,11 @@
 
 **已移除（2026-09-30，别再加回）**：手写优化（`handwriting-stroke/`，`hw-stroke.so`）和电池刺客（`battop/`）。重跑 `install-all.sh` 会自动清掉旧设备上的残留；来龙去脉见白皮书 §03n，源码在 git 历史里。
 
-**最近一轮（2026-10-09 第六轮审计，未部署、未真机验证）**：壁纸 cover 模式先裁再缩放（开发机 12MP 横图 1.72s → 1.01s）；`fc-cache` 只扫用户字体目录、一次上传多个只刷新一次；`fc-scan`/`fc-cache` 加超时；壁纸池和字体目录只认普通文件。两个 C 扩展没改，审计记下三处未修隐患，见白皮书 §03p「已知风险」。
+**最近一轮（2026-10-09 第六轮审计，13:48 已部署，部署自检通过，功能未手测）**：壁纸 cover 模式先裁再缩放（开发机 12MP 横图 1.72s → 1.01s）；`fc-cache` 只扫用户字体目录、一次上传多个只刷新一次；`fc-scan`/`fc-cache` 加超时；壁纸池和字体目录只认普通文件。两个 C 扩展修了审计发现的三处隐患（glyph 上界、改完代码页恢复 `r-x`、非 PIE 防递归），其中"恢复 `r-x`"已在真机 maps 里看到，另两处只有离线验证，见白皮书 §03p「已知风险」。
 
 ## font-serve（没有单独 README）
 
-- 路由（经网关前缀 `/api/fonts`）：`GET /` 按家族归组的清单 · `POST /` 上传（multipart，多文件）· `DELETE /{family}` · `GET /status`；界面字体 `GET /ui` · `POST /ui` · `DELETE /ui/{family}` · `PUT /ui/select {sans, serif}`。
+- 路由（经网关前缀 `/api/fonts`）：`GET /` 按家族归组的清单 · `POST /` 上传（multipart，多文件）· `DELETE /{family}` · `GET /status` · `PUT /config {emboldenCjkFallback}`（中文回退字体加粗开关，fontconfig 实时生效）· `GET /events`；界面字体 `GET /ui` · `POST /ui` · `DELETE /ui/{family}` · `PUT /ui/select {sans, serif}`。
 - 落点：字体装进 fontconfig 用户字体目录 `~/.local/share/fonts/`（界面字体在子目录 `shelf-ui/`），字体菜单读 `~/.local/share/shelf/fonts.json`，回退规则写 `~/.config/fontconfig/fonts.conf`。
 - 代码头注：`font-serve/src/main.rs`（路由）、`src/store.rs`（扫描与 fc-cache）、`src/ui.rs`（界面字体）。原理在 [`../shelf/docs/reMarkable书架白皮书.md`](../shelf/docs/reMarkable书架白皮书.md) 的字体章节（第 F 章、§03k、§03bd）。
 - host 测试：`cd font-serve && cargo test`（13 项，2026-10-09 实跑；wallpaper-serve 12 项）。

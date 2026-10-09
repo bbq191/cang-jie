@@ -1,9 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 630" font-family="Noto Sans CJK SC, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 744" font-family="Noto Sans CJK SC, Source Han Sans SC, sans-serif">
 <defs>
 <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker>
 </defs>
-<rect x="0" y="0" width="1100" height="630" fill="#fbfbfa"/>
-<text x="550" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">书架怎么让 xochitl "自己动手"：三个 qmd 代理</text>
+<rect x="0" y="0" width="1100" height="744" fill="#fbfbfa"/>
+<text x="550" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">书架怎么让 xochitl "自己动手"：四个 qmd 代理（按 2026-10-09 的代码）</text>
 <text x="550" y="54" text-anchor="middle" font-size="12.5" fill="#6a6a6a">外部进程改书库文件（.metadata / .content）会被运行中 xochitl 的内存状态盖回去 → 只能注入 qmd，在 xochitl 进程里调它自己的函数</text>
 
 <!-- 列标题 -->
@@ -14,16 +14,16 @@
 <!-- 行 1 建文件夹 -->
 <rect x="20" y="106" width="240" height="86" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
 <text x="140" y="134" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">建文件夹</text>
-<text x="140" y="156" text-anchor="middle" font-size="11.5" fill="#3a3a3a">「加入 xochitl」填了一个</text>
-<text x="140" y="174" text-anchor="middle" font-size="11.5" fill="#3a3a3a">书库里还没有的文件夹名</text>
+<text x="140" y="156" text-anchor="middle" font-size="11.5" fill="#3a3a3a">「加入 xochitl」填了不存在的名字；</text>
+<text x="140" y="174" text-anchor="middle" font-size="11.5" fill="#3a3a3a">直接导入逐级建多级文件夹</text>
 <rect x="340" y="106" width="300" height="86" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
 <text x="490" y="132" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">MkdirQueue（mkdir-pending.json）</text>
-<text x="490" y="154" text-anchor="middle" font-size="11.5" fill="#3a3a3a">投递线程同步等文件夹出现（≤20 秒，</text>
-<text x="490" y="172" text-anchor="middle" font-size="11.5" fill="#3a3a3a">超时落书库根）；出现即出队</text>
+<text x="490" y="154" text-anchor="middle" font-size="11.5" fill="#3a3a3a">按（上级, 名字）记；投递线程先挂监听再等</text>
+<text x="490" y="172" text-anchor="middle" font-size="11.5" fill="#3a3a3a">（≤20 秒，超时落书库根）；建出即出队</text>
 <rect x="720" y="106" width="360" height="86" rx="10" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.6"/>
 <text x="900" y="132" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">shelf-mkdir-agent.qmd（MainView）</text>
 <text x="900" y="154" text-anchor="middle" font-size="11.5" fill="#3a3a3a">长轮询 GET /mkdir/pending?wait=290</text>
-<text x="900" y="172" text-anchor="middle" font-size="11.5" fill="#3a3a3a">→ Library.createCollection("", 名字)</text>
+<text x="900" y="172" text-anchor="middle" font-size="11.5" fill="#3a3a3a">→ Library.createCollection(上级, 名字)</text>
 <line x1="260" y1="149" x2="338" y2="149" stroke="#555" stroke-width="1.6" marker-end="url(#ar)"/>
 <line x1="718" y1="149" x2="642" y2="149" stroke="#555" stroke-width="1.6" marker-end="url(#ar)"/>
 
@@ -35,7 +35,7 @@
 <rect x="340" y="210" width="300" height="86" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
 <text x="490" y="236" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">TrashQueue（trash-pending.json）</text>
 <text x="490" y="258" text-anchor="middle" font-size="11.5" fill="#3a3a3a">POST /trash/add 入队时按书名核对 uuid</text>
-<text x="490" y="276" text-anchor="middle" font-size="11.5" fill="#3a3a3a">（防错删）；metadata 变 trash 即出队</text>
+<text x="490" y="276" text-anchor="middle" font-size="11.5" fill="#3a3a3a">（防错删）；进了回收站 / 条目真没了才出队</text>
 <rect x="720" y="210" width="360" height="86" rx="10" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.6"/>
 <text x="900" y="236" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">shelf-trash-agent.qmd（MainView，09-25 重写）</text>
 <text x="900" y="258" text-anchor="middle" font-size="11.5" fill="#3a3a3a">长轮询 GET /trash/pending?wait=290</text>
@@ -59,14 +59,30 @@
 <line x1="260" y1="357" x2="338" y2="357" stroke="#555" stroke-width="1.6" marker-end="url(#ar)"/>
 <line x1="718" y1="357" x2="642" y2="357" stroke="#555" stroke-width="1.6" marker-end="url(#ar)"/>
 
-<text x="550" y="428" text-anchor="middle" font-size="12" fill="#8a8a8a">（原第四个代理「日漫翻页」reader-page-turn.qmd → GET /reading-direction 2026-10-07 删除：书架不管翻页方向，xochitl 里日漫一律从左往右；同一 qmd 的单击翻页不经书架）</text>
+<!-- 行 4 找回阅读位置（2026-10-09） -->
+<rect x="20" y="418" width="240" height="86" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
+<text x="140" y="446" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">原地替换后找回阅读位置</text>
+<text x="140" y="468" text-anchor="middle" font-size="11.5" fill="#3a3a3a">sheng-ren 经 POST /import?uuid=</text>
+<text x="140" y="486" text-anchor="middle" font-size="11.5" fill="#3a3a3a">替换一本在读的 EPUB</text>
+<rect x="340" y="418" width="300" height="86" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
+<text x="490" y="444" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">Progress（progress/&lt;uuid&gt;.json）</text>
+<text x="490" y="466" text-anchor="middle" font-size="11.5" fill="#3a3a3a">替换前拍快照：所在章节文件 + 文件内比例；</text>
+<text x="490" y="484" text-anchor="middle" font-size="11.5" fill="#3a3a3a">跳完 / 放弃（POST /progress/applied）即删</text>
+<rect x="720" y="418" width="360" height="86" rx="10" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.6"/>
+<text x="900" y="444" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">shelf-keep-progress.qmd（DocumentView）</text>
+<text x="900" y="466" text-anchor="middle" font-size="11.5" fill="#3a3a3a">开书 / 页数变 / 目录到达后 2 秒 GET /progress/{uuid}</text>
+<text x="900" y="484" text-anchor="middle" font-size="11.5" fill="#3a3a3a">→ sceneView.goToPage(page)（图见 sh-keep-progress.svg）</text>
+<line x1="260" y1="461" x2="338" y2="461" stroke="#555" stroke-width="1.6" marker-end="url(#ar)"/>
+<line x1="718" y1="461" x2="642" y2="461" stroke="#555" stroke-width="1.6" marker-end="url(#ar)"/>
+
+<text x="550" y="532" text-anchor="middle" font-size="12" fill="#8a8a8a">（以前还有「日漫翻页」reader-page-turn.qmd → GET /reading-direction，2026-10-07 删除；同一 qmd 的单击翻页保留，不经书架）</text>
 
 <!-- 底部说明 -->
-<rect x="20" y="446" width="1060" height="166" rx="10" fill="#f0f0ee" stroke="#8a8a8a" stroke-width="1.6"/>
-<text x="40" y="472" font-size="12.5" fill="#1a1a1a">• 箭头方向 = 谁找谁：代理（右）主动向 book-serve（中）要活，book-serve 从不主动调 xochitl。</text>
-<text x="40" y="496" font-size="12.5" fill="#1a1a1a">• 上两行是长轮询，共用 pending_queue::Handout：有待办立即返回，没有就睡到有人入队、290 秒到期，或某项“交出后静默期”到期；空闲约每 5 分钟往返一次。</text>
-<text x="40" y="520" font-size="12.5" fill="#1a1a1a">• 交出后 15 秒（建文件夹）/ 30 秒（回收站）内不重复交；过了静默期还没做成就再交，同一项最多交 5 次，仍不成就放弃、移出队列、记一行日志（09-25）。</text>
-<text x="40" y="544" font-size="12.5" fill="#1a1a1a">• 代理请求出错（书架服务停了/重启中）时退避 15 → 30 → 60 → 120 秒封顶，成功一次复位（09-25；此前固定 15 秒，每小时白醒 240 次）。</text>
-<text x="40" y="568" font-size="12.5" fill="#1a1a1a">• 第三行不轮询：只在打开一本书时问一次，费电为零。</text>
-<text x="40" y="592" font-size="12.5" fill="#1a1a1a">• qmd 只在 xochitl 启动时注入：装/改了 qmd 要整机重启才生效（2026-09-25 起，不再单独重启 xochitl）。09-25 这批 qmd 改动已随当天部署上机。</text>
+<rect x="20" y="550" width="1060" height="166" rx="10" fill="#f0f0ee" stroke="#8a8a8a" stroke-width="1.6"/>
+<text x="40" y="576" font-size="12.5" fill="#1a1a1a">• 箭头方向 = 谁找谁：代理（右）主动向 book-serve（中）要活，book-serve 从不主动调 xochitl。</text>
+<text x="40" y="600" font-size="12.5" fill="#1a1a1a">• 上两行是长轮询，共用 pending_queue::Handout：有待办立即返回，没有就睡到有人入队、290 秒到期，或某项“交出后静默期”到期；空闲约每 5 分钟往返一次。</text>
+<text x="40" y="624" font-size="12.5" fill="#1a1a1a">• 交出后 15 秒（建文件夹）/ 30 秒（回收站）内不重复交；过了静默期还没做成就再交，同一项最多交 5 次，仍不成就放弃、移出队列、记一行日志（09-25）。</text>
+<text x="40" y="648" font-size="12.5" fill="#1a1a1a">• 代理请求出错（书架服务停了/重启中）时退避 15 → 30 → 60 → 120 秒封顶，成功一次复位（09-25；此前固定 15 秒，每小时白醒 240 次）。</text>
+<text x="40" y="672" font-size="12.5" fill="#1a1a1a">• 下两行不轮询：只在打开一本书时问（页边距问一次；阅读位置最多问约 60 秒），平时费电为零。</text>
+<text x="40" y="696" font-size="12.5" fill="#1a1a1a">• qmd 只在 xochitl 启动时注入：装/改了 qmd 要整机重启才生效（2026-09-25 起，不再单独重启 xochitl）。shelf-keep-progress.qmd 10-09 已部署，真机验证过一次。</text>
 </svg>

@@ -36,10 +36,10 @@
 | 依赖方向 | 单向：消费方 → 本 crate；本 crate 不知道任何消费方，不引用旧项目 crate（`device-core` / `weread-device`） |
 | workspace | 不建根 workspace，各项目各管各的 `target/` |
 | 同目录小 crate | `epubpkg/`（10-09）：EPUB 容器 / OPF 只读解析 + xochitl `.epubindex` 起始页表，笔记线 `epubmap` 与书架 `shelf-conv` / `book-serve` 共用；**不依赖 rmsvc-core 本体**，也不是它的模块，见 §02 末尾 |
-| 测试 | 131 个单测通过、1 个默认忽略（需要网络命名空间的 mDNS 端到端测试），另有 1 个文档示例默认忽略（2026-10-09 实跑）。`vendor/tiny_http` 的补丁另有单测（在 vendored crate 里，不计入）。CI `rust` job 单列一步；仓库 10-09 公开后 CI 恢复执行 |
-| 真机 | 所有消费方已部署在设备上运行（2026-09-11 起 `install-all.sh` 真机跑通，之后多次整轮重装）。**10-09 第六轮审计的改动未部署、未在真机验证**；09-24～10-07 历轮改动都已随部署上机、部署自检通过，但其中大部分行为只在 host 测试里专门验证过（各节分别注明） |
+| 测试 | 133 个单测通过、1 个默认忽略（需要网络命名空间的 mDNS 端到端测试），另有 1 个文档示例默认忽略（2026-10-09 实跑）。`vendor/tiny_http` 的补丁另有单测（在 vendored crate 里，不计入）。CI `rust` job 单列一步；仓库 10-09 公开后 CI 恢复执行 |
+| 真机 | 所有消费方已部署在设备上运行（2026-09-11 起 `install-all.sh` 真机跑通，之后多次整轮重装）。10-09 第六轮审计 13:48 已部署（部署自检 38✓）；同日的审计后续（小接口、`epubpkg`）随 15:53 那次部署上机（39✓）。**部署自检只说明服务起来了**：本页标 10-09 的行为大多没在真机上专门触发过，唯一专门验证过的是 `epubpkg::epubindex`（书架"原地替换后找回阅读位置"真机跑通一次）。09-24～10-07 历轮改动同理，各节分别注明 |
 
-**10-09 第六轮审计改了什么**（未部署、未真机验证；开发机 131 个单测通过）：
+**10-09 改了什么**（第六轮审计 + 同日审计后续；已部署，行为除注明外未在真机上专门触发；开发机 133 个单测通过）：
 
 - **新共享 API**（把各服务各写一份的代码收进基座，服务已迁过去、删掉私有副本）：`proc`（新模块）、`fs::{ScratchFile, move_into, list_files, clean_dir, write_atomic_if_changed}`、`formats::{mime_of, sniff, stem_of}`、`http` 取值小件、`asset::any_ok`、`config::backup_corrupt`、`Paths::sandbox`、`SvcClient::{get_typed, get_bytes}`、`EventBus::publish_with` / `Event::parse`、`service::run_or_exit`、`xochitl::{Metadata, read_meta, file_type}`、`Xochitl::upload_into`。见 §01～§03。
 - **fswatch 改机制**：单线程 `poll`，不再每个监听多开一条读线程、不再往 `/tmp` 写文件踢醒；常驻监听的目录被删/挪走后退避重挂（原来永远失效）；新增 `wait_for`（§03）。
@@ -47,6 +47,8 @@
 - **设文件夹失败退回书库根**：书投到刚被删的文件夹时落根，原来会落进上一次投递设的文件夹（§03）。
 - **TLS 证书/私钥原子写**，私钥创建即 0600；换叶证书先作废 meta（§04）。
 - 修小隐患：`move_unique` 跨分区不再露半截文件；字体 cmap format 4 逐码位总数设上限；守卫 panic 也回 JSON 500；`Iface::contains` 前缀 >32 不 panic；`Metadata` 字段遇 JSON `null` 按缺省值。
+- **审计后续补的小接口**（调用方已迁移）：`JsonBody::{opt_str_list, opt_f64, opt_obj}`、`FileStamp::len()`、`live_entries` 直接返回 `(uuid, Metadata)`；`content_disposition` 的行为测试从 note-serve 挪进 `multipart`。
+- **新的同目录小 crate `epubpkg`**：笔记线与书架两份 EPUB 容器/OPF 解析合成一份，稍后又收进 `.epubindex` 解析（§02 末尾）。
 
 更早几轮（09-24 第三轮、09-25 第四轮、09-30 第五轮、10-07 代码审查）的改动已经写进各节，按日期标注；CHANGELOG 有按时间的完整记录（[`../../docs/CHANGELOG.md`](../../docs/CHANGELOG.md)）。
 
@@ -113,7 +115,7 @@
 | `clock` | 8 个 | unix 时间戳唯一出处；取不到时间回 0 |
 | `sync` | book-serve、网关、笔记线四个服务与 vendorcfg、font-serve、wallpaper-serve、本 crate 自身 | `sync::lock`：容忍 poison 的取锁。release 是 `panic="unwind"`，线程 panic 后它持有的锁被标 poison，别处再 `.lock().unwrap()` 就会让之后每个请求都跟着 panic；这里保护的都是半途中断也自洽的状态，接着用即可。10-09 网关认证配置锁也改用它（此前锁被毒化后谁都登不进）。条件变量 `wait*` 的 poison 处理它管不到，仍是手写 |
 
-### epubpkg —— 同目录下的独立小 crate（epubmap、shelf-conv、book-serve 用；10-09 新增，未部署）
+### epubpkg —— 同目录下的独立小 crate（epubmap、shelf-conv、book-serve 用；10-09 新增，已部署）
 
 `rmsvc-core/epubpkg/`，消费方 path 依赖 `../../../rmsvc-core/epubpkg`。笔记线 `notes/crates/epubmap`（按 OPF 声明找 nav/NCX）和书架 `shelf/crates/shelf-conv`（书名、封面）此前各写一份 container.xml → OPF 解析，10-09 合成这一份：`escape`（href 解 XML 实体 → 去 `#片段` → 百分号，只认 XML 预定义实体和数字引用）、`xml`（正则标签扫描：去注释、三种引号、任意命名空间前缀；`plain_text` 另把 `&nbsp;` 当空格）、`resolve`/`posix_norm`/`dir_of`、`read_entry`/`read_text`（按实际解出的字节数设上限，文本 16MB `MAX_TEXT_BYTES`，超限当读不到、不截断）、`Package::read`（container.xml 第一个带 `full-path` 的 rootfile → OPF，去注释后存）与 `manifest`/`spine`/`meta_contents`/`dc`。10-09 稍后又从 epubmap 下沉了 `epubindex`（xochitl `<uuid>.epubindex` 的各 spine 文件起始页，格式是逆向结论；book-serve 原地替换后找回阅读位置要用，书架不该依赖笔记线目录），epubmap 的 `index` 模块改成转出，真机样本复制到 `epubpkg/testdata/`。
 
@@ -126,7 +128,7 @@
 剥离移植自旧项目的真机结论。
 
 - **上传口**：`POST http://10.11.99.1/upload`（xochitl 的网页接口只绑 USB 网口，设备端靠 lo/usb1 别名让这个地址常驻可达，见 [`../../enhance/lo-alias/README.md`](../../enhance/lo-alias/README.md)）。
-- **"设文件夹 → 上传"**：先 `GET /documents/<文件夹 uuid>` 把"当前文件夹"设好（这是 xochitl 的全局状态），再上传，文件就落进该文件夹；`.metadata` 里的 parent 会被忽略。因为是全局状态，进程内"设文件夹 → 上传"由一把 static 锁串成一对（09-24）；只锁上传本身；跨进程（note-serve 也会投笔记本）不受这把锁约束。**设文件夹失败时退回书库根**（10-09，未真机验证）：此前 GET 的结果被忽略，文件夹刚被删或 xochitl 回错时，当前文件夹仍是上一次投递设的那个，这本书就落进别人的文件夹。
+- **"设文件夹 → 上传"**：先 `GET /documents/<文件夹 uuid>` 把"当前文件夹"设好（这是 xochitl 的全局状态），再上传，文件就落进该文件夹；`.metadata` 里的 parent 会被忽略。因为是全局状态，进程内"设文件夹 → 上传"由一把 static 锁串成一对（09-24）；只锁上传本身；跨进程（note-serve 也会投笔记本）不受这把锁约束。**设文件夹失败时退回书库根**（10-09，已部署，未在真机上专门触发）：此前 GET 的结果被忽略，文件夹刚被删或 xochitl 回错时，当前文件夹仍是上一次投递设的那个，这本书就落进别人的文件夹。
 - **两套入口，参数不一样**（10-09 在文档注释里写醒目）：
 
   | 入口 | 文件夹参数 | 用途 |
@@ -166,7 +168,7 @@
 | `watch_until(dir, 防抖, 超时, 回调)` | 回调说"完了"返回 `true`；到点 `false` | 有头有尾的等待，不给书库目录留常驻监听 |
 | `wait_for(dir, 防抖, 超时, check)`（10-09） | `check` 返回 `Some` 即交回结果；到点 `None` | "等某个条件成立"：先挂监听**再**查一次，之后每次目录变化静默后再查，到点再查最后一次——收编了各调用方手写的"查 → 等 → 再查"三段式，并补上"查完到挂上监听之间"会漏事件的窗口。inotify 起不来时退化成每秒轮询。调用方：大文件通道认领、book-serve 渲染自检与建文件夹等待、直接导入、note-serve 笔记本认领 |
 
-**10-09 改机制**（未部署、未真机验证）：
+**10-09 改机制**（已部署，未在真机上专门触发）：
 
 - **单线程 `poll`**：调用方线程 `poll` inotify 描述符（带超时）再非阻塞读，每个监听只占调用方这一条线程、返回即释放。此前每个监听另起一条读线程阻塞在 inotify 上；限时形态结束时读线程醒不来，只能往 `/tmp` 下一个私有目录写文件把它踢醒，建不了踢醒目录时读线程和描述符一直挂到书库目录下次有动静。`poll` 小工具从 `mdns` 挪进内部 `sys` 模块两边共用，超时按毫秒向上取整（亚毫秒剩余不会变成 `poll(0)` 忙等）。
 - **目录被删/挪走后重挂**：inotify 监听在目录被删（`IN_IGNORED`）或挪走（`IN_MOVE_SELF`）后再也没有事件。常驻形态现在按 1 秒起、翻倍到 5 分钟的退避重挂，挂上后以**空集合**回调一次让调用方自己追平；限时形态直接交回调用方（`wait_for` 退化成轮询）。此前常驻线程会永远睡着：网关注册表唤醒、book-serve inbox 追平、ink-serve 书库监听都会静默失效。目录一直在时行为不变、空闲零唤醒不变。
@@ -178,7 +180,7 @@
 
 - **`auth`**：`hash_password`/`verify_password`（`pbkdf2$<轮数>$<盐>$<摘要>`，PBKDF2-HMAC-SHA256 60 万轮、16 字节盐；旧版单轮 SHA-256 仍可校验）。`VerifyCache`（09-30）：每个请求都带 `Authorization: Basic` 时，此前每次都现算一遍 60 万轮（设备上数百毫秒 CPU）。**只缓存"通过"**，猜错的每次照样现算，暴力破解成本不变；键 = SHA-256(进程随机密钥 ‖ 存储的哈希 ‖ 密码)，内存里不留明文，随机密钥每次启动从 `/dev/urandom` 取、不落盘；改密后旧缓存自然失效。网关取 10 分钟、8 条。另有 `parse_basic`、`parse_cookie`；`SessionStore`（32 字节随机令牌、绝对过期、容量上限）；`IpFailLimiter`（按来源 IP 的滑动窗口失败计数，IPv4 映射的 IPv6 与纯 IPv4 算同一来源）。
 - **`tls`**：`ensure_ca_signed(dir, extra_sans)` 读取或生成私有 CA（10 年）+ 服务器证书（800 天；名字列表变化或签发满 700 天重签）；CA 带名称约束（`PERMITTED_DNS`、`PERMITTED_V4`，路径长度 0），约束外的 SAN 剔除并打日志；旧的无约束 CA 自动备份为 `.bak-<秒>` 后重建。测试用 `rustls-webpki` 做完整链校验，包括"用同一把 CA 私钥硬签 `evil.com` 会被拒"的反证。流程图见网关白皮书的 [`ca-migration.svg`](../../gateway/docs/diagrams/ca-migration.svg)。
-  - **原子写与权限**（10-09，未部署）：`ca.key`/`key.pem` 此前用普通写先按 0644 落出来再 chmod，中间有一段私钥人人可读；而且非原子：首启生成 CA 途中断电/被杀会留下半截 `ca.key`，之后每次启动都读不出私钥、网关起不来，只能手工删文件。现在证书和私钥全部走 `fs::write_atomic(_mode)`，私钥临时文件创建即 0600。
+  - **原子写与权限**（10-09，已部署）：`ca.key`/`key.pem` 此前用普通写先按 0644 落出来再 chmod，中间有一段私钥人人可读；而且非原子：首启生成 CA 途中断电/被杀会留下半截 `ca.key`，之后每次启动都读不出私钥、网关起不来，只能手工删文件。现在证书和私钥全部走 `fs::write_atomic(_mode)`，私钥临时文件创建即 0600。
   - **换叶顺序**（10-09）：`cert.pem`、`key.pem`、`cert.meta` 分三次写，若只换了证书就被打断，旧 meta 仍声称可复用，会把不匹配的证书/私钥交给 TLS。现在换叶前先删 meta、最后写新 meta，中途打断下次必定重签。
 - **`mdns`**：极简 mDNS 应答器（让局域网里能用 `shelf.local` 找到设备），只回答本机名的 A 查询，应答地址选和提问者同子网的本机 IPv4（USB 网段问就答 `10.11.99.1`）。绑不上 5353（别的 mDNS 服务在跑）只打日志，不影响网关。
   - **内核说地址变了才重扫接口**（09-25）：订阅 netlink（内核把网络变化通知给用户程序的通道）`NETLINK_ROUTE` 的 `RTMGRP_IPV4_IFADDR` 组，和 5353 套接字一起 `poll` 无限期等待；只有收到 `RTM_NEWADDR`/`RTM_DELADDR` 才重扫接口、加入新地址的多播组。空闲时零定时唤醒（此前每 60 秒醒一次）；WiFi 后连或换网拿到地址立刻能被解析。netlink 打不开时退回 60 秒读超时顺带重扫（`RESCAN_INTERVAL`）。报文解析有 host 单测；真实加/删地址的端到端测试（默认忽略）在 `unshare -rn` 的网络命名空间里跑通。**真机上没有专门触发过**。
@@ -196,7 +198,7 @@
 - **path 依赖的深度**：`..` 的个数取决于消费方自己的目录深度——`gateway/` 写 `../rmsvc-core`，`enhance/*-serve/` 写 `../../rmsvc-core`，`shelf/services/*/`、`notes/services/*/`、`notes/crates/vendorcfg/` 写 `../../../rmsvc-core`。写错时 `cargo build` 会直接说它去哪找过，照着改。
 - **每个独立顶层项目各带一份 `.cargo/config.toml`**（交叉编译的 CC/AR 覆盖），原因见 §06。
 - **release profile**：`gateway`、`shelf`、`notes` 是 `panic="unwind"`，基座的 panic 兜底和各服务的 `catch_unwind` 才真正生效；`enhance/{font,wallpaper}-serve` 仍是 `abort`（没有依赖 `catch_unwind` 的后台线程）。
-- **测试**：`cargo test --manifest-path rmsvc-core/Cargo.toml`，131 个单测通过 + 1 个默认忽略（2026-10-09 实跑）；同目录的 `epubpkg` 另跑 `--manifest-path rmsvc-core/epubpkg/Cargo.toml`（11 个）；HTTP 服务器、TLS 握手取对端 IP、名称约束链校验、真 inotify 的目录删除重挂都有真起服务器 / 真内核的测试。
+- **测试**：`cargo test --manifest-path rmsvc-core/Cargo.toml`，133 个单测通过 + 1 个默认忽略（2026-10-09 实跑）；同目录的 `epubpkg` 另跑 `--manifest-path rmsvc-core/epubpkg/Cargo.toml`（11 个）；HTTP 服务器、TLS 握手取对端 IP、名称约束链校验、真 inotify 的目录删除重挂都有真起服务器 / 真内核的测试。
 
 ## 06｜踩坑
 
@@ -219,7 +221,7 @@
 
 **待办**
 
-- **10-09 第六轮审计改动上真机**：未部署。部署后值得专门看的：网关重启后证书照常（原子写不该改变已有证书）；投书到刚删掉的文件夹落在书库根；大于 100MB 的书走大文件通道仍能认领；笔记本落进书所在文件夹（笔记线）；把注册表目录删掉再建，网关仍能发现服务（不必真机做，开发机测试已覆盖）。
+- **10-09 改动在真机上专门看一遍**：已部署（自检 38✓ / 39✓），但下面这些行为还没专门触发过：网关重启后证书照常（原子写不该改变已有证书）；投书到刚删掉的文件夹落在书库根；大于 100MB 的书走大文件通道仍能认领；笔记本落进书所在文件夹（笔记线）；把注册表目录删掉再建，网关仍能发现服务（不必真机做，开发机测试已覆盖）。
 - 命名遗留要不要处理，没有排期；要动时先设计迁移方案，不是简单改字符串。
 - `fswatch` 读事件出错的固定 5 秒重试没有退避（09-30 记下，未改）。
 - 条件变量 `wait*` 的 poison 处理仍是手写（`sync::lock` 管不到）。
