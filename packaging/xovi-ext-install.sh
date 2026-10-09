@@ -39,7 +39,7 @@ cj_require_root || exit 1
 [ -f "$PAYLOAD/$EXT_SO" ] || { echo "!! 没找到 $PAYLOAD/$EXT_SO，先在 host 侧构建（make aarch64）再部署"; exit 1; }
 
 # 三种情况（旧版备份进 cangjie-backups——绝不能留在 extensions.d：xovi 把该目录下任意文件当扩展加载，
-# 同名扩展重复注册是致命错误，见 工程纪律；内容没变就不备份，只保留最近几份）：
+# 同名扩展重复注册是致命错误，2026-08-15 真机踩过；内容没变就不备份，只保留最近几份）：
 #  · 与已装的逐字节相同 → 不动（顺手撤掉过时的待换入版本）；
 #  · 运行中的 xochitl 正映射着它 → 不当场换，放进待换入区，由 cj_xochitl_apply 换入后整机重启（或下次开机由 xovi-reenable 换入）
 #    （换完再 restart 会让旧进程退出时崩溃、整机重启，2026-09-24 真机第二次复现，见 devlib.sh 头注 H3）；

@@ -11,7 +11,7 @@
 # 节奏跟 chronyd 首次同步窗口撞车。
 #
 # 修法：不碰 remarkable-enable-slumber.service 本身（红线——改核心服务的启动依赖/时机，一旦推演
-# 有误就是真机变砖级别的事故，见 工程纪律 红线记录），只加这个独立的新单元：开机后持一把
+# 有误就是真机变砖级别的事故，以前真机踩过），只加这个独立的新单元：开机后持一把
 # `/sys/power/wake_lock`（标准 Linux wakelock 接口，持锁期间内核不会真的休眠），让 chronyd 有一段
 # 不被打断的窗口跑完首次同步；`Before=remarkable-enable-slumber.service` 让自动休眠晚几十秒才打开，
 # 不影响它最终生效，只是开机头这一小段窗口往后挪。纯排序声明（`Before=`/`After=`，不是

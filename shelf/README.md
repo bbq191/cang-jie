@@ -90,7 +90,7 @@ shelf/
 
 ## 构建 · 部署 · 卸载
 
-一次性准备：`rustup target add aarch64-unknown-linux-musl`，再装 aarch64 交叉 gcc（Arch：`pacman -S aarch64-linux-gnu-gcc`，只用来编 `ring` 的 C 部分）。改代码前先看工程纪律。
+一次性准备：`rustup target add aarch64-unknown-linux-musl`，再装 aarch64 交叉 gcc（Arch：`pacman -S aarch64-linux-gnu-gcc`，只用来编 `ring` 的 C 部分）。
 
 ```sh
 cd shelf && sh build.sh                        # host 测试 + aarch64 构建（gateway / enhance / notes 在的话一起编）
