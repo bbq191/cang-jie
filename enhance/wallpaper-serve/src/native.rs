@@ -5,7 +5,6 @@
 use rmsvc_core::paths::Paths;
 use rmsvc_core::xochitl_conf::{self, SLEEP_SCREEN_KEY};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::Mutex;
 
 pub struct Native {
@@ -58,10 +57,11 @@ impl Native {
     }
 }
 
-/// `systemctl show xochitl -p MainPID --value`；拿不到（host 测试）→ None。
+/// xochitl 主进程 PID（`/proc` 里父进程是 1 的 `xochitl`）；没在跑（host 测试）→ None。
+/// 此前每次查都 fork 一个 `systemctl show xochitl -p MainPID`——网页每刷新一次状态要查两三遍，
+/// 子进程还没有超时（systemd 忙时会一直挂着）；读 `/proc` 不 fork、不会卡住。
 fn xochitl_pid() -> Option<u32> {
-    let out = Command::new("systemctl").args(["show", "xochitl", "-p", "MainPID", "--value"]).output().ok()?;
-    String::from_utf8_lossy(&out.stdout).trim().parse().ok()
+    rmsvc_core::proc::find_process(Path::new("/proc"), "xochitl", Some(1)).map(|(pid, _)| pid)
 }
 
 #[cfg(test)]
@@ -71,8 +71,7 @@ mod tests {
     #[test]
     fn enable_disable_roundtrip_on_temp_conf() {
         let t = tempfile::tempdir().unwrap();
-        let h = t.path().to_str().unwrap().to_string();
-        let paths = Paths::resolve(move |k| if k == "HOME" { Some(h.clone()) } else { None });
+        let paths = Paths::sandbox(t.path());
         let conf = xochitl_conf::path(&paths);
         std::fs::create_dir_all(conf.parent().unwrap()).unwrap();
         std::fs::write(&conf, "[General]\nUserToken=abc\n").unwrap();

@@ -9,8 +9,8 @@ use image::imageops::FilterType;
 use image::{ImageFormat, RgbaImage};
 use serde::{Deserialize, Serialize};
 use rmsvc_core::asset::{AssetItem, AssetStore};
-use rmsvc_core::formats::IMAGE_EXTS;
-use rmsvc_core::fs::{plain_name, write_atomic};
+use rmsvc_core::formats::{self, IMAGE_EXTS};
+use rmsvc_core::fs::{list_files, plain_name, write_atomic};
 use rmsvc_core::paths::Paths;
 use std::io::Write;
 use std::sync::Mutex;
@@ -96,12 +96,9 @@ impl WallpaperStore {
         self.save_state(&st)
     }
 
+    /// 池里的 PNG（只认普通文件、跳过点开头的半成品，按名排序）。
     pub fn names(&self) -> Vec<String> {
-        let mut v: Vec<String> = std::fs::read_dir(&self.pool)
-            .map(|rd| rd.flatten().filter(|e| e.path().extension().map(|x| x == "png").unwrap_or(false)).map(|e| e.file_name().to_string_lossy().to_string()).collect())
-            .unwrap_or_default();
-        v.sort();
-        v
+        list_files(&self.pool, |n| n.ends_with(".png"))
     }
 
     /// 池里的图按名读字节（预览用）。
@@ -230,7 +227,7 @@ impl AssetStore for WallpaperStore {
         }
         let mut head = [0u8; 4];
         std::io::Read::read_exact(&mut std::fs::File::open(staged).map_err(|e| e.to_string())?, &mut head).map_err(|_| "文件太小".to_string())?;
-        if !(head.starts_with(&[0xFF, 0xD8]) || head.starts_with(b"\x89PNG")) {
+        if !matches!(formats::sniff(&head), Some("png" | "jpg")) {
             return Err("只收 JPEG/PNG".into());
         }
         Ok(())
@@ -238,8 +235,7 @@ impl AssetStore for WallpaperStore {
     fn install(&self, name: &str, staged: &Path) -> Result<AssetItem, String> {
         let src = std::fs::read(staged).map_err(|e| e.to_string())?;
         let png = fit_to_screen(&src, self.fit)?;
-        let stem = name.rsplit_once('.').map(|(s, _)| s).unwrap_or(name);
-        let out_name = format!("{stem}.png");
+        let out_name = format!("{}.png", formats::stem_of(name));
         let dest = self.pool.join(&out_name);
         write_atomic(&dest, &png).map_err(|e| e.to_string())?;
         Ok(AssetItem { name: out_name, bytes: png.len() as u64, extra: serde_json::json!({"width": W, "height": H}) })
@@ -275,9 +271,7 @@ mod tests {
 
     fn store() -> (tempfile::TempDir, WallpaperStore) {
         let t = tempfile::tempdir().unwrap();
-        let h = t.path().to_str().unwrap().to_string();
-        let paths = Paths::resolve(move |k| if k == "HOME" { Some(h.clone()) } else { None });
-        let s = WallpaperStore::new(&paths);
+        let s = WallpaperStore::new(&Paths::sandbox(t.path()));
         s.ensure().unwrap();
         (t, s)
     }
@@ -370,6 +364,11 @@ mod tests {
         for n in ["a.png", "b.png", "c.png"] {
             std::fs::write(s.pool().join(n), png(10, 10)).unwrap();
         }
+        // 目录、点开头的半成品、非 png 不算池里的图（不会被轮换选中）
+        std::fs::create_dir(s.pool().join("d.png")).unwrap();
+        std::fs::write(s.pool().join(".x.png"), b"half").unwrap();
+        std::fs::write(s.pool().join("note.txt"), b"").unwrap();
+        assert_eq!(s.names(), vec!["a.png", "b.png", "c.png"]);
         s.activate("a.png").unwrap();
         let ino = std::os::unix::fs::MetadataExt::ino(&std::fs::metadata(s.current_path()).unwrap());
         assert_eq!(s.roll().unwrap().as_deref(), Some("b.png"));
@@ -409,8 +408,7 @@ mod tests {
     #[test]
     fn upload_flow_installs_resized_png() {
         let (t, s) = store();
-        let h = t.path().to_str().unwrap().to_string();
-        let paths = Paths::resolve(move |k| if k == "HOME" || k == "XDG_RUNTIME_DIR" { Some(h.clone()) } else { None });
+        let paths = Paths::sandbox(t.path());
         paths.ensure().unwrap();
         let mut body = Vec::new();
         body.extend_from_slice(b"--B\r\nContent-Disposition: form-data; name=\"file\"; filename=\"beach.jpg\"\r\n\r\n");

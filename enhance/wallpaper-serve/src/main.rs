@@ -11,7 +11,7 @@ mod wake;
 
 use native::Native;
 use rmsvc_core::asset::{self, AssetStore, AssetUploadFlow};
-use rmsvc_core::http::{bind, ApiError, Reply, Router};
+use rmsvc_core::http::{bind, ApiError, Reply, Router, ServeOpts};
 use rmsvc_core::paths::Paths;
 use rmsvc_core::service::{self, ServiceSpec};
 use std::sync::Arc;
@@ -110,7 +110,7 @@ fn main() {
                 }
             }
             let note = if changed || s.native.restart_pending() { "首次启用：整机重启一次后，下次休眠即显示" } else { "下次休眠即显示" };
-            if items.iter().any(|i| i.ok) {
+            if asset::any_ok(&items) {
                 s.bus.publish("wallpapers", "pool");
             }
             Ok(Reply::ok(&asset::receipt(&items, serde_json::json!({"activated": activated, "note": note, "restartPending": s.native.restart_pending()}))))
@@ -134,13 +134,13 @@ fn main() {
             s.bus.publish("wallpapers", "pool");
             Ok(Reply::ok(&serde_json::json!({"ok": true})))
         }))
-        .get("/{name}", bind(&st, |s, r| Ok(Reply::bytes("image/png", s.store.read(r.param("name")).map_err(ApiError::not_found)?))));
+        .get("/{name}", bind(&st, |s, r| {
+            let name = r.param("name");
+            Ok(Reply::bytes(rmsvc_core::formats::mime_of(name), s.store.read(name).map_err(ApiError::not_found)?))
+        }));
     wake::spawn(st.store.clone(), bus); // 与 API 共用同一个 store 实例（同一把状态锁）
     println!("[wallpaper-serve] 池 {}，原生休眠屏键 {}；xochitl 休眠读完休眠屏即轮换", st.store.pool().display(), if st.native.enabled() { "已就位" } else { "未写（激活首张时自动写）" });
-    if let Err(e) = service::run(&SPEC, &bind_addr, &paths, router) {
-        eprintln!("[wallpaper-serve] {e}");
-        std::process::exit(1);
-    }
+    service::run_or_exit(&SPEC, &bind_addr, &paths, router, ServeOpts::default())
 }
 
 fn exit_with(r: Result<String, String>) -> ! {

@@ -41,10 +41,7 @@ pub fn gap_ok(last: Option<f64>, now: f64) -> bool {
 /// `/proc/uptime` 第一列（含休眠）；读不到（非 Linux 测试环境等）退回进程内单调时钟——只影响去重判定。
 fn boottime_secs() -> f64 {
     static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
-    std::fs::read_to_string("/proc/uptime")
-        .ok()
-        .and_then(|s| s.split_whitespace().next().and_then(|x| x.parse::<f64>().ok()))
-        .unwrap_or_else(|| START.get_or_init(Instant::now).elapsed().as_secs_f64())
+    rmsvc_core::proc::uptime_secs(std::path::Path::new("/proc")).unwrap_or_else(|| START.get_or_init(Instant::now).elapsed().as_secs_f64())
 }
 
 /// 监听到出错为止（正常情况下永不返回）。
@@ -140,8 +137,7 @@ mod tests {
     #[test]
     fn watch_returns_when_dir_removed() {
         let t = tempfile::tempdir().unwrap();
-        let h = t.path().to_str().unwrap().to_string();
-        let paths = rmsvc_core::paths::Paths::resolve(move |k| if k == "HOME" { Some(h.clone()) } else { None });
+        let paths = rmsvc_core::paths::Paths::sandbox(t.path());
         let store = Arc::new(WallpaperStore::new(&paths));
         store.ensure().unwrap();
         let dir = store.current_path().parent().unwrap().to_path_buf();
@@ -161,8 +157,7 @@ mod tests {
     #[test]
     fn real_inotify_rolls_on_read_but_not_on_own_write() {
         let t = tempfile::tempdir().unwrap();
-        let h = t.path().to_str().unwrap().to_string();
-        let paths = rmsvc_core::paths::Paths::resolve(move |k| if k == "HOME" { Some(h.clone()) } else { None });
+        let paths = rmsvc_core::paths::Paths::sandbox(t.path());
         let store = Arc::new(WallpaperStore::new(&paths));
         store.ensure().unwrap();
         let png = |v: u8| {
