@@ -11,7 +11,7 @@ mod store;
 mod ui;
 
 use rmsvc_core::asset::{self, AssetStore, AssetUploadFlow};
-use rmsvc_core::http::{bind, ApiError, Reply, Router};
+use rmsvc_core::http::{bind, ApiError, Reply, Router, ServeOpts};
 use rmsvc_core::paths::Paths;
 use rmsvc_core::service::{self, ServiceSpec};
 use std::sync::Arc;
@@ -66,7 +66,8 @@ fn main() {
         .post("/", bind(&st, |s, r| {
             let b = r.multipart_boundary()?;
             let items = AssetUploadFlow::new(&s.paths).run(&s.store, &mut *r.body, &b).map_err(ApiError::bad)?;
-            if items.iter().any(|i| i.ok) {
+            let any_ok = asset::any_ok(&items);
+            if any_ok {
                 s.store.fc_cache(); // 整批装完重建一次（不在 install 里逐个跑）
             }
             // 真机 2026-09-03（3.27.3.0）：上传后不重启，菜单出现新项、选中即渲染。菜单 onVisibleChanged 差量刷新（S-B）。
@@ -80,7 +81,7 @@ fn main() {
             if !warns.is_empty() {
                 note.push_str(&format!("。⚠ {}", warns.join("；")));
             }
-            if items.iter().any(|i| i.ok) {
+            if any_ok {
                 s.bus.publish("fonts", "fonts");
             }
             Ok(Reply::ok(&asset::receipt(&items, serde_json::json!({"restartNeeded": false, "fallback": fallback, "note": note}))))
@@ -89,7 +90,7 @@ fn main() {
         .post("/ui", bind(&st, |s, r| {
             let b = r.multipart_boundary()?;
             let items = AssetUploadFlow::new(&s.paths).run(&s.ui_store, &mut *r.body, &b).map_err(ApiError::bad)?;
-            if items.iter().any(|i| i.ok) {
+            if asset::any_ok(&items) {
                 s.ui_store.fc_cache();
                 s.store.refresh_fontconfig();
                 s.bus.publish("fonts", "ui");
@@ -106,8 +107,8 @@ fn main() {
             Ok(Reply::ok(&serde_json::json!({"ok": true, "removed": removed, "unselected": unselected, "restartNeeded": s.ui.restart_needed()})))
         }))
         .put("/ui/select", bind(&st, |s, r| {
-            let body = r.json()?.0;
-            let field = |k: &str| body.get(k).and_then(|x| x.as_str()).map(str::to_string).ok_or_else(|| ApiError::bad("需要 {sans: 字符串, serif: 字符串}（空串 = 原生）"));
+            let body = r.json()?;
+            let field = |k: &str| body.opt_str(k).map(str::to_string).ok_or_else(|| ApiError::bad("需要 {sans: 字符串, serif: 字符串}（空串 = 原生）"));
             let (sans, serif) = (field("sans")?, field("serif")?);
             let installed: Vec<String> = s.ui_store.entries().into_iter().map(|e| e.key).collect();
             s.ui.set(&sans, &serif, &installed).map_err(ApiError::bad)?;
@@ -121,15 +122,12 @@ fn main() {
             Ok(Reply::ok(&serde_json::json!({"ok": true, "removed": removed})))
         }))
         .put("/config", bind(&st, |s, r| {
-            let on = r.json()?.0.get("emboldenCjkFallback").and_then(|x| x.as_bool()).ok_or_else(|| ApiError::bad("需要 {emboldenCjkFallback: bool}"))?;
+            let on = r.json()?.opt_bool("emboldenCjkFallback").ok_or_else(|| ApiError::bad("需要 {emboldenCjkFallback: bool}"))?;
             s.store.set_embolden(on).map_err(ApiError::internal)?;
             s.bus.publish("fonts", "config");
             Ok(Reply::ok(&serde_json::json!({"ok": true, "emboldenCjkFallback": on, "note": "已更新，翻书即见（fontconfig 实时生效，无需重启）"})))
         }))
         .get("/status", bind(&st, |s, _| Ok(Reply::ok(&serde_json::json!({"ok": true, "count": s.store.entries().len(), "target": "native", "cjkFallback": s.store.cjk_fallback_keys(), "emboldenCjkFallback": s.store.embolden()})))));
     println!("[font-serve] 字体目录 {}，清单 {}", st.store.fonts_dir().display(), st.store.json_path().display());
-    if let Err(e) = service::run(&SPEC, &bind_addr, &paths, router) {
-        eprintln!("[font-serve] {e}");
-        std::process::exit(1);
-    }
+    service::run_or_exit(&SPEC, &bind_addr, &paths, router, ServeOpts::default())
 }
