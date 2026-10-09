@@ -56,7 +56,9 @@ if [ "$CJ_APPLY_REBOOTED" = 1 ]; then
     exit 0   # 已排上整机重启；健康检查留给设备回来后的 verify-on-device.sh
 fi
 TAGS=""
-[ -f "$CJ_XOVI/extensions.d/hl-snap.so" ] && TAGS="$TAGS hl-snap"
+for ext in hl-snap ui-font; do   # 本项目装的 xovi 扩展（lib.sh 的 step_payload）：装了的才核对是否已加载
+    if [ -f "$CJ_XOVI/extensions.d/$ext.so" ]; then TAGS="$TAGS $ext"; fi
+done
 # shellcheck disable=SC2086  # TAGS 有意按词展开
 if cj_xochitl_health "$OLD_PID" $TAGS; then
     echo "✅ xochitl 重启完成，xovi 扩展/qmd 已重新注入"

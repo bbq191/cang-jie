@@ -285,7 +285,8 @@ cj_install_usr_unit() {
         echo "-- $cj_u 已是最新，未动 /usr"
         return 0
     fi
-    cj_backup_file "$CJ_SYSD/$cj_u" || return 1
+    # 只缺 wants 链接、单元内容没变时不备份（同一内容反复备份会把真正有价值的旧版挤出"保留最近 N 份"）
+    cj_backup_if_differs "$cj_s" "$CJ_SYSD/$cj_u" || return 1
     cj_with_rootfs_rw cj_usr_put_body "$cj_s" "$cj_u" "$cj_w" || return 1
     systemctl daemon-reload
     # shellcheck disable=SC2034
@@ -406,6 +407,12 @@ cj_count_maps() {
 # shellcheck disable=SC2034  # 由各调用方的设备端脚本读
 CJ_APPLY_REBOOTED=0
 cj_xochitl_apply() {
+    # xovi 没在 xochitl 里生效、设备上又没有 xovi/start（没装或被 vellum 删了 xovi）：整机重启后 xovi-reenable 也会因
+    # ConditionPathExists 跳过，改动照样不生效——别白白打断阅读，直接报错指路（2026-10-09 审计）
+    if ! cj_xochitl_has_xovi && [ ! -x "$CJ_XOVI/start" ]; then
+        echo "!! xochitl 里没有 xovi，设备上也没有 $CJ_XOVI/start——重启也没法让 xovi 扩展/qmd 生效。先在设备上跑：vellum add xovi"
+        return 1
+    fi
     if cj_xochitl_has_xovi || [ -f "$CJ_SYSD/xovi-reenable.service" ]; then
         echo "⚠ 设备将在 ${CJ_APPLY_GRACE:-5} 秒后整机重启让改动生效（约 1 分钟回来），会打断当前的阅读/书写。"
         echo "   （不再单独重启 xochitl：它退出时有概率崩溃并触发整机重启，见 devlib.sh 头注 H3）"
@@ -431,7 +438,6 @@ cj_xochitl_apply() {
         trap - HUP PIPE INT TERM
         return "$cj_ap_rc"
     fi
-    [ -x "$CJ_XOVI/start" ] || { echo "!! 没找到 $CJ_XOVI/start —— 先在设备上跑：vellum add xovi"; return 1; }
     echo "⚠ 即将重启 xochitl —— 屏幕会闪烁，并打断当前的阅读/书写（请勿操作设备）；${CJ_APPLY_GRACE:-5} 秒后开始。"
     sleep "${CJ_APPLY_GRACE:-5}"
     cj_so_commit || return 1   # 运行中的 xochitl 没带 xovi，没映射扩展，可以直接换
