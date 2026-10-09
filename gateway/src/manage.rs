@@ -173,7 +173,7 @@ mod tests {
     #[test]
     fn status_reports_three_states() {
         let t = tempfile::tempdir().unwrap();
-        let paths = crate::testutil::sandbox(&t);
+        let paths = Paths::sandbox(t.path());
         std::fs::create_dir_all(paths.bin_dir()).unwrap();
         std::fs::write(paths.bin_dir().join("book-serve"), b"x").unwrap(); // 已装、未跑（注册表空）
         let v: serde_json::Value = serde_json::from_slice(&status(&paths).body).unwrap();
@@ -188,7 +188,7 @@ mod tests {
     #[test]
     fn services_carry_url_segment_from_catalog() {
         let t = tempfile::tempdir().unwrap();
-        let paths = crate::testutil::sandbox(&t);
+        let paths = Paths::sandbox(t.path());
         let reg = |name: &str| registry::ServiceInfo { name: name.into(), port: 1, label: String::new(), version: String::new(), pid: std::process::id(), ui: None };
         let _a = registry::register(&paths, &reg("note-serve")).unwrap();
         let _b = registry::register(&paths, &reg("gateway")).unwrap();
@@ -202,7 +202,7 @@ mod tests {
     #[test]
     fn foundation_probes_only_xovi_and_qrr() {
         let t = tempfile::tempdir().unwrap();
-        let paths = crate::testutil::sandbox(&t);
+        let paths = Paths::sandbox(t.path());
         let v: serde_json::Value = serde_json::from_slice(&foundation(&paths).body).unwrap();
         assert_eq!((v["xovi"].as_bool(), v["qrr"].as_bool()), (Some(false), Some(false)), "没装时探测为 false");
         std::fs::create_dir_all(paths.home().join("xovi/exthome/qt-resource-rebuilder")).unwrap();

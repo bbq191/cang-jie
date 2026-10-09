@@ -239,7 +239,7 @@ Id=book-serve.service\nLoadState=not-found\nActiveState=inactive\nSubState=dead\
     #[test]
     fn collect_tolerates_missing_everything() {
         let t = tempfile::tempdir().unwrap();
-        let paths = crate::testutil::sandbox(&t);
+        let paths = Paths::sandbox(t.path());
         std::fs::create_dir_all(so_pending_dir(&paths)).unwrap();
         std::fs::write(so_pending_dir(&paths).join("hl-snap.so"), b"x").unwrap();
         std::fs::write(so_pending_dir(&paths).join(".hl-snap.so.new.123"), b"x").unwrap(); // 换入途中的半成品不算

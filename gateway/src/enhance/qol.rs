@@ -69,7 +69,7 @@ mod tests {
 
     fn tmp_paths() -> (tempfile::TempDir, Paths) {
         let t = tempfile::tempdir().unwrap();
-        let paths = crate::testutil::sandbox(&t);
+        let paths = Paths::sandbox(t.path());
         (t, paths)
     }
 

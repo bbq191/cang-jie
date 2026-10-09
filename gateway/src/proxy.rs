@@ -101,7 +101,7 @@ mod tests {
     fn delete_forwards_no_content_length() {
         use std::io::Write;
         let t = tempfile::tempdir().unwrap();
-        let paths = crate::testutil::sandbox(&t);
+        let paths = Paths::sandbox(t.path());
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let backend = std::thread::spawn(move || {

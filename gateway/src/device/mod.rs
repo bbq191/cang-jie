@@ -122,7 +122,7 @@ mod tests {
     #[test]
     fn delete_endpoint_requires_names_and_reports_per_file() {
         let t = tempfile::tempdir().unwrap();
-        let paths = crate::testutil::sandbox(&t);
+        let paths = Paths::sandbox(t.path());
         let done = cleanup::areas(&paths)[0].1.clone();
         assert!(done.starts_with(t.path()));
         std::fs::create_dir_all(&done).unwrap();

@@ -89,7 +89,7 @@ impl GatewayConfig {
 mod tests {
     use super::*;
     fn paths(t: &tempfile::TempDir) -> Paths {
-        crate::testutil::sandbox(t)
+        Paths::sandbox(t.path())
     }
     #[test]
     fn default_password_then_forced_change() {

@@ -162,7 +162,7 @@ mod tests {
 
     /// 所有 XDG 目录与 HOME 都指到临时目录（删除类测试的硬规定），并返回真实 HOME 供断言"没被碰"。
     fn sandbox(t: &tempfile::TempDir) -> Paths {
-        let p = crate::testutil::sandbox(t);
+        let p = Paths::sandbox(t.path());
         for (_, d) in areas(&p) {
             assert!(d.starts_with(t.path()), "清理目录必须落在临时目录里：{}", d.display());
         }

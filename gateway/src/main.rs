@@ -14,8 +14,6 @@ mod enhance;
 mod events;
 mod manage;
 mod proxy;
-#[cfg(test)]
-mod testutil;
 mod ui;
 
 use rmsvc_core::http::{bind, ApiError, Method, Reply, Router, ServeOpts};
