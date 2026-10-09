@@ -9,18 +9,12 @@
 //! 见 `main.rs` 新增的 `GET .../sync`。出错只影响那一章内容旧，不会半写坏文件（落盘走 `rmsvc_core::fs::write_atomic`：
 //! 同目录临时文件 → rename；此前直接 `fs::write` 是先截断再写，掉电/崩溃会留下半截 md）。**2026-09-08 三期追加**：光落盘在设备上用户够不着（得 SSH），`GET .../export.md`
 //! （`main.rs`）额外把同一份内容直接当浏览器下载返回——`content_disposition()` 给的文件名走
-//! RFC 5987（`filename*=UTF-8''...`，中文文件名要这个；纯 ASCII 兜底 `filename=` 给老客户端）。
+//! RFC 5987（`filename*=UTF-8''...`，中文文件名要这个；纯 ASCII 兜底 `filename=` 给老客户端），由
+//! `rmsvc_core::multipart::content_disposition` 生成（与书架原件下载同一份）。
 use crate::export_state::{ExportRecord, ExportState};
 use notecore::model::Book;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
-
-/// 浏览器"另存为"用的 `Content-Disposition` 值：非 ASCII 字符（书名/章名几乎总是中文）替换成 `_`
-/// 的兜底 `filename=` + percent-encode 的真实文件名 `filename*=UTF-8''...`（RFC 5987，现代浏览器
-/// 都认，老的至少能存成兜底那个不中文乱码的文件名）。
-pub fn content_disposition(filename: &str) -> String {
-    rmsvc_core::multipart::content_disposition(filename)
-}
 
 /// 文件名不能带路径分隔符（书名/章名理论上可能带用户手滑打进去的 `/`）——替换成 `_`，不做更复杂的
 /// 转义（其余字符 xochitl 书名场景本来就不会出现更奇怪的控制字符）。
@@ -136,7 +130,9 @@ pub fn manifest(data_dir: &Path, book_title: &str) -> Result<VaultManifest, Stri
 mod tests {
     use super::*;
     use notecore::model::{Entry, Status, Style};
+    use rmsvc_core::multipart::content_disposition;
 
+    /// 导出下载的文件名形状（共享底座那份实现，这里钉住笔记导出依赖的行为）。
     #[test]
     fn content_disposition_gives_ascii_fallback_and_rfc5987_utf8_name() {
         let v = content_disposition("第1章 人骨拼圖.md");

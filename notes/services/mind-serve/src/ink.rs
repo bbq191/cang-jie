@@ -24,8 +24,7 @@ impl InkHttp {
 
 impl EntryStore for InkHttp {
     fn book(&self, uuid: &str) -> Result<Book, String> {
-        let v = self.0.get_json(&format!("/books/{}", enc(uuid)))?;
-        serde_json::from_value(v).map_err(|e| format!("book 形状不对: {e}"))
+        self.0.get_typed(&format!("/books/{}", enc(uuid)))
     }
     fn post_answer(&self, uuid: &str, id: &str, answer: &Answer) -> Result<(), String> {
         self.0.post_json(&format!("/books/{}/entries/{}", enc(uuid), enc(id)), &serde_json::json!({"answer": answer}))
