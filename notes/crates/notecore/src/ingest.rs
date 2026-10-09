@@ -231,7 +231,7 @@ pub fn merge_page(entries: &mut Vec<Entry>, ctx: &PageCtx, drafts: Vec<PageDraft
         // `Revoked` 后会按内容倒推，ink 还在字段里就恢复成 `Pending`，用户明确"不需要"过的内容被拉回
         // 转写队列）。改用 `is_terminal()` 单一事实源，三态终态一起排除。
         //
-        // 注意：只改这一处，不改上面 `same_page` 的匹配判据（仍是 `!= Revoked`）——匹配判据管的是"这
+        // 注意：只改这一处，不改上面 `find_match(.., revoked=false)` 的匹配判据（仍是"非 `Revoked`"）——匹配判据管的是"这
         // 是不是同一份还在原地的内容，别重复建条目"，Skipped/Archived 但笔迹没动过的条目理应继续被
         // 匹配上（保持原状不动），如果连匹配都排除掉，笔迹没变但整页因为别处改动触发重扫时，会给同一份
         // 已经"不需要"过的内容重新生成一条 `Mined`，那是另一个新 bug，不是这里要修的。
