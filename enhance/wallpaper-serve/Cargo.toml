@@ -27,3 +27,8 @@ lto = true
 strip = true
 panic = "abort"
 codegen-units = 1
+
+# host 测试提速：image 解码 + Lanczos3 缩放在 debug 下极慢（整套测试 20 多秒），只给依赖开优化，
+# 本 crate 照旧 debug 便于调试；不影响设备上的 release 构建。
+[profile.dev.package."*"]
+opt-level = 2
