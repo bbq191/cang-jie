@@ -7,7 +7,7 @@
 use crate::mkdir::MkdirQueue;
 use crate::ops::{OpGuard, OpRegistry};
 use crate::render_check;
-use crate::scratch::ScratchFile;
+use rmsvc_core::fs::ScratchFile;
 use crate::sidecar::{self, Delivered, RenderCheck};
 use serde::Serialize;
 use rmsvc_core::asset::{AssetItem, AssetStore};

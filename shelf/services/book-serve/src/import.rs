@@ -23,7 +23,7 @@
 //! 电脑上没记录、下次重复传。
 use crate::mkdir::MkdirQueue;
 use crate::ops::OpRegistry;
-use crate::scratch::ScratchFile;
+use rmsvc_core::fs::ScratchFile;
 use crate::staging::{Staging, MAX_DIRECT_BYTES};
 use rmsvc_core::fs::{plain_name, same_content, Content};
 use rmsvc_core::xochitl::{find_documents_since, is_uuid_shape, read_metadata, Delivery, Xochitl};
