@@ -13,17 +13,15 @@ pub struct ConfigCell<C> {
 impl<C: Clone + Default + Serialize + DeserializeOwned> ConfigCell<C> {
     /// 启动加载：读文件（不存在则写出缺省，损坏则保留原文件退回缺省）→ `migrate`（老配置文件搬进新形状，
     /// 不迁移会让真机已存的 key 在升级后凭空消失）→ 收紧成 0600（含 key）→ 落盘一次让文件形状跟运行时一致。
-    /// **文件损坏时跳过这次落盘**，并另存一份 `.corrupt` 副本：此前这里无条件 `save`，把用户的 key
-    /// 换成了缺省（2026-09-24 审查）。之后用户在网页上主动保存配置，才会写出新文件。
+    /// **文件损坏时跳过这次落盘**，并另存一份 `.corrupt` 副本（只留第一份，最早的坏内容不被后来的覆盖）：
+    /// 此前这里无条件 `save`，把用户的 key 换成了缺省（2026-09-24 审查）。之后用户在网页上主动保存配置，才会写出新文件。
     pub fn load(path: &Path, migrate: impl FnOnce(C) -> C) -> ConfigCell<C> {
         let corrupt = rmsvc_core::config::is_corrupt::<C>(path);
         let cfg = migrate(rmsvc_core::config::load_or_seed::<C>(path));
         rmsvc_core::fs::set_mode(path, 0o600);
         if corrupt {
-            let bak = path.with_extension("json.corrupt");
-            let _ = std::fs::copy(path, &bak);
-            rmsvc_core::fs::set_mode(&bak, 0o600);
-            eprintln!("[vendorcfg] {} 解析失败，按缺省运行、不覆盖原文件（副本 {}）", path.display(), bak.display());
+            rmsvc_core::config::backup_corrupt(path, Some(0o600));
+            eprintln!("[vendorcfg] {} 解析失败，按缺省运行、不覆盖原文件（副本在同目录 .corrupt）", path.display());
         } else {
             let _ = rmsvc_core::config::save(path, &cfg, Some(0o600));
         }

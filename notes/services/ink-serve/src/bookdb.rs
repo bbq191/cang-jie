@@ -7,46 +7,29 @@
 //! 就直接给缓存，变了（含外部手改）才重新解析；本进程自己 `save` 后当场换入新值。磁盘始终是事实源——身份
 //! 对不上就回退到读盘，不存在"缓存和磁盘各说各话"。
 use notecore::model::{Book, Status};
+use rmsvc_core::cache::{FileStamp, StampCache};
 use rmsvc_core::fs::{plain_name, write_atomic};
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::SystemTime;
+use std::sync::{Arc, Mutex};
 
-/// 文件身份：`write_atomic` 每次 rename 都换 inode，外部改写至少会动 mtime/长度。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-struct FileKey {
-    ino: u64,
-    len: u64,
-    mtime: Option<SystemTime>,
-}
-
-impl FileKey {
-    fn of(m: &std::fs::Metadata) -> FileKey {
-        #[cfg(unix)]
-        let ino = std::os::unix::fs::MetadataExt::ino(m);
-        #[cfg(not(unix))]
-        let ino = 0;
-        FileKey { ino, len: m.len(), mtime: m.modified().ok() }
-    }
-}
-
-type Cache = HashMap<String, (FileKey, Arc<Book>)>;
+/// 解析结果缓存的条目上限：到了整表清空重来（只多解析一轮，见 `StampCache`）。一书一条，远超实际书数，
+/// 只是给内存设个顶。
+const CACHE_CAP: usize = 512;
 
 pub struct BookDb {
     dir: PathBuf,
     /// 读—改—写串行化（进程内）。
     lock: Mutex<()>,
-    /// uuid → (文件身份, 解析结果)。只放解析成功的；坏文件每次都走读盘路径（`.corrupt` 逻辑照常触发）。
-    cache: Mutex<Cache>,
+    /// uuid → (文件戳 (inode, 长度, mtime), 解析结果)。只放解析成功的；坏文件每次都走读盘路径（`.corrupt` 逻辑照常触发）。
+    cache: StampCache<Arc<Book>>,
 }
 
 impl BookDb {
     pub fn new(dir: PathBuf) -> BookDb {
-        BookDb { dir, lock: Mutex::new(()), cache: Mutex::new(HashMap::new()) }
+        BookDb { dir, lock: Mutex::new(()), cache: StampCache::new(CACHE_CAP) }
     }
-    fn cache(&self) -> MutexGuard<'_, Cache> {
-        rmsvc_core::sync::lock(&self.cache)
+    fn forget(&self, uuid: &str) {
+        self.cache.retain(|k| k != uuid);
     }
     pub fn dir(&self) -> &Path {
         &self.dir
@@ -71,32 +54,29 @@ impl BookDb {
         let mut f = match std::fs::File::open(&p) {
             Ok(f) => f,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                self.cache().remove(uuid);
+                self.forget(uuid);
                 return Ok(None);
             }
             Err(e) => return Err(format!("读条目库 {uuid} 失败: {e}")),
         };
-        let key = f.metadata().map(|m| FileKey::of(&m)).map_err(|e| format!("读条目库 {uuid} 失败: {e}"))?;
-        if let Some((k, b)) = self.cache().get(uuid) {
-            if *k == key {
-                return Ok(Some(b.clone()));
-            }
+        let md = f.metadata().map_err(|e| format!("读条目库 {uuid} 失败: {e}"))?;
+        let key = FileStamp::of(&md);
+        if let Some(b) = self.cache.get(uuid, key) {
+            return Ok(Some(b));
         }
-        let mut bytes = Vec::with_capacity(key.len as usize);
+        let mut bytes = Vec::with_capacity(md.len() as usize);
         std::io::Read::read_to_end(&mut f, &mut bytes).map_err(|e| format!("读条目库 {uuid} 失败: {e}"))?;
         match serde_json::from_slice::<Book>(&bytes) {
             Ok(b) => {
                 let b = Arc::new(b);
-                self.cache().insert(uuid.to_string(), (key, b.clone()));
+                self.cache.put(uuid, key, b.clone());
                 Ok(Some(b))
             }
             Err(e) => {
-                self.cache().remove(uuid);
+                self.forget(uuid);
                 let msg = format!("条目库 {uuid}.json 解析失败，已另存 .corrupt 副本、原文件未动、拒绝覆盖写入: {e}");
                 // 只在头一次发现（副本还没有）时打日志：`list()` 每次网页刷新都会路过它，别刷屏。
-                let bak = p.with_extension("json.corrupt");
-                if !bak.exists() {
-                    let _ = std::fs::copy(&p, &bak);
+                if rmsvc_core::config::backup_corrupt(&p, None).is_some() {
                     eprintln!("[ink-serve] {msg}");
                 }
                 Err(msg)
@@ -115,11 +95,10 @@ impl BookDb {
         let p = self.path(uuid)?;
         let bytes = serde_json::to_vec_pretty(&book).map_err(|e| e.to_string())?;
         write_atomic(&p, &bytes).map_err(|e| format!("写条目库失败: {e}"))?;
-        let mut cache = self.cache();
-        match std::fs::metadata(&p) {
-            Ok(m) => cache.insert(uuid.to_string(), (FileKey::of(&m), Arc::new(book))),
-            Err(_) => cache.remove(uuid),
-        };
+        match FileStamp::read(&p) {
+            Some(k) => self.cache.put(uuid, k, Arc::new(book)),
+            None => self.forget(uuid),
+        }
         Ok(())
     }
 
