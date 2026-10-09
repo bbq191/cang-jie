@@ -606,4 +606,17 @@ mod tests {
         assert_eq!(MultipartReader::<&[u8]>::find(b"abc", b"abc"), Some(0));
         assert_eq!(MultipartReader::<&[u8]>::find(b"xxabc", b"abc"), Some(2), "命中在最后一个可能起点");
     }
+
+    /// 下载文件名形状（笔记导出、母版库原件下载共用；从 note-serve 挪来）：非 ASCII 换 `_` 的兜底名 + RFC 5987 UTF-8 真名。
+    #[test]
+    fn content_disposition_gives_ascii_fallback_and_rfc5987_utf8_name() {
+        let v = content_disposition("第1章 人骨拼圖.md");
+        assert!(v.starts_with("attachment; filename=\"_1_ ____.md\""), "非 ASCII 字符原样替换成 _，ASCII 字符（数字/空格/.md）保留: {v}");
+        assert!(v.contains("filename*=UTF-8''%E7%AC%AC1%E7%AB%A0%20%E4%BA%BA%E9%AA%A8%E6%8B%BC%E5%9C%96.md"), "{v}");
+    }
+
+    #[test]
+    fn content_disposition_plain_ascii_name_is_unmangled() {
+        assert_eq!(content_disposition("index.md"), "attachment; filename=\"index.md\"; filename*=UTF-8''index.md");
+    }
 }
