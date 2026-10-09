@@ -11,7 +11,7 @@ set -eu
 HERE="$(cd "$(dirname "$0")" && pwd)"
 EXT_NAME=ui-font
 EXT_SO=ui-font.so
-EXT_MAPTAG=ui-font
+EXT_MAPTAG='ui-font\.so'   # grep 正则：带 .so，免得路径里别的 ui-font 字样（如同名目录、配置文件）被算成"已加载"
 RQOL_INIT=''   # 不用 reading-qol.json
 RQOL_MSG=''
 OK_MSG='网页「其他 → xochitl → 界面字体」选字体，整机重启后生效。'

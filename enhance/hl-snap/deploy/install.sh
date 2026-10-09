@@ -17,7 +17,7 @@ set -eu
 HERE="$(cd "$(dirname "$0")" && pwd)"
 EXT_NAME=hl-snap
 EXT_SO=hl-snap.so
-EXT_MAPTAG=hl-snap
+EXT_MAPTAG='hl-snap\.so'   # grep 正则：带 .so，免得路径里别的 hl-snap 字样（如同名目录、配置文件）被算成"已加载"
 RQOL_INIT='{"hlSnapCjk":true}'
 RQOL_MSG='建最小配置（hlSnapCjk 默认开）'
 OK_MSG='划中文即精确吸附（划哪吸哪）。'
