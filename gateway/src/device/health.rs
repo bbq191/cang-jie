@@ -145,34 +145,16 @@ pub fn parse_maps(maps: &str) -> XochitlMaps {
     m
 }
 
-/// 目录下的普通文件名（排序）；目录不在 → 空。不递归。
-pub fn plain_files(dir: &Path) -> Vec<String> {
-    let mut v: Vec<String> = std::fs::read_dir(dir)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
-        .filter_map(|e| e.file_name().to_str().map(str::to_string))
-        .collect();
-    v.sort();
-    v
-}
-
 /// 上次开机的最后几行 journal（`journalctl -b -1 -n 20 --no-pager`）：设备冻死/意外重启后，这是设备自己能拿到的
 /// 最直接线索。journal 没有持久化（只在 `/run`）时 journalctl 报错或给 `-- No entries --`，一律返回 `None`，前端不显示。
 /// （宿主机上的"飞行记录仪"日志不在设备上，网关读不到，所以不看它。）
 pub fn prev_boot_journal() -> Option<Vec<String>> {
-    parse_journal(&crate::manage::run_timeout("journalctl", &["-b", "-1", "-n", PREV_BOOT_LINES, "--no-pager"], JOURNAL_TIMEOUT).ok()?)
+    parse_journal(&rmsvc_core::proc::run_timeout("journalctl", &["-b", "-1", "-n", PREV_BOOT_LINES, "--no-pager"], JOURNAL_TIMEOUT).ok()?)
 }
 
 pub fn parse_journal(out: &str) -> Option<Vec<String>> {
     let lines: Vec<String> = out.lines().filter(|l| !l.trim().is_empty() && !l.starts_with("-- ")).map(str::to_string).collect();
     (!lines.is_empty()).then_some(lines)
-}
-
-/// `/proc/uptime` 第一列（秒）。
-pub fn uptime_secs(proc_root: &Path) -> Option<u64> {
-    std::fs::read_to_string(proc_root.join("uptime")).ok()?.split_whitespace().next()?.split('.').next()?.parse().ok()
 }
 
 /// 待换入区（与 `packaging/devlib.sh` 的 `CJ_SO_PENDING_DIR` 缺省值同一路径）。
@@ -192,11 +174,11 @@ pub fn collect(paths: &Paths, proc_root: &Path, show: Result<String, String>, pr
     let maps = xochitl_maps(proc_root, xochitl_pid);
     let space = rmsvc_core::fs::fs_space(paths.home());
     serde_json::json!({
-        "uptimeSecs": uptime_secs(proc_root),
+        "uptimeSecs": rmsvc_core::proc::uptime_secs(proc_root).map(|s| s as u64), // 前端只显示整秒
         "systemctlError": show_err,
         "units": list,
         "xochitl": maps,
-        "soPending": plain_files(&so_pending_dir(paths)),
+        "soPending": rmsvc_core::fs::list_files(&so_pending_dir(paths), |_| true), // 跳过 devlib 换入时的 `.<名>.new.<pid>` 半成品
         "prevBoot": prev_boot,
         "home": {"freeBytes": space.map(|s| s.0), "totalBytes": space.map(|s| s.1)},
         "firmware": super::ota::firmware_json(),
@@ -257,9 +239,10 @@ Id=book-serve.service\nLoadState=not-found\nActiveState=inactive\nSubState=dead\
     #[test]
     fn collect_tolerates_missing_everything() {
         let t = tempfile::tempdir().unwrap();
-        let paths = crate::testutil::sandbox(&t);
+        let paths = Paths::sandbox(t.path());
         std::fs::create_dir_all(so_pending_dir(&paths)).unwrap();
         std::fs::write(so_pending_dir(&paths).join("hl-snap.so"), b"x").unwrap();
+        std::fs::write(so_pending_dir(&paths).join(".hl-snap.so.new.123"), b"x").unwrap(); // 换入途中的半成品不算
         let v = collect(&paths, &t.path().join("proc"), Err("no systemd".into()), Some(vec!["a".into(), "b".into()]));
         assert_eq!(v["systemctlError"], "no systemd");
         assert_eq!(v["units"].as_array().unwrap().len(), units().len());

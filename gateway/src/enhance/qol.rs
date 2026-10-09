@@ -13,12 +13,9 @@ fn path(paths: &Paths) -> PathBuf {
     paths.home().join(".local/share/cangjie-ime/reading-qol.json")
 }
 
+/// 缺失、损坏或顶层不是对象 → 空表。
 fn load(paths: &Paths) -> Map<String, Value> {
-    std::fs::read_to_string(path(paths))
-        .ok()
-        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
-        .and_then(|v| v.as_object().cloned())
-        .unwrap_or_default()
+    rmsvc_core::config::load_or_default(&path(paths))
 }
 
 /// 只 patch 传入的键，其余原样透传写回。
@@ -29,9 +26,7 @@ pub fn patch(paths: &Paths, changes: Map<String, Value>) -> Result<(), String> {
     let _g = rmsvc_core::sync::lock(&PATCH_LOCK);
     let mut map = load(paths);
     map.extend(changes);
-    let p = path(paths);
-    let bytes = serde_json::to_vec_pretty(&Value::Object(map)).map_err(|e| e.to_string())?;
-    rmsvc_core::fs::write_atomic(&p, &bytes).map_err(|e| e.to_string()) // 父目录由 write_atomic 自己建
+    rmsvc_core::config::save(&path(paths), &map, None) // 缩进 JSON、原子写，父目录自己建
 }
 
 /// `reading-qol.json` 的一次快照：`/api/enhance/status` 一次请求要读好几个开关，读一次文件、各开关从同一份
@@ -74,7 +69,7 @@ mod tests {
 
     fn tmp_paths() -> (tempfile::TempDir, Paths) {
         let t = tempfile::tempdir().unwrap();
-        let paths = crate::testutil::sandbox(&t);
+        let paths = Paths::sandbox(t.path());
         (t, paths)
     }
 

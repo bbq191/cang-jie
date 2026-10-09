@@ -14,8 +14,6 @@ mod enhance;
 mod events;
 mod manage;
 mod proxy;
-#[cfg(test)]
-mod testutil;
 mod ui;
 
 use rmsvc_core::http::{bind, ApiError, Method, Reply, Router, ServeOpts};
@@ -127,14 +125,13 @@ fn main() {
             Ok(Reply::bytes("application/json", ui::locale_json(lang).as_bytes().to_vec()))
         });
     if let Some(st) = &state {
-        let (a, b, c, d, e) = (st.clone(), st.clone(), st.clone(), st.clone(), st.clone());
         router = router
             .get("/login", |r| Ok(Reply::html(&ui::login_page("", r.q("next").unwrap_or("/")))))
-            .post("/login", move |r| a.login(r))
-            .post("/logout", move |r| b.logout(r))
-            .get("/password", move |_| Ok(Reply::html(&ui::password_page("", c.must_change()))))
-            .post("/password", move |r| d.change_password(r))
-            .get("/api/session", move |_| Ok(e.session_info()));
+            .post("/login", bind(st, |s, r| s.login(r)))
+            .post("/logout", bind(st, |s, r| s.logout(r)))
+            .get("/password", bind(st, |s, _| Ok(Reply::html(&ui::password_page("", s.must_change())))))
+            .post("/password", bind(st, |s, r| s.change_password(r)))
+            .get("/api/session", bind(st, |s, _| Ok(s.session_info())));
     } else {
         router = router.get("/api/session", |_| Ok(Reply::ok(&serde_json::json!({"ok": true, "mustChange": false, "auth": false}))));
     }
@@ -164,8 +161,5 @@ fn main() {
         .route(Method::Other, "/api/*", |_| Err(ApiError::bad("unsupported method")))
         .any(PROXIED, "/api/{svc}/*", bind(&paths, proxy::forward))
         .any(PROXIED, "/api/{svc}", bind(&paths, proxy::forward));
-    if let Err(e) = service::run_with(&SPEC, &bind_addr, &paths, router, opts) {
-        eprintln!("[gateway] {e}");
-        std::process::exit(1);
-    }
+    service::run_or_exit(&SPEC, &bind_addr, &paths, router, opts)
 }
