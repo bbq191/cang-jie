@@ -3,7 +3,7 @@
 <marker id="ak" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker>
 </defs>
 <rect x="0" y="0" width="1080" height="680" fill="#fbfbfa"/>
-<text x="540" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">网页「秘密花园」：首层四个 tab 与二级 tab（按 2026-10-07 稍后清理后的代码，未部署）</text>
+<text x="540" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">网页「秘密花园」：首层四个 tab 与二级 tab（按 2026-10-09 的代码）</text>
 <text x="540" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">https://shelf.local/（443）· 登录后进入 · 顶栏右侧小圆点 = 事件流（SSE）连接状态</text>
 
 <rect x="20" y="76" width="1040" height="46" rx="10" fill="#f0f0ee" stroke="#8a8a8a" stroke-width="1.6"/>
@@ -86,7 +86,7 @@
 <line x1="690" y1="506" x2="738" y2="506" stroke="#555" stroke-width="1.6" marker-end="url(#ak)"/>
 
 <text x="40" y="570" font-size="12" fill="#1a1a1a">批量队列：网关自己也发事件（area=books，kind=batch），母版库状态走同一条流。</text>
-<text x="40" y="590" font-size="12" fill="#1a1a1a">注册表目录 inotify：服务启停 → manage 事件 → tab 集合变了就整页重载。</text>
+<text x="40" y="590" font-size="12" fill="#1a1a1a">注册表目录 inotify：服务启停 → manage 事件 → 网页重取 /api/services，tab 集合变了就整页重载；页面隐藏时只记一笔，可见或重连后补查（10-09）。</text>
 <text x="40" y="610" font-size="12" fill="#1a1a1a">系统增强 / 实验室开关：PUT /api/enhance/qol → 整份 reading-qol.json 读入、只改指定键、原样写回。</text>
 <text x="40" y="630" font-size="12" fill="#1a1a1a">事件流断开（如网关重启后 401）：先查 /api/session，未登录跳登录页；否则 5 秒起翻倍退避重连，最多 5 分钟；页面隐藏时不重试（09-30）。</text>
 <text x="40" y="650" font-size="12" fill="#1a1a1a">语言：GET /ui/locales/{lang}（zh-CN / en-US），缺 key 显示 key 本身，不认识的语言落中文。</text>
