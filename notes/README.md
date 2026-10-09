@@ -53,7 +53,7 @@ reMarkable 的强项是**荧光笔勾书，再在勾出来的地方旁边手写*
 ```
 notes/
 ├── crates/rmv6/          .rm v6 解析 + 写入（解析部分剥离移植自 remarkable_lines 0.1.3，MIT，见 PROVENANCE.md）
-├── crates/epubmap/       .epubindex + 目录（按 OPF 声明找 nav/NCX；OPF 与 href 解码用 ../rmsvc-core/epubpkg）→ 页号对应的章/小节
+├── crates/epubmap/       .epubindex + 目录（按 OPF 声明找 nav/NCX；OPF、href 解码与 .epubindex 解析用 ../rmsvc-core/epubpkg）→ 页号对应的章/小节
 ├── crates/notecore/      领域核心（纯函数）：条目模型、聚簇配对、增量合并、行首标记、投影、md 导出/导入（KOReader 合并 2026-09-30 已删，只留旧数据兼容）
 ├── crates/vendorcfg/     两个 AI 服务共用：预置表、key 分厂商、配置迁移、用量账本、OpenAI 兼容调用端 ChatClient + ClientCache
 ├── services/             ink-serve · transcribe-serve · mind-serve · note-serve
@@ -79,7 +79,7 @@ notes/
 与书架共用交叉编译环境（`rustup target add aarch64-unknown-linux-musl` + aarch64 交叉 gcc），见 [`../shelf/README.md`](../shelf/README.md)「构建 · 部署 · 卸载」。
 
 ```sh
-cd notes && cargo test --workspace      # host：241 过 + 1 忽略（rmv6 29 · epubmap 11 · notecore 67 · vendorcfg 24 · ink 30 · transcribe 25 · mind 22 · note 33 另 1 个 ignored；2026-10-09 实跑）
+cd notes && cargo test --workspace      # host：240 过 + 1 忽略（rmv6 29 · epubmap 10 · notecore 67 · vendorcfg 24 · ink 30 · transcribe 25 · mind 22 · note 33 另 1 个 ignored；2026-10-09 实跑）
 cd ../shelf && sh build.sh               # host 测试 + 交叉编译（notes/ 在就一起编）
 cd ../packaging && sh deploy.sh <设备IP> --only ink,transcribe,mind,note   # 只装/更新笔记线（网关总会一起装）；不加 --only 就全装
 ```

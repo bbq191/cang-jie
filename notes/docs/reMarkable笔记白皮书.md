@@ -80,7 +80,7 @@
 | 第五轮审计（09-30）：epubmap 按 OPF 声明找目录、启动追平重扫没章的活条目、裁图灰度 + 像素封顶 + 坏坐标报错、「转入笔记」继承定稿 / 草稿、读 `.rm` 时正被改写就跳过、补笔 / 清空回收站删掉没人用的裁图、模型调用端复用（`ClientCache`）、删 `ink.json` 三个死键 | **09-30 已部署**，部署自检通过，功能待手测 | host 250 过 + 1 忽略（当时还含 KOReader 导入的测试） | 3.1–3.3、第 6 章、第 13 章 7e |
 | 第六轮审计（10-09）：笔记本落进书所在文件夹、内存直传、认领改等 inotify 并排除上传前已有的同名文档；调云瞬时故障重试一次、闲置 45 秒的连接重建；epubmap 解 XML 实体与百分号编码；`.content` 没有 `pages` 时按 `cPages` 取页序；坏文件留证只留第一份；四个服务改用 rmsvc-core 共享实现 | **未部署、未真机验证** | host 246 过 + 1 忽略 | 3.1、第 2 章、第 4、6 章、8.1、8.3、第 13 章 7g |
 
-**离线门槛**：`cd notes && cargo test --workspace`，2026-10-09 实跑 **241 过 + 1 忽略**（rmv6 29 · epubmap 11 · notecore 67 · vendorcfg 24 · ink-serve 30 · transcribe-serve 25 · mind-serve 22 · note-serve 33，另有 note-serve 1 个 `#[ignore]`；零警告、clippy 零告警）；共享的 `rmsvc-core/epubpkg` 另跑 `cargo test --manifest-path ../rmsvc-core/epubpkg/Cargo.toml`；网关另跑 `node --check ui/app.js`；脚本过 shellcheck。测试数会变，改了就同步这里和 README。note-serve 里几条认领测试会真的等书库目录变化（整组约 5 秒）。
+**离线门槛**：`cd notes && cargo test --workspace`，2026-10-09 实跑 **240 过 + 1 忽略**（rmv6 29 · epubmap 10 · notecore 67 · vendorcfg 24 · ink-serve 30 · transcribe-serve 25 · mind-serve 22 · note-serve 33，另有 note-serve 1 个 `#[ignore]`；零警告、clippy 零告警）；共享的 `rmsvc-core/epubpkg` 另跑 `cargo test --manifest-path ../rmsvc-core/epubpkg/Cargo.toml`；网关另跑 `node --check ui/app.js`；脚本过 shellcheck。测试数会变，改了就同步这里和 README。note-serve 里几条认领测试会真的等书库目录变化（整组约 5 秒）。
 
 **已知小问题（只记录，没修）**：`Entry::set_triage` 不拒绝 `Skipped`，接口上可以对已跳过的条目直接调 `/request` 或 `/archive`；网页没有这个入口，风险低。
 

@@ -23,7 +23,7 @@
 //!
 //! **已知限制**：粒度是"文件内比例"，同一文件里内容增删多时会偏几页；EPUB 里插过笔记页时页序换算靠 `.content` 页表，
 //! 重排后 xochitl 怎么安置这些笔记页没核实过；新排版的总页数只在最后一个文件用得到，取不到可靠值时按最后一个文件 1 页算。
-//! 快照超过 [`MAX_AGE`] 或书已不在库里，启动时清掉。**全部未真机验证**（要核的点见书架白皮书 §03ar）。
+//! 快照超过 [`MAX_AGE`] 或书已不在库里，启动时清掉。**全部未真机验证**（要核的点见书架白皮书 §03ca）。
 use epubpkg::epubindex::{parse_epubindex, Section};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};

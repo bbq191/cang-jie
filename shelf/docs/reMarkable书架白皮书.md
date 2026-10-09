@@ -30,6 +30,7 @@
 | 母版库管理 | 只勾一本时下载原件、改名；删除；筛选 全部 / 未加入 / 已加入；剩余空间 <300MiB 标红 | 第 A 章、第 D 章 |
 | 漫画页边距 | sheng-ren 优化的漫画带页边距标记，加入后首次打开自动把页边距设到最小 | 传书线架构 §3 |
 | 直接导入 | 给电脑上的 sheng-ren 用：不进母版库，直接按多级文件夹放进 xochitl | 传书线架构 §9「直接导入」 |
+| 替换后找回阅读位置 | sheng-ren 原地替换在读的书后，重开时跳回原来读到的地方（按所在章节文件 + 文件内比例；未真机验证） | §03ca |
 | 字体 / 壁纸 | 上传即装的 xochitl 字体（改写中文回退链）；休眠壁纸池（写 xochitl 的 `SleepScreenPath` 键） | 第 F 章 |
 
 **模块与端口**：网关 `gateway`（443，唯一对外）转发给只听本机端口的服务：`book-serve`（8790，母版库）、`font-serve`（8792）、`wallpaper-serve`（8793）；笔记线四个服务（8795–8798）挂在同一个网关上。book-serve 链接的读书工具库 `shelf/crates/shelf-conv`（读 EPUB 的书名 / 封面 / 漫画页边距标记、第三方 PDF 页数、占位文档、文件名规范化）只读不改书。服务表见 [`../README.md`](../README.md)「服务与端口」。
@@ -397,7 +398,7 @@
 > **现状结论**
 > - **加入 xochitl**：≤ `nativeUploadLimitMb`（缺省 90MB）走流式 `/upload` + 渲染自检；超限走**"占位 + 磁盘替换"**（≤1GiB，整本，§03bn；09-25 真机 156.5MB 通过）；本机无书库目录、超 1GiB 或造不出占位时整本拒绝，回执末尾"没有加入"。按卷拆分（漫画 EPUB / 带书签漫画 PDF）**2026-09-30 已移除**（附录 B）。
 > - **为什么是 90**：真机二分测出 xochitl `/upload` 硬上限是 **100,000,000 字节**；此前的 150MB 是没验证过的猜测。
-> - **xochitl 代理**：外部进程改书库文件会被运行中的 xochitl 盖回去，所以建文件夹、移进回收站、漫画页边距都由注入 xochitl 的 qmd 代理动手（日漫翻页 10-07 稍后删除，§03bx），book-serve 只排队（下图，§03aa）。文件夹留空＝书库根；填了不存在的名字由代理调 `Library.createCollection` 真建（最多等 20 秒）；名字带 `/` 合法。同一项最多交给代理 5 次，还做不成就放弃，记日志并在网页页头横幅提示（点「知道了」清空）；代理请求出错时退避 15→120 秒（09-25 第四轮审计，当天已部署；放弃与退避路径平时难触发，没在真机专门走过）。
+> - **xochitl 代理**：外部进程改书库文件会被运行中的 xochitl 盖回去，所以建文件夹、移进回收站、漫画页边距、原地替换后找回阅读位置（§03ca，10-09，未真机验证）都由注入 xochitl 的 qmd 代理动手（日漫翻页 10-07 稍后删除，§03bx），book-serve 只排队（下图，§03aa）。文件夹留空＝书库根；填了不存在的名字由代理调 `Library.createCollection` 真建（最多等 20 秒）；名字带 `/` 合法。同一项最多交给代理 5 次，还做不成就放弃，记日志并在网页页头横幅提示（点「知道了」清空）；代理请求出错时退避 15→120 秒（09-25 第四轮审计，当天已部署；放弃与退避路径平时难触发，没在真机专门走过）。
 > - 「加入 KOReader」2026-09-29 随 KOReader 卸载撤掉（附录 B）；「已完成」现在只认加入过 xochitl，以前只加入过 KOReader 的书会回到「待处理」。
 > - **批量加入**（09-25 真机）：网页一次勾两本《乱马》11/12 卷（156.5 / 157.1MB）加入 xochitl，网关队列 `done 2 / failed 0`，落进同一文件夹、字节与母版一致。
 > - 漫画：书架不再处理漫画图片（2026-10-07，§03bw），漫画由 sheng-ren 优化成 EPUB；书架只在书里带 sheng-ren 的 `META-INF/eink-reader-margins` 标记时一律登记首次打开设页边距 1（没有开关，实验室开关 10-07 删除；传书线架构 §3）。历史：09-19 一度改产 PDF（§03bk），09-20 换回 EPUB；`comic_pdf.rs` 09-30 删除；PDF 仅裁边 10-07 随 PDF 转换删除。
@@ -500,6 +501,34 @@
 **>153MB 首次渲染（2026-09-25 真机）**：《乱马》11 卷（156.5MB）经占位通道投入后第一次打开，约 74 秒渲染完，`pageCount` 2→349、写出 `.epubindex`；同时日漫翻页（`CJ-PAGE-TURN: rtl book`）与漫画页边距（`CJ-COMIC-MARGIN: margins -> 1`）生效；xochitl 主进程 VmHWM 410MB、没有重启。**仍没量到**：渲染在 xochitl 另起的工作进程里做，它的内存峰值。
 
 **统一命名规则**（当年在 `bookconv::naming`；现在是 `shelf_conv::naming` 的 `canonical_book_name` / `canonical_file_name`，从 sheng-ren 复制，幂等）：`卷02`/`第二卷`/`Vol.3` → `02卷`/`二卷`/`3卷`；`镖人(卷二)` → `镖人 - 二卷`；上/中/下原样；下载站尾巴去掉；无卷标记原样保留。带卷标记的书当时优化时把 OPF `dc:title` 也改成规范名；10-07 起书架不改书，只有大文件通道的占位仍用规范名。〔10-07 稍后：`canonical_book_name` 连同测试复制进 `shelf_conv::naming`、不再调 sheng-ren；占位显示名也一律改用书里的 `dc:title`（删 `has_volume_marker`），§03bx，未部署。〕
+
+### 03ca｜原地替换后找回阅读位置：book-serve 拍快照 + `shelf-keep-progress.qmd` 让 xochitl 自己跳页（2026-10-09，**未部署、未在真机验证**）
+
+**问题**：sheng-ren 经 `POST /import?uuid=` 原地替换一本在读的 EPUB（传书线架构「直接导入」）：删 `<uuid>.pdf`、`<uuid>.epubindex`，换上新 `<uuid>.epub`，xochitl 下次打开整本重排。`.metadata` 的 `lastOpenedPage` 还是旧排版的页号；xochitl 自己在 `document.onPageCountChanged` 里按"旧页 / (旧总页数 − 1)"比例估一页，目录到达时 `chapterPositionTracker.restore` 再按章节相对位置修一次——但 tracker 在关书时就 `reset()` 了，替换后重开用不上，只剩比例估页，书改动大（加了注释、换了排版）时偏很远。外部改 `.metadata`/`.content` 会被运行中的 xochitl 盖回去（同漫画页边距的结论，传书线架构 §3），只能让 xochitl 自己跳页。
+
+**做法**（固件 3.28.0.172 的 DocumentView.qml 摸底：根作用域有 `sceneView.goToPage(n)`，n＝文档页序、0 起，`_open_helper` 开书也用它）：
+
+| 环节 | 做什么 |
+|---|---|
+| 快照（book-serve `progress.rs`，`finish_replace` 删旧 `.epubindex` **之前**） | 读 `lastOpenedPage`（≤0 不存）→ 按旧 `.content` 页表换成 PDF 页 → 用旧 `.epubindex` 找所在 spine 文件、文件内比例 `(页 − 起始页) / 该文件页数`，再存全书比例兜底；写 `~/.local/state/shelf/books/progress/<uuid>.json`（原子写，带毫秒时间戳）。没有旧 `.epubindex` 不存。任何一步失败只记日志，**不影响替换** |
+| 查询 `GET /progress/{uuid}[?pages=N]` | 没快照 → 404；新 `.epubindex` 不在或修改时间早于快照 → 202 `{pending:true}`；出现了 → 200 `{page}` |
+| 销账 `POST /progress/applied {uuid, reason?}` | 删快照；快照超过 30 天、读不了、书已不在库里，启动时清掉 |
+| 跳页（`shelf/xovi/shelf-keep-progress.qmd`，注入 DocumentView） | 开书、页数变化、目录到达三个时机各重启一个 2 秒单次 Timer（排在 xochitl 自己的两次跳页之后），只问 EPUB。404 收工；202 每 5 秒再问，从开书算起约 60 秒还没有就带 `reason:"timeout"` 销账放弃；200 时页号若还超出阅读器当前总页数按 202 处理，否则与当前页不同就 `sceneView.goToPage(page)`、打 `CJ-KEEP-PROGRESS: <uuid> -> <page>`、销账。跳完 15 秒内 xochitl 因页数变化 / 目录到达又自己跳走，就再跳回来（最多 3 次）；之后用户翻页、改字号都不干预。book-serve 不在（XHR status 0）或回别的状态码：安静收工，不打日志不重试 |
+
+**换算**：
+
+- **文档页序 ↔ PDF 页**（`PageMap`）：formatVersion 1 用 `redirectionPageMap`（笔记页是 -1）；formatVersion 2 用 `cPages.pages`，按 `idx.value` 字典序排、去掉 `deleted.value` ≠ 0 的页，页对象带 `redir.value` 就当 PDF 页，一页都不带按恒等。笔记页、越界、认不出 → 按原值。
+- **新页号**：新 `.epubindex` 里同名文件的起始页 + round(文件内比例 × 该文件页数)，夹在该文件范围内；文件找不到（改名、拆分）→ round(全书比例 × (新总页数 − 1))。最后一个文件的页数要靠总页数：新 `.content`（修改时间不早于快照才算新的）的页数 → 阅读器带来的 `?pages=` → 都没有就按 1 页（文件找不到时按最后一个起始页）。最后按新 `.content` 页表换回文档页序。`.epubindex` 解析 10-09 从笔记线 epubmap 下沉到 `rmsvc-core/epubpkg::epubindex`，两边共用。
+
+**同一本书再次替换**：上一份快照还没等到新排版（用户没打开过新版；旧 `.epubindex` 已被上次删掉，`lastOpenedPage` 也还是最初的位置）→ **保留上一份**，不重新快照（也拍不了）；新排版已经出现过（用户打开过，`lastOpenedPage` 已经是新排版里的位置）→ 按当前状态重新快照、覆盖；这时 `lastOpenedPage` ≤ 0 就删掉过时的上一份。
+
+**为什么 60 秒后放弃而不是一直留着**：如果 xochitl 的新 `.epubindex` 要到关书才写，用户这次已经读了一阵，下次打开时再跳就是把人拉回旧位置。书在 60 秒内被关掉（短暂打开）则快照留着，下次打开再试。
+
+**已知限制**：粒度是"文件内比例"，同一文件里内容增删多时偏几页；书里插过笔记页时页序换算靠 `.content` 页表，重排后 xochitl 怎么安置这些笔记页没核实过；快照时刻与文件修改时间比较依赖设备时钟不倒退。
+
+**离线验证**：book-serve 单测用真机《人骨拼圖》的 `.epubindex`（39 个文件、523 页）造前后两份，覆盖 v1/v2 页表换算、同文件比例、改名兜底、最后一个文件、202/200/404、再次替换、30 天清理、快照写不进去时替换照常。开发机实跑：book-serve 113 个测试（新增 12）、shelf-conv 25、epubpkg 11、rmsvc-core 133（另 1 个 ignored）、笔记线 workspace 通过，clippy 0 告警；安装脚本模拟测试 371 项通过、shellcheck 0 告警。qmd 按系统增强线白皮书 §04 的办法：本机编 `asivery/qmldiff`，把 .172 解出的 DocumentView / DeviceSceneView / SceneViewGestures 放到 hashtab 里的真实资源路径，与 `shelf-comic-margins.qmd`、`reader-page-turn.qmd` 一起 `apply-diffs`：三份补丁在 DocumentView 都应用（3 diff），插入位置都在 `ChapterPositionTracker` 之后（依次是翻页、阅读位置、页边距），另两个文件输出与不加新补丁时逐字节相同；`qmllint` 无语法错误，告警 390→396，新增 6 条都是本机缺设备私有模块（`Document` 类型解析不了）一类，原文件里同类告警本来就有。
+
+**要真机确认**（§05 #26）：① 替换后第一次打开时新 `.epubindex` 什么时候写出来（排版完当场写，还是关书才写；后者的话 60 秒放弃会让功能基本不起作用，要改策略）；② xochitl 自己的比例估页 / 章节恢复会不会在我们跳完之后再把页盖掉（15 秒内的跳回是否够用）；③ 3.28 EPUB 的 `.content` 是 v1 还是 v2，v2 页对象带不带 `redir`；④ 新 `.content` 的 `pageCount` 是否与新 `.epubindex` 同时更新。
 
 ## 第 D 章 网关与网页 UI
 
@@ -926,7 +955,7 @@ qmd 和 xovi 扩展只在 xochitl **启动时**注入，所以改了要让 xochi
 
 ### 05｜真机待办（滚动更新，2026-10-09 刷新）
 
-> 这里是书架线"还没在真机上看过"的唯一清单。#12、#17–#19、#22–#24 都**已部署、部署自检通过**，缺的是逐项功能手测；#25（10-09 第六轮审计）**还没部署**。2026-10-07 书架不再优化书后，凡是只针对设备端优化 / PDF 转换 / 抓网文的条目都作废（#1、#6、#11、#16、#20、#21，以及 #18、#19 里的相关几项），条目留着对得上号。
+> 这里是书架线"还没在真机上看过"的唯一清单。#12、#17–#19、#22–#24 都**已部署、部署自检通过**，缺的是逐项功能手测；#25（10-09 第六轮审计）、#26（10-09 找回阅读位置）**还没部署**。2026-10-07 书架不再优化书后，凡是只针对设备端优化 / PDF 转换 / 抓网文的条目都作废（#1、#6、#11、#16、#20、#21，以及 #18、#19 里的相关几项），条目留着对得上号。
 
 | # | 事项 | 现状与缺口 | 见 |
 |---|---|---|---|
@@ -941,6 +970,7 @@ qmd 和 xovi 扩展只在 xochitl **启动时**注入，所以改了要让 xochi
 | 23 | 2026-10-07 稍后的清理（§03bx）与代码审查修复（§03by）（10-07 15:54 已部署并整机重启，部署自检 36✓ 1⚠ 0✗，功能未手测；部署时换了 book-serve、gateway、ink-serve 并整机重启一次，三个程序 md5 与本机构建一致，已删的 `/reading-direction`、`/staging/mark` 回 404） | 部署后手测：网页母版库行内没有任何按钮；加入后渲染徽章只显示页数（旧 `warn` 记录也只显示页数）；格式筛选只有 EPUB / PDF；页头不再有"排队 N 本"；批量加入多本照常一本一本跑、网关重启后续跑；大文件通道的占位在 xochitl 里显示书里的书名；「管理 → 系统增强」只剩「单击翻页」一个翻页开关、单击左右边缘翻页照常；日漫在 xochitl 里从左往右翻（滑动不再对调，预期行为）；整机重启后 xochitl 正常起来、qmd 加载无报错；`/api/books/reading-direction/<uuid>` 回 404；带 sheng-ren 标记的漫画照常自动设页边距（验证 `shelf-conv::epub` 认标记）；`/api/budget/*` 回 404；母版库说明里漫画页边距那句文案正确。**审查修复（§03by）**：母版库「全部 / 未加入 / 已加入」三个计数相加对得上，处理中、加入失败的书出现在「未加入」；批量里结果不明的书（等不到、查不到、中途被删）记为失败、提示去 xochitl 书库核对，不再记成功；网关重启后底部栏显示"等 book-serve 就绪"；批量运行中还能对勾选的书操作、「收起」后刷新不再弹回；加入后马上改名，渲染状态变「未见渲染」而不是一直「渲染中」；sheng-ren 原地替换一本已有的书后，书库目录里没有 `.epub.new`、页边距没被重设（之前在阅读器里调过的保持不变）；`POST /api/books/staging/mark` 回 404；笔记页事件刷新不跳章、编辑中刷新不丢字、「推送本章」的链接能打开；笔记页重画时裁图不再重新下载（浏览器开发者工具里看缓存命中）；换过 `xovi.so` 后不误报 OTA 横幅 | §03bx、§03by；传书线架构 §7.2、§9 |
 | 24 | 2026-10-07 傍晚 直接导入多级文件夹（10-07 约 16:32 已部署并整机重启，部署自检 36✓ 1⚠ 0✗，功能未手测） | 部署后手测：sheng-ren `booklib sync` 推一本 `folder=一级/二级` 的书，xochitl 书库里出现「一级」里套「二级」、书在「二级」里（关键是 `Library.createCollection` 传非空 parent 能建在上一级里，从没在真机上走过）；回执与 `GET /import/{uuid}` 的 `folder` 是完整路径；「一级」已存在时不重复建；不同上级下的同名子文件夹分开；单段 `folder` 与网页「加入 xochitl → 文件夹」仍建在根；journal 无 `SHELF-MKDIR` 报错、qmd 加载正常 | 传书线架构 §4、「直接导入」 |
 | 25 | **2026-10-09 第六轮审计**（§03bz；**未部署**，只有开发机测试） | 部署后手测：一本封面很大或 OPF 异常的坏 EPUB 入库、加入时 book-serve 不被 OOM 杀（看 `NRestarts`）；网页「设备健康 → 清理」把书排进回收站时，xochitl 正在改写那本书的 `.metadata` 也不丢（书最终进回收站）；「加入 xochitl → 新建文件夹」加入后不再白等 20 秒；把书投到刚在 xochitl 里删掉的文件夹，书落书库根而不是上一本书的文件夹；母版库所在分区剩余不到 300MiB 时网页标红；超过 90MB 的书走大文件通道照常（认领改等 inotify）；`shelf-uninstall --only book` 删了 qmd 后提示整机重启、`deploy-xovi-apply.sh` 据标记重启；inbox 失败项的 `.reason` 正常 | §03bz；网关白皮书 §09 |
+| 26 | **2026-10-09 原地替换后找回阅读位置**（§03ca；**未部署**，只有开发机测试） | 部署后手测：读到一本 EPUB 中间某章 → 关书 → 电脑上 sheng-ren 改书后原地替换 → 重开，应落在同一章同一位置附近，journal 有 `CJ-KEEP-PROGRESS: <uuid> -> <页>`、`~/.local/state/shelf/books/progress/` 里快照被删；顺带记下新 `.epubindex` 写出的时机、xochitl 跳页是否盖掉我们的、`.content` 版本与 v2 的 `redir`（§03ca「要真机确认」四点）；没替换过的书打开时 journal 没有这个标记 | §03ca；传书线架构 §9 |
 
 **已关闭 / 作废**（编号保留，便于别处引用；详情看"见"列原来指向的 §）：
 
@@ -992,6 +1022,7 @@ qmd 和 xovi 扩展只在 xochitl **启动时**注入，所以改了要让 xochi
 | 10-07 傍晚 | 传书线架构 §4、§9「直接导入」 | sheng-ren 直接导入的 `folder` 按 `/` 拆成多级、逐级找或建；多级文件夹 10-07 约 16:32 已部署，功能未手测；同晚 17:27 又把直接导入改成异步任务（回 202 + 任务 id），部署记录里没有这一项 |
 | 10-09 | §03bz；传书线架构 §2、§4、§5、§6.1、§9 | **第六轮审计**：EPUB 解压上限按用途拆（文本 16MB / 封面 64MB）；回收站代理读不了 `.metadata` 不再静默丢待办；建文件夹等待先挂监听再查；`.reason` 原子写；`GET /staging` 带 `lowSpace`；投到已删文件夹落书库根；大文件通道认领改 inotify；卸载删 qmd 提示整机重启；book-serve 改用 rmsvc-core 公共件、删 `spawn_bg` 外壳与旧测试夹具（未部署，只有开发机测试） |
 | 10-09 | 传书线架构 §1 | **EPUB 容器/OPF 解析与笔记线合并**：shelf-conv `epub` 与 notes `epubmap` 各写的 container.xml → OPF、manifest/spine/Dublin Core、href 解码合成 `rmsvc-core/epubpkg`（独立小 crate，不依赖 rmsvc-core 本体）；书架这边行为不变，只是 `Book::opf()` 返回的 OPF 文本已去注释（未部署） |
+| 10-09 | §03ca；传书线架构 §9、§10 | **原地替换后找回阅读位置**：`finish_replace` 删旧 `.epubindex` 前拍快照（所在 spine 文件 + 文件内比例 + 全书比例），新增 `GET /progress/{uuid}`、`POST /progress/applied` 与 `shelf-keep-progress.qmd`（DocumentView，让 xochitl 自己 `goToPage`）；`.epubindex` 解析下沉到 `rmsvc-core/epubpkg`（未部署、未在真机验证） |
 
 ### 附录 B｜已移除的能力：电脑端 `shelf` 命令行（原 `shelf/README.md`，2026-09-18 砍除）
 

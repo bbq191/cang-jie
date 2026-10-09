@@ -35,7 +35,7 @@
 | 消费方 | `shelf/services/book-serve` · `enhance/{font,wallpaper}-serve` · `notes/services/{ink,transcribe,mind,note}-serve` + `notes/crates/vendorcfg` · `gateway/`（2026-09-29 退役的 koreader-serve 源码 09-30 已从仓库删除，不再是消费方） |
 | 依赖方向 | 单向：消费方 → 本 crate；本 crate 不知道任何消费方，不引用旧项目 crate（`device-core` / `weread-device`） |
 | workspace | 不建根 workspace，各项目各管各的 `target/` |
-| 同目录小 crate | `epubpkg/`（10-09）：EPUB 容器 / OPF 只读解析，笔记线 `epubmap` 与书架 `shelf-conv` 共用；**不依赖 rmsvc-core 本体**，也不是它的模块，见 §02 末尾 |
+| 同目录小 crate | `epubpkg/`（10-09）：EPUB 容器 / OPF 只读解析 + xochitl `.epubindex` 起始页表，笔记线 `epubmap` 与书架 `shelf-conv` / `book-serve` 共用；**不依赖 rmsvc-core 本体**，也不是它的模块，见 §02 末尾 |
 | 测试 | 131 个单测通过、1 个默认忽略（需要网络命名空间的 mDNS 端到端测试），另有 1 个文档示例默认忽略（2026-10-09 实跑）。`vendor/tiny_http` 的补丁另有单测（在 vendored crate 里，不计入）。CI `rust` job 单列一步；仓库 10-09 公开后 CI 恢复执行 |
 | 真机 | 所有消费方已部署在设备上运行（2026-09-11 起 `install-all.sh` 真机跑通，之后多次整轮重装）。**10-09 第六轮审计的改动未部署、未在真机验证**；09-24～10-07 历轮改动都已随部署上机、部署自检通过，但其中大部分行为只在 host 测试里专门验证过（各节分别注明） |
 
@@ -113,11 +113,11 @@
 | `clock` | 8 个 | unix 时间戳唯一出处；取不到时间回 0 |
 | `sync` | book-serve、网关、笔记线四个服务与 vendorcfg、font-serve、wallpaper-serve、本 crate 自身 | `sync::lock`：容忍 poison 的取锁。release 是 `panic="unwind"`，线程 panic 后它持有的锁被标 poison，别处再 `.lock().unwrap()` 就会让之后每个请求都跟着 panic；这里保护的都是半途中断也自洽的状态，接着用即可。10-09 网关认证配置锁也改用它（此前锁被毒化后谁都登不进）。条件变量 `wait*` 的 poison 处理它管不到，仍是手写 |
 
-### epubpkg —— 同目录下的独立小 crate（epubmap、shelf-conv 用；10-09 新增，未部署）
+### epubpkg —— 同目录下的独立小 crate（epubmap、shelf-conv、book-serve 用；10-09 新增，未部署）
 
-`rmsvc-core/epubpkg/`，消费方 path 依赖 `../../../rmsvc-core/epubpkg`。笔记线 `notes/crates/epubmap`（按 OPF 声明找 nav/NCX）和书架 `shelf/crates/shelf-conv`（书名、封面）此前各写一份 container.xml → OPF 解析，10-09 合成这一份：`escape`（href 解 XML 实体 → 去 `#片段` → 百分号，只认 XML 预定义实体和数字引用）、`xml`（正则标签扫描：去注释、三种引号、任意命名空间前缀；`plain_text` 另把 `&nbsp;` 当空格）、`resolve`/`posix_norm`/`dir_of`、`read_entry`/`read_text`（按实际解出的字节数设上限，文本 16MB `MAX_TEXT_BYTES`，超限当读不到、不截断）、`Package::read`（container.xml 第一个带 `full-path` 的 rootfile → OPF，去注释后存）与 `manifest`/`spine`/`meta_contents`/`dc`。
+`rmsvc-core/epubpkg/`，消费方 path 依赖 `../../../rmsvc-core/epubpkg`。笔记线 `notes/crates/epubmap`（按 OPF 声明找 nav/NCX）和书架 `shelf/crates/shelf-conv`（书名、封面）此前各写一份 container.xml → OPF 解析，10-09 合成这一份：`escape`（href 解 XML 实体 → 去 `#片段` → 百分号，只认 XML 预定义实体和数字引用）、`xml`（正则标签扫描：去注释、三种引号、任意命名空间前缀；`plain_text` 另把 `&nbsp;` 当空格）、`resolve`/`posix_norm`/`dir_of`、`read_entry`/`read_text`（按实际解出的字节数设上限，文本 16MB `MAX_TEXT_BYTES`，超限当读不到、不截断）、`Package::read`（container.xml 第一个带 `full-path` 的 rootfile → OPF，去注释后存）与 `manifest`/`spine`/`meta_contents`/`dc`。10-09 稍后又从 epubmap 下沉了 `epubindex`（xochitl `<uuid>.epubindex` 的各 spine 文件起始页，格式是逆向结论；book-serve 原地替换后找回阅读位置要用，书架不该依赖笔记线目录），epubmap 的 `index` 模块改成转出，真机样本复制到 `epubpkg/testdata/`。
 
-**为什么不做成 rmsvc-core 的 feature 模块**：shelf-conv 是纯库，原本不依赖 rmsvc-core；rmsvc-core 的依赖（tiny_http + rustls/ring、rcgen、x509-parser、ureq、inotify…）都不是 optional，要 feature 门控就得把它们全改成可选、再让四个顶层项目的消费方都显式开 feature，改动面远大于收益。独立小 crate 只依赖 regex、zip、flate2（书架、笔记线的依赖树里本来就有，不新增包）；aarch64 release 产物 book-serve +2.7KB、ink-serve +3.9KB（container.xml/manifest 改用更宽容的标签扫描，多了几条正则），其余不变。业务（封面挑选、页边距标记、写 EPUB、目录结构）留在各自 crate。测试：`cargo test --manifest-path rmsvc-core/epubpkg/Cargo.toml`，10 个。
+**为什么不做成 rmsvc-core 的 feature 模块**：shelf-conv 是纯库，原本不依赖 rmsvc-core；rmsvc-core 的依赖（tiny_http + rustls/ring、rcgen、x509-parser、ureq、inotify…）都不是 optional，要 feature 门控就得把它们全改成可选、再让四个顶层项目的消费方都显式开 feature，改动面远大于收益。独立小 crate 只依赖 regex、zip、flate2（书架、笔记线的依赖树里本来就有，不新增包）；aarch64 release 产物 book-serve +2.7KB、ink-serve +3.9KB（container.xml/manifest 改用更宽容的标签扫描，多了几条正则），其余不变。业务（封面挑选、页边距标记、写 EPUB、目录结构）留在各自 crate。测试：`cargo test --manifest-path rmsvc-core/epubpkg/Cargo.toml`，11 个。
 
 ## 03｜和 xochitl 打交道：xochitl / xochitl_conf / fswatch
 
@@ -196,7 +196,7 @@
 - **path 依赖的深度**：`..` 的个数取决于消费方自己的目录深度——`gateway/` 写 `../rmsvc-core`，`enhance/*-serve/` 写 `../../rmsvc-core`，`shelf/services/*/`、`notes/services/*/`、`notes/crates/vendorcfg/` 写 `../../../rmsvc-core`。写错时 `cargo build` 会直接说它去哪找过，照着改。
 - **每个独立顶层项目各带一份 `.cargo/config.toml`**（交叉编译的 CC/AR 覆盖），原因见 §06。
 - **release profile**：`gateway`、`shelf`、`notes` 是 `panic="unwind"`，基座的 panic 兜底和各服务的 `catch_unwind` 才真正生效；`enhance/{font,wallpaper}-serve` 仍是 `abort`（没有依赖 `catch_unwind` 的后台线程）。
-- **测试**：`cargo test --manifest-path rmsvc-core/Cargo.toml`，131 个单测通过 + 1 个默认忽略（2026-10-09 实跑）；同目录的 `epubpkg` 另跑 `--manifest-path rmsvc-core/epubpkg/Cargo.toml`（10 个）；HTTP 服务器、TLS 握手取对端 IP、名称约束链校验、真 inotify 的目录删除重挂都有真起服务器 / 真内核的测试。
+- **测试**：`cargo test --manifest-path rmsvc-core/Cargo.toml`，131 个单测通过 + 1 个默认忽略（2026-10-09 实跑）；同目录的 `epubpkg` 另跑 `--manifest-path rmsvc-core/epubpkg/Cargo.toml`（11 个）；HTTP 服务器、TLS 握手取对端 IP、名称约束链校验、真 inotify 的目录删除重挂都有真起服务器 / 真内核的测试。
 
 ## 06｜踩坑
 

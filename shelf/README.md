@@ -50,14 +50,14 @@ reMarkable Paper Pro Move 的**书籍搬运层**。它是跑在设备上的一�
 | 服务 | 端口 | 职责 | 源码 |
 |---|---|---|---|
 | gateway | `0.0.0.0:443`，唯一对外 | HTTPS + 登录密码、网页 UI、反向代理、批量队列 | `../gateway` |
-| book-serve | 127.0.0.1:8790 | 母版库：入库、加入 xochitl、下载/改名/删除；直接导入 xochitl（sheng-ren 用，不进母版库）；xochitl 回收站 / 建文件夹 / 漫画页边距的设备端代理（见书架白皮书第 C 章） | `services/book-serve` |
+| book-serve | 127.0.0.1:8790 | 母版库：入库、加入 xochitl、下载/改名/删除；直接导入 xochitl（sheng-ren 用，不进母版库）；xochitl 回收站 / 建文件夹 / 漫画页边距 / 原地替换后找回阅读位置的设备端代理（见书架白皮书第 C 章、§03ca） | `services/book-serve` |
 | ~~koreader-serve~~ | ~~127.0.0.1:8791~~ | 2026-09-29 退役：不再安装、网关不再代理 `/api/koreader/*`；重新部署时 `install.sh` 会清掉旧设备上的单元与二进制 | 源码已从仓库删除（2026-09-30），见 git 历史 |
 | font-serve | 127.0.0.1:8792 | xochitl 字体上传即装（改写 fontconfig 中文回退链） | `../enhance/font-serve` |
 | wallpaper-serve | 127.0.0.1:8793 | 休眠壁纸上传即用（写 xochitl 的 `SleepScreenPath` 键） | `../enhance/wallpaper-serve` |
 | 笔记线四服务 | 8795–8798 | 见 [`../notes/README.md`](../notes/README.md) | `../notes` |
 
 - 服务启动时往 `$XDG_RUNTIME_DIR/shelf/services/` 写一份注册信息，网关据此出标签页、按 `/api/<段>/*` 转发（`books`→book-serve、`fonts`→font-serve、`wallpapers`→wallpaper-serve；段与服务的对应只在 `../gateway/src/manage.rs` 的 `MODULES` 表里写一次）。装/卸一个服务 = 一个二进制 + 一个 systemd 单元。
-- 全部接口清单见 [`docs/传书EPUB线架构.md`](docs/传书EPUB线架构.md) §9。
+- 全部接口清单见 [`docs/传书EPUB线架构.md`](docs/传书EPUB线架构.md) §9（2026-10-09 新增 `GET /progress/{uuid}`、`POST /progress/applied`：原地替换后找回阅读位置，qmd 用）。
 - systemd：`shelf.target` + 各服务 `PartOf=shelf.target`；`systemctl disable --now font-serve` 即拔掉字体服务。**绝不给 xochitl 加启动依赖**（曾因此变砖）。
 
 ## 访问与密码
@@ -74,12 +74,12 @@ shelf/
 ├── crates/shelf-conv/                只读不改书的读书工具：读 EPUB（书名、封面、漫画页边距标记；OPF 解析用 ../rmsvc-core/epubpkg）、第三方 PDF 页数、大文件通道占位文档、文件名规范化
 ├── services/book-serve/              母版库服务
 ├── systemd/                          shelf.target + book-serve 单元
-├── xovi/                             注入 xochitl 的 qmd：字体菜单（3.28 / 3.27 两版）、界面字体令牌（随 font 装，只在 3.28）、回收站/建文件夹/漫画页边距代理、阅读器单击翻页
+├── xovi/                             注入 xochitl 的 qmd：字体菜单（3.28 / 3.27 两版）、界面字体令牌（随 font 装，只在 3.28）、回收站/建文件夹/漫画页边距/阅读位置代理、阅读器单击翻页
 ├── install.sh · uninstall.sh · manifest.sh   设备端安装/卸载与共用清单
 └── docs/                             书架白皮书、传书线架构 + diagrams/
 ```
 
-依赖单向无环：`services/* → ../rmsvc-core`；`book-serve → shelf-conv → ../rmsvc-core/epubpkg`（与笔记线共用的 EPUB 容器/OPF 解析小 crate，不依赖 rmsvc-core 本体）。
+依赖单向无环：`services/* → ../rmsvc-core`；`book-serve → shelf-conv → ../rmsvc-core/epubpkg`（与笔记线共用的 EPUB 容器/OPF 解析小 crate，不依赖 rmsvc-core 本体）；book-serve 也直接用 epubpkg 的 `.epubindex` 解析（找回阅读位置，2026-10-09）。
 2026-10-07 稍后起**不再依赖 sheng-ren 的 `bookconv`**（此前 git 依赖它读 EPUB），读 EPUB 用 `shelf-conv` 自己的 `epub` 模块（2026-10-09 起 container.xml → OPF、manifest/spine/Dublin Core、href 解码与有上限地读条目改用与笔记线 epubmap 共用的 `rmsvc-core/epubpkg`）。
 有两处是从 sheng-ren 抄来的、**sheng-ren 改了这边要手动跟着改**：漫画页边距标记名 `READER_MARGINS_MARKER`（`META-INF/eink-reader-margins`），
 书名规范化 `canonical_book_name`（`shelf-conv/src/naming.rs`）。没有自动检查，见书架白皮书 §03bx。
