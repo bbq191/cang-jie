@@ -45,8 +45,10 @@ const CLAIM_DEBOUNCE: Duration = Duration::from_millis(500);
 /// 直接导入的错误：HTTP 层按种类映射成 400 / 404 / 500（领域模块不碰 http 类型）。
 #[derive(Debug, PartialEq)]
 pub enum ImportError {
-    /// 请求本身不对（文件名、格式、大小、uuid 形状、正在替换中）→ 400。
+    /// 请求本身不对（文件名、格式、大小、uuid 形状）→ 400。
     Bad(String),
+    /// 同一份文档正在替换中（上一次交的还没做完）→ 409；客户端看 `GET /import/{uuid}` 的 `replacing` 等它做完再交（2026-10-09）。
+    Busy(String),
     /// 要替换的文档不在 / 已删除 / 在回收站 / 不是 EPUB → 404（客户端据此改成新导入）。
     NotFound(String),
     /// 设备这边出错（写盘、上传、认不出新文档）→ 500。
@@ -57,7 +59,7 @@ impl ImportError {
     /// 给人看的那句话（任务失败时原样放进 `message`）。
     pub fn message(&self) -> &str {
         match self {
-            ImportError::Bad(m) | ImportError::NotFound(m) | ImportError::Failed(m) => m,
+            ImportError::Bad(m) | ImportError::Busy(m) | ImportError::NotFound(m) | ImportError::Failed(m) => m,
         }
     }
 }
@@ -72,6 +74,8 @@ pub struct DocState {
     pub folder: String,
     /// `deleted` 为真或进了回收站。
     pub deleted: bool,
+    /// 正在原地替换（`POST /import?uuid=` 交了、任务还没做完）。
+    pub replacing: bool,
 }
 
 /// 收好、校验过的请求体：临时文件 + 字节数（Drop 时删临时文件——任务做完、失败、panic 都一样）。
@@ -152,7 +156,7 @@ impl Importer {
         }
         self.lib()?;
         self.replaceable(uuid)?;
-        let busy = self.replacing.try_guard(uuid).ok_or_else(|| ImportError::Bad("这份文档正在替换中，请稍候".into()))?;
+        let busy = self.replacing.try_guard(uuid).ok_or_else(|| ImportError::Busy("这份文档正在替换中，请稍候".into()))?;
         let part = ScratchFile::new(&self.tmp_dir, "", "epub.part");
         let size = receive(body, declared_len, part.path())?;
         // 收体可能要好几分钟，期间用户可能在设备上把书删了：再确认一次（后台任务开头还会再确认一次）。
@@ -272,7 +276,8 @@ impl Importer {
         let _ = std::fs::remove_file(lib.join(format!("{uuid}.epubindex")));
         std::fs::rename(body.part.path(), lib.join(format!("{uuid}.epub"))).map_err(|e| ImportError::Failed(format!("替换文件失败: {e}")))?;
         println!("[book-serve] 原地替换《{name}》→ {uuid}");
-        self.describe(uuid).ok_or_else(|| ImportError::Failed(format!("已替换（{uuid}），但读不到它的 .metadata")))
+        // 这时替换的忙锁还没放（调用方的守卫），回执里的 `replacing` 按做完了写
+        self.describe(uuid).map(|d| DocState { replacing: false, ..d }).ok_or_else(|| ImportError::Failed(format!("已替换（{uuid}），但读不到它的 .metadata")))
     }
 
     /// 能不能原地替换：`.metadata` 在、是文档、没删除没进回收站、有 `<uuid>.epub`。不能 → [`ImportError::NotFound`]。
@@ -293,7 +298,7 @@ impl Importer {
         let m = read_meta(self.xochitl.library_dir(), uuid).ok().flatten().filter(Metadata::is_document)?;
         let deleted = !m.is_live();
         let folder = if deleted { String::new() } else { self.xochitl.folder_path(&m.parent) };
-        Some(DocState { uuid: uuid.to_string(), name: m.visible_name, folder, deleted })
+        Some(DocState { uuid: uuid.to_string(), name: m.visible_name, folder, deleted, replacing: self.replacing.is_busy(uuid) })
     }
 }
 
@@ -571,7 +576,7 @@ mod tests {
         put_doc(&lib, U, r#"{"type":"DocumentType","visibleName":"白夜行","parent":"ffffffff-ffff-4fff-8fff-ffffffffffff","deleted":false}"#);
         let new = mini_epub(&[("OEBPS/a.xhtml", "<p>新版</p>")]);
         let d = im.replace(U, "白夜行.epub", &mut new.as_slice(), Some(new.len())).unwrap();
-        assert_eq!(d, DocState { uuid: U.into(), name: "白夜行".into(), folder: "小说".into(), deleted: false });
+        assert_eq!(d, DocState { uuid: U.into(), name: "白夜行".into(), folder: "小说".into(), deleted: false, replacing: false });
         assert_eq!(std::fs::read(lib.join(format!("{U}.epub"))).unwrap(), new);
         assert!(!lib.join(format!("{U}.pdf")).exists() && !lib.join(format!("{U}.epubindex")).exists(), "渲染缓存删掉，下次打开重排");
         assert!(!lib.join(format!("{U}.epub.new")).exists());
@@ -611,9 +616,24 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let (im, lib) = importer(&t, "127.0.0.1:9", 1 << 20);
         put_doc(&lib, U, r#"{"type":"DocumentType","visibleName":"书","parent":"trash"}"#);
-        assert_eq!(im.describe(U), Some(DocState { uuid: U.into(), name: "书".into(), folder: String::new(), deleted: true }));
+        assert_eq!(im.describe(U), Some(DocState { uuid: U.into(), name: "书".into(), folder: String::new(), deleted: true, replacing: false }));
         assert_eq!(im.describe("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"), None);
         assert_eq!(im.describe("not-a-uuid"), None);
+    }
+
+    /// 同一份文档正在替换：再交回 Busy（HTTP 409），`describe` 的 `replacing` 为真，做完放开（2026-10-09）。
+    #[test]
+    fn replace_while_replacing_is_busy_and_reported() {
+        let t = tempfile::tempdir().unwrap();
+        let (im, lib) = importer(&t, "127.0.0.1:9", 1 << 20);
+        put_doc(&lib, U, r#"{"type":"DocumentType","visibleName":"书","parent":""}"#);
+        let new = mini_epub(&[("OEBPS/a.xhtml", "<p>新版</p>")]);
+        let guard = im.replacing.try_guard(U).unwrap();
+        assert!(im.describe(U).unwrap().replacing);
+        assert!(matches!(im.accept_replace(U, "书.epub", &mut new.as_slice(), Some(new.len())), Err(ImportError::Busy(_))));
+        drop(guard);
+        assert!(!im.describe(U).unwrap().replacing);
+        assert!(im.accept_replace(U, "书.epub", &mut new.as_slice(), Some(new.len())).is_ok());
     }
 
     /// 原地替换不重新登记漫画页边距：书一直是同一个文档，`.content` 里的页边距原样保留，用户在阅读器里调过的不被覆盖；

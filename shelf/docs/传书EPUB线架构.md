@@ -304,9 +304,10 @@ POST /trash/add · GET /trash/pending · GET /trash      原生回收站代理�
 POST /mkdir/add {name}（建在根）· GET /mkdir/pending[?wait=秒] → {names, items:[{name, parent}]} · GET /mkdir   原生建文件夹代理队列（pending 支持长轮询；GET /mkdir 只供调试）
 GET  /agent-failures · POST /agent-failures/clear      两个代理交满次数放弃的记录（网页页头横幅，§4）
 POST /import?name=&folder=           直接导入 xochitl、不进母版库（体＝EPUB 原始字节；folder 是 / 分隔的多级路径）→ 202 {job}（异步，结果查下一行）
-POST /import?uuid=&name=             原地替换已有文档内容、uuid 不变 → 202 {job}；不在/已删/回收站/非 EPUB → 404（回 202 之前就判）
+POST /import?uuid=&name=             原地替换已有文档内容、uuid 不变 → 202 {job}；不在/已删/回收站/非 EPUB → 404；同一 uuid 正在替换 → 409（2026-10-09 起，以前是 400；客户端等下一行的 replacing 变假再交）（都在回 202 之前判）
 GET  /import/jobs/{id}               → {job, state: running|done|failed, stage, uuid?, name?, folder?, message?}（done 带 uuid/name/folder，folder＝实际落进的完整路径；failed 带 message）；不存在 → 404
-GET  /import/{uuid}                  → {uuid, name, folder, deleted}（folder＝从根起的完整路径）；不存在 → 404
+GET  /import/{uuid}                  → {uuid, name, folder, deleted, replacing}（folder＝从根起的完整路径；replacing＝正在原地替换，2026-10-09）；不存在 → 404
+POST /import/states {uuids: [...]}   → {docs: {<uuid>: {name, folder, deleted, replacing}}}（一次查一批，口径同上，不存在的不出现；最多 10000 个，2026-10-09）
 ```
 
 **直接导入**（`import.rs`，2026-10-07）：给电脑上的 sheng-ren（`booklib sync`）用——经 SSH 端口转发（`ssh -L` 到设备 `127.0.0.1:8790`）直连 book-serve，不经网关、不带 `/api/books` 前缀，书**不进母版库**。
