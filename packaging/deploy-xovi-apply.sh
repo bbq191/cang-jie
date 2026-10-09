@@ -57,7 +57,7 @@ if [ "$CJ_APPLY_REBOOTED" = 1 ]; then
 fi
 TAGS=""
 for ext in hl-snap ui-font; do   # 本项目装的 xovi 扩展（lib.sh 的 step_payload）：装了的才核对是否已加载
-    if [ -f "$CJ_XOVI/extensions.d/$ext.so" ]; then TAGS="$TAGS $ext"; fi
+    if [ -f "$CJ_XOVI/extensions.d/$ext.so" ]; then TAGS="$TAGS $ext\\.so"; fi   # 与各扩展的 EXT_MAPTAG 同一写法，免子串误匹配
 done
 # shellcheck disable=SC2086  # TAGS 有意按词展开
 if cj_xochitl_health "$OLD_PID" $TAGS; then

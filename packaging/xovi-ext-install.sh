@@ -110,6 +110,6 @@ if cj_xochitl_health "$OLD_PID" "$EXT_MAPTAG" && [ "$(cj_count_maps "$EXT_MAPTAG
     echo "$NEXT_MSG"
     echo "⚠️  真机重启后需恢复 xovi：装了 xovi-reenable.service 会自动；否则手动 /home/root/xovi/start（或 vellum reenable）"
 else
-    echo "⚠️  健康检查未达预期。查 journalctl -u xochitl | grep $EXT_MAPTAG"
+    echo "⚠️  健康检查未达预期。查 journalctl -u xochitl | grep $EXT_NAME"
     exit 1
 fi

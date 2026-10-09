@@ -460,8 +460,8 @@ cj_xochitl_health() {
     echo "  is-active : $cj_st   (期望 active)"
     echo "  MainPID   : $cj_old -> $cj_new   (期望有变化)"
     echo "  NRestarts : $cj_nr   (期望 0/不增)"
-    for cj_t in "$@"; do
-        echo "  $cj_t 加载 : $(cj_count_maps "$cj_t" "$cj_new") 段   (期望 >0)"
+    for cj_t in "$@"; do   # 标签是 grep 正则（如 'hl-snap\.so'），显示时去掉反斜杠
+        echo "  $(printf '%s' "$cj_t" | tr -d '\\') 加载 : $(cj_count_maps "$cj_t" "$cj_new") 段   (期望 >0)"
     done
     echo "  xovi.so 总段数: $(cj_count_maps 'xovi\.so' "$cj_new")（期望 >0）"
     echo "=================================================="
