@@ -4,10 +4,12 @@
 //! - [`escape`]：href 两层解码（XML 实体 → 去 `#片段` → 百分号），只认 XML 预定义实体与数字引用；
 //! - [`xml`]：正则标签扫描（去注释、三种引号、命名空间前缀、不分大小写），[`xml::plain_text`] 把元素内容变纯文本；
 //! - 本模块：zip 内路径（[`resolve`]、[`posix_norm`]、[`dir_of`]）、有上限地读条目（[`read_entry`]、[`read_text`]）、
-//!   `container.xml` → OPF（[`Package::read`]）、manifest / spine / Dublin Core（[`Package::manifest`]、[`Package::spine`]、[`dc_text`]）。
+//!   `container.xml` → OPF（[`Package::read`]）、manifest / spine / Dublin Core（[`Package::manifest`]、[`Package::spine`]、[`dc_text`]）；
+//! - [`epubindex`]：xochitl 的 `<uuid>.epubindex`（各 spine 文件起始页），2026-10-09 从 epubmap 下沉，书架找回阅读位置也用。
 //!
 //! 只读 container.xml、OPF 和调用方点名的少数几个条目，从不解压整本。写 EPUB、封面挑选、目录结构这些各自的业务留在各自 crate。
 //! 放在 `rmsvc-core/` 目录下但**不依赖** rmsvc-core：解析库不该连带编进 HTTP/TLS/证书那一整套。
+pub mod epubindex;
 pub mod escape;
 pub mod xml;
 
