@@ -18,7 +18,7 @@ reMarkable 的强项是**荧光笔勾书，再在勾出来的地方旁边手写*
 - **浏览**：逐条决定「转入笔记」还是「不需要」（已有定稿 / 草稿的条目转入时保留原来的进度）。
 - **转写**：转入笔记的手写自动交给视觉模型识别，结果作为草稿，你在手机上改定。
 - **整理**：改字、选去处、问 AI、「不要了」进回收站（可恢复）。行首写 `##` / `###` / `1.` / `-` / `- [ ]`（或手写 `口`），推送后分别变成设备笔记本内置的大标题 / 加粗小标题 / 编号列表 / 圆点列表 / 复选框，导出 md 时是对应的 markdown（对照图见白皮书第 4 章）。
-- **推送**：每章一个「推送本章」，生成设备笔记本（一章一本，放进书本自己所在的文件夹；书的小节变化处自动插小标题）和 md（提示里给下载链接，点一下由浏览器下载）。内容没变就跳过；旧版笔记本几秒内自动进 xochitl 回收站。⚠ 书在文件夹里时，笔记本从 2026-09-09 起其实一直落在书库根，**10-09 才修好，未部署、未真机验证**（白皮书 8.3）。
+- **推送**：每章一个「推送本章」，生成设备笔记本（一章一本，放进书本自己所在的文件夹；书的小节变化处自动插小标题）和 md（提示里给下载链接，点一下由浏览器下载）。内容没变就跳过；旧版笔记本几秒内自动进 xochitl 回收站。⚠ 书在文件夹里时，笔记本从 2026-09-09 起其实一直落在书库根，**10-09 才修好，当天已部署，落点还没在真机上手测**（白皮书 8.3）。
 - **全文搜索**：跨所有书搜原文、转写、AI 回答。
 - **导入 md 文档**（默认隐藏）：选一个 `.md` 文件直接生成一份设备笔记本，不经条目库。
 
@@ -44,7 +44,7 @@ reMarkable 的强项是**荧光笔勾书，再在勾出来的地方旁边手写*
 | ink | `GET /books`（只列还有活条目的书）· `GET /books/{uuid}` · `GET /books/{uuid}/crops/{file}` · `POST /books/{uuid}/entries/{id}`（改 `text` / `style` / `destination` / `draft` / `answer` / `askAi` / `question`；终态条目拒改）· `POST …/entries/{id}/request`（转入笔记）· `…/skip`（不需要）· `…/archive`（不要了）· `…/restore`（恢复）· `POST /books/{uuid}/purge`（清空回收站，不可恢复）· `POST /books/{uuid}/rescan` · `GET /search?q=&limit=` · `GET /events`；原 `POST /koreader/import` 已从仓库删除（2026-09-30），见 git 历史（KOReader 09-29 从设备卸载），以前导入的 KOReader 条目照常可用 |
 | transcribe | `GET /status` · `GET /config` · `PUT /config`（`preset` / `backend` / `apiKey`（只写）/ `clearKey` / `price`（`{inputPer1k,outputPer1k}`，与 GET 回的同名；老写法 `{input,output}` 也认）/ 自定义 `model`+`baseUrl` / `auto` / `maxPerRun` / `pauseMs` / `timeoutSecs` / `maxAttempts` / `prompt`）· `POST /run` · `POST /books/{uuid}/entries/{id}`（强制转写一条，返回 token 用量）· `POST /retry` · `GET /events` |
 | mind | `GET /status` · `GET /config` · `PUT /config`（同上，只有 `timeoutSecs` / `prompt`，没有 `auto` / `maxPerRun` / `pauseMs` / `maxAttempts` 这些节流字段）· `POST /books/{uuid}/entries/{id}/ask`（要求已勾「问 AI」且问题非空）|
-| notes | `GET /status` · `GET /books/{uuid}/sync`（每章两个去处的同步状态）· `POST /books/{uuid}/chapters/{idx}/generate` · `POST /books/{uuid}/chapters/{idx}/export` · `GET /books/{uuid}/chapters/{idx}/export.md`（浏览器下载）· `POST /books/{uuid}/import-md {title, markdown}` · `GET /events`；网页从没用过的整本生成/导出、列表、`vault.json` 等 6 个端点 2026-10-09 删掉 |
+| notes | `GET /status` · `GET /books/{uuid}/sync`（每章两个去处的同步状态）· `POST /books/{uuid}/chapters/{idx}/generate`（生成本章设备笔记本）· `POST /books/{uuid}/chapters/{idx}/export`（md 落设备 vault；内部按整本重导，内容没变的章跳过）· `GET /books/{uuid}/chapters/{idx}/export.md`（浏览器下载）· `POST /books/{uuid}/import-md {title, markdown}` · `GET /events`。只有这 7 个；网页从没用过的 `GET /books`、`GET …/notebooks`、`GET …/exports`、整本 `POST …/generate`、整本 `POST …/export`、`GET …/vault.json` 已于 2026-10-09 删掉 |
 
 事件区域都是 `notes`：ink 发 `entries`，transcribe 发 `transcribe`（空跑且与上一轮相同的轮次不发），note-serve 发 `notebooks`；网页据此自动刷新。
 
@@ -79,7 +79,7 @@ notes/
 与书架共用交叉编译环境（`rustup target add aarch64-unknown-linux-musl` + aarch64 交叉 gcc），见 [`../shelf/README.md`](../shelf/README.md)「构建 · 部署 · 卸载」。
 
 ```sh
-cd notes && cargo test --workspace      # host：240 过 + 1 忽略（rmv6 29 · epubmap 10 · notecore 67 · vendorcfg 24 · ink 30 · transcribe 25 · mind 22 · note 33 另 1 个 ignored；2026-10-09 实跑）
+cd notes && cargo test --workspace      # host：239 过 + 1 忽略（rmv6 29 · epubmap 10 · notecore 67 · vendorcfg 25 · ink 30 · transcribe 25 · mind 22 · note 31 另 1 个 ignored；2026-10-09 实跑）
 cd ../shelf && sh build.sh               # host 测试 + 交叉编译（notes/ 在就一起编）
 cd ../packaging && sh deploy.sh <设备IP> --only ink,transcribe,mind,note   # 只装/更新笔记线（网关总会一起装）；不加 --only 就全装
 ```
@@ -98,6 +98,6 @@ cd ../packaging && sh deploy.sh <设备IP> --only ink,transcribe,mind,note   # �
 - 2026-09-24 第三轮审计的改动，摄取这半边 09-25 真机核过；转写记账、>100 MB 大书、推送串行化已部署但没在真机上专门核，见白皮书第 2 章「可靠性要点」；
 - 2026-09-25 第四轮审计的改动（擦掉又回来的笔迹复活原条目、`.metadata` 读不了不当成书被删、章判据统一、小数不当编号等）09-25 已部署，但没在真机上逐项核，见白皮书第 13 章 7d；
 - 2026-09-30 第五轮审计的改动（epubmap 按 OPF 声明找目录、启动重扫没章的条目、灰度裁图 + 像素封顶、「转入笔记」继承定稿、正被写的 `.rm` 跳过、删没人用的裁图、调用端复用）**09-30 已部署**，部署自检通过，但功能还没手测（包括"旧条目重启后归上章"），见白皮书第 13 章 7e；
-- 2026-10-09 第六轮审计的改动（笔记本落进书所在文件夹、调云重试一次与闲置连接重建、epubmap 解 XML 实体、认领改等 inotify 等）**未部署、未真机验证**，见白皮书第 13 章 7g。
+- 2026-10-09 第六轮审计的改动（笔记本落进书所在文件夹、调云重试一次与闲置连接重建、epubmap 解 XML 实体、认领改等 inotify 等）**10-09 已部署**（部署自检 38✓），功能还没在真机上手测；同日稍后的审计后续（单价字段名统一、EPUB 解析并进 `epubpkg`）随下一次部署上机，也没单独手测。见白皮书第 13 章 7g。
 
 用户已决定不改的：编号列表被〔原文〕/〔AI〕段打断会从 1 重来；没转写的条目写“（待转写）”占位。

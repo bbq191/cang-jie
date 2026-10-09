@@ -92,7 +92,7 @@
 <text x="1003.0" y="620" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">xovi 扩展 + qmd 注入</text>
 <text x="1003.0" y="646" text-anchor="middle" font-size="10" fill="#4a4a4a">扩展：hl-snap 荧光笔 CJK 吸附</text>
 <text x="1003.0" y="659" text-anchor="middle" font-size="10" fill="#4a4a4a">扩展：ui-font 换界面默认字体</text>
-<text x="1003.0" y="672" text-anchor="middle" font-size="10" fill="#4a4a4a">qmd：回收站 / 建夹 / 漫画边距代理</text>
+<text x="1003.0" y="672" text-anchor="middle" font-size="10" fill="#4a4a4a">qmd：回收站 / 建夹 / 漫画边距 / 阅读位置代理</text>
 <text x="1003.0" y="685" text-anchor="middle" font-size="10" fill="#4a4a4a">qmd：阅读器单击翻页</text>
 <text x="1003.0" y="698" text-anchor="middle" font-size="10" fill="#4a4a4a">qmd：字体菜单 / 界面字体令牌</text>
 <text x="1003.0" y="722" text-anchor="middle" font-size="9.5" fill="#7a7a7a">都在 xochitl 启动时载入，改了要整机重启</text>

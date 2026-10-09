@@ -38,7 +38,7 @@
 <text x="40" y="530" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">新写法先挂监听再查，挂上之后的变化都排进 inotify 队列，不会漏。</text>
 <text x="40" y="552" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">inotify 起不来时退化成每秒 check() 一次，语义不变。</text>
 <text x="40" y="580" font-size="11" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">用在：大文件通道认领占位（20 秒）· 笔记本认领（5 秒）· 建文件夹 / 渲染自检 / 直接导入</text>
-<text x="636" y="84" font-size="13" font-weight="bold" fill="#1a1a1a" text-anchor="start" xml:space="preserve">10-09 改的两处机制（未部署、未真机验证）</text>
+<text x="636" y="84" font-size="13" font-weight="bold" fill="#1a1a1a" text-anchor="start" xml:space="preserve">10-09 改的两处机制（已部署，未在真机上专门触发）</text>
 <rect x="630" y="96" width="586" height="236" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
 <text x="646" y="120" font-size="13" font-weight="bold" fill="#1a1a1a" text-anchor="start" xml:space="preserve">A　线程模型</text>
 <rect x="646" y="134" width="270" height="186" rx="8" fill="#fdf1ec" stroke="#c0602d" stroke-width="1.6"/>
@@ -85,6 +85,6 @@
 <text x="968" y="570" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">空闲零唤醒不变</text>
 <rect x="24" y="616" width="1192" height="84" rx="10" fill="#f1f1ef" stroke="#8a8a8a" stroke-width="1.6"/>
 <text x="40" y="640" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">· 事件：CLOSE_WRITE / MOVED_TO / CREATE / DELETE / MOVED_FROM / MOVE_SELF（删除也算：网关看注册表目录用）。只看一层目录，不递归。</text>
-<text x="40" y="662" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">· 验证：开发机真 inotify 单测（删目录后重挂、wait_for 先挂后查、限时返回即释放）；rmsvc-core 共 131 个单测通过。设备上没跑过新版本。</text>
+<text x="40" y="662" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">· 验证：开发机真 inotify 单测（删目录后重挂、wait_for 先挂后查、限时返回即释放）；rmsvc-core 单测全过。10-09 已随部署上机，这两处新行为没在真机上专门触发过。</text>
 <text x="40" y="684" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">· 读事件出错时固定歇 5 秒再读，没有退避（09-30 记下，未改）。</text>
 </svg>

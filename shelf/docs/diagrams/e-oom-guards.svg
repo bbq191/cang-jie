@@ -1,8 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 760" font-family="Noto Sans CJK SC, sans-serif">
 <defs><marker id="eo-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker></defs>
 <rect x="0" y="0" width="1080" height="760" fill="#fbfbfa"/>
-<text x="540" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">内存防线：一本书从上传到落库，每一段怎么把峰值压住</text>
-<text x="540" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">设备约 2GB 内存，systemd MemoryMax 实测不生效，所有防线都在代码里</text>
+<text x="540" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">内存防线（历史：2026-10-07 前设备端优化时期）</text>
+<text x="540" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">①网关闸门与③设备端优化已删除（2026-10-07）；②④⑤仍有效。设备约 2GB 内存，MemoryMax 实测不生效，防线都在代码里</text>
 
 <!-- 五段防线 -->
 <rect x="25" y="72" width="190" height="196" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
@@ -34,8 +34,8 @@
 <text x="750" y="94" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#1a1a1a">④ 落库</text>
 <text x="750" y="112" text-anchor="middle" font-size="11" fill="#4a4a4a">staging/deliver.rs</text>
 <text x="750" y="138" text-anchor="middle" font-size="11" fill="#1a1a1a">≤90MB：upload_file 流式发送</text>
-<text x="750" y="158" text-anchor="middle" font-size="11" fill="#1a1a1a">自检 text_profile_file</text>
-<text x="750" y="174" text-anchor="middle" font-size="11" fill="#1a1a1a">（图片条目连解压都跳过）</text>
+<text x="750" y="158" text-anchor="middle" font-size="11" fill="#1a1a1a">渲染自检只认 uuid、记页数</text>
+<text x="750" y="174" text-anchor="middle" font-size="11" fill="#1a1a1a">（10-07 起不再估页数）</text>
 <text x="750" y="198" text-anchor="middle" font-size="11" fill="#1a1a1a">&gt;90MB：占位 + 磁盘替换</text>
 <text x="750" y="214" text-anchor="middle" font-size="11" fill="#1a1a1a">整本复制，不解码图片</text>
 
@@ -43,7 +43,7 @@
 <text x="960" y="94" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#1a1a1a">⑤ 进程兜底</text>
 <text x="960" y="112" text-anchor="middle" font-size="11" fill="#4a4a4a">book-serve 可靠性</text>
 <text x="960" y="138" text-anchor="middle" font-size="11" fill="#1a1a1a">panic=unwind + catch_unwind</text>
-<text x="960" y="158" text-anchor="middle" font-size="11" fill="#1a1a1a">OpRegistry：忙锁 + 取消</text>
+<text x="960" y="158" text-anchor="middle" font-size="11" fill="#1a1a1a">OpRegistry：忙锁（取消 10-07 删）</text>
 <text x="960" y="178" text-anchor="middle" font-size="11" fill="#1a1a1a">边车更新全局锁</text>
 <text x="960" y="198" text-anchor="middle" font-size="11" fill="#1a1a1a">启动 recover_interrupted：</text>
 <text x="960" y="214" text-anchor="middle" font-size="11" fill="#1a1a1a">pending→failed，删半成品</text>

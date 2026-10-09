@@ -4,7 +4,7 @@
 > 这套东西解决什么问题、由哪几块组成、一本书怎么从手机走到 reMarkable 上、各服务跑在哪个端口、东西装在设备的哪里、去哪里找细节。
 > 只想装：直接看 [`INSTALL.md`](INSTALL.md)；最近改了什么：[`CHANGELOG.md`](CHANGELOG.md)。
 
-**30 秒版**：设备上常驻 8 个网页服务（网关、书架、字体、壁纸、笔记线四个），网关 `https://10.11.99.1/` 是唯一入口；另有 2 个 xovi 扩展（`hl-snap`、`ui-font`）和 6 个界面补丁在 xochitl 启动时载入，改了要整机重启才生效；电脑只在安装、卸载、更新时用到（`packaging/install-all.sh`）。下面第 3 节的架构图把这些画在一张图上。
+**30 秒版**：设备上常驻 8 个网页服务（网关、书架、字体、壁纸、笔记线四个），网关 `https://10.11.99.1/` 是唯一入口；另有 2 个 xovi 扩展（`hl-snap`、`ui-font`）和 7 个界面补丁在 xochitl 启动时载入，改了要整机重启才生效；电脑只在安装、卸载、更新时用到（`packaging/install-all.sh`）。下面第 3 节的架构图把这些画在一张图上。
 
 ## 1. 它解决什么问题
 
@@ -22,7 +22,7 @@ reMarkable Paper Pro Move 是一台彩色墨水屏平板，官方阅读/笔记�
 
 | 目录 | 一句话 | 运行形态 |
 |---|---|---|
-| [`shelf/`](../shelf/README.md) 书架 | 电脑上用 sheng-ren 优化好的书（EPUB/PDF）上传 → 母版库 → 原样加入 xochitl | 1 个 Web 服务（book-serve）+ 4 个 qmd 界面补丁（回收站代理、建文件夹代理、漫画页边距代理、阅读器翻页）。旧的 `koreader-serve` 已退役（2026-09-29 设备卸了 KOReader） |
+| [`shelf/`](../shelf/README.md) 书架 | 电脑上用 sheng-ren 优化好的书（EPUB/PDF）上传 → 母版库 → 原样加入 xochitl | 1 个 Web 服务（book-serve）+ 5 个 qmd 界面补丁（回收站代理、建文件夹代理、漫画页边距代理、阅读位置代理、阅读器翻页）。旧的 `koreader-serve` 已退役（2026-09-29 设备卸了 KOReader） |
 | [`notes/`](../notes/README.md) 笔记线 | 荧光笔勾画 + 旁边手写批注 → 手机整理/转写/问 AI → 投回设备笔记本或 Obsidian | 4 个 Web 服务（ink / transcribe / mind / note） |
 | [`enhance/`](../enhance/README.md) 系统增强 | 荧光笔 CJK 精确吸附、xochitl 界面字体、阅读器单击翻页、阅读字体/壁纸上传即用（手写笔锋渲染、电池诊断 2026-09-30 已移除；日漫翻页规则 2026-10-07 删除） | 2 个 xovi 扩展（hl-snap、ui-font）+ 2 个 Web 服务（font / wallpaper）+ 2 个 qmd（字体菜单、界面字体令牌，随 font 服务装）；翻页补丁随 shelf 一起装 |
 | [`gateway/`](../gateway/README.md) 网关 | 上面三条线共用的唯一对外入口：HTTPS + 登录密码 + 反向代理 + 批量队列 | Web 服务（`0.0.0.0:443`） |
@@ -73,7 +73,7 @@ reMarkable Paper Pro Move 是一台彩色墨水屏平板，官方阅读/笔记�
 | 上传途中的暂存文件 | 字体、壁纸在 `~/.local/state/shelf/upload/`（2026-09-25 起放在 `/home`、装好时直接改名；以前在内存里的 `/tmp`，会计入服务的内存上限）。服务启动时清掉上次中断留下的半成品 | 保留 |
 | xovi 扩展 `.so`（`hl-snap`、`ui-font`） | `/home/root/xovi/extensions.d/`（**只放扩展，备份绝不能放这里**：xovi 会把目录里每个文件都当扩展加载） | 文件保留，重跑安装后生效 |
 | 等着换入的新版扩展 `.so`（xochitl 正在用旧版时先放这里；整机重启前由部署脚本、或开机时由 `xovi-reenable` 换进 `extensions.d/`） | `/home/root/.cangjie-stage/so-pending/` | 保留 |
-| 界面补丁 qmd（字体菜单、界面字体令牌、回收站/建夹代理、漫画边距代理、阅读器翻页） | `/home/root/xovi/exthome/qt-resource-rebuilder/` | 文件保留，要先在设备上重建 hashtable 再重跑安装 |
+| 界面补丁 qmd（字体菜单、界面字体令牌、回收站/建夹代理、漫画边距代理、阅读位置代理、阅读器翻页） | `/home/root/xovi/exthome/qt-resource-rebuilder/` | 文件保留，要先在设备上重建 hashtable 再重跑安装 |
 | systemd 单元（共 12 个，见上面服务一览） | `/usr/lib/systemd/system/` | **被冲掉**，重跑安装 |
 | 国内 NTP、默认时区 | `/etc` | **被冲掉**，重跑安装 |
 | 安装前的旧文件备份（每类保留最近 5 份） | `/home/root/cangjie-backups/` | 保留 |
@@ -87,6 +87,8 @@ reMarkable Paper Pro Move 是一台彩色墨水屏平板，官方阅读/笔记�
 1. **入库**：网页上传，或 scp 进设备的 `inbox/`。只收 EPUB/PDF，字节原样不动；同名同内容的书不重复存；书名整理成 `书名 - 02卷`（数字在前）。书进入**母版库**（设备上的暂存池，永久保留，可反复加入）。只勾选一本时可以"下载原件"或"改名"（只改文件名，不改书里的书名）。书架不管翻页方向（xochitl 里日漫一律从左往右翻）。
 2. **加入 xochitl**：在母版库勾选，点「加入 xochitl」，可选放进哪个文件夹（不存在就让 xochitl 自己建）。≤90MB 走 xochitl 自己的网页上传接口；>90MB 走**占位 + 磁盘替换**（见下）。投完自动检查 xochitl 渲染出的页数是否合理，给出徽章。sheng-ren 优化的漫画带页边距标记，加入后首次打开会自动把页边距设到最小（没有开关；不想要的在阅读器里自己调回，每本只设一次）。
 3. **批量**：在母版库勾选多本，底部批量栏一键排队；网关在后台顺序逐本执行，关掉浏览器也会接着跑。
+
+**另一条路：sheng-ren 直接导入**（不进母版库）。电脑上的 sheng-ren 可以经网关调 book-serve，把书直接导入 xochitl，也能原地替换一本已有的书。替换一本正在读的书后，重新打开时会自动跳回原来读到的地方（2026-10-09，book-serve 替换前记下位置，界面补丁 `shelf-keep-progress.qmd` 让 xochitl 自己跳页；真机验证过一次，替换前后内容有变动、书里插过笔记页的情形还没测）。接口与细节见 [`传书线架构`](../shelf/docs/传书EPUB线架构.md) §9 和书架白皮书 §03ca。
 
 ## 5. 三个值得知道的机制
 
@@ -138,4 +140,4 @@ reMarkable Paper Pro Move 是一台彩色墨水屏平板，官方阅读/笔记�
 | 笔记线 | [`../notes/README.md`](../notes/README.md) |
 | 系统增强 | [`../enhance/README.md`](../enhance/README.md) |
 | 最近改了什么 | [`CHANGELOG.md`](CHANGELOG.md) |
-| 自动检查（CI） | `.github/workflows/ci.yml`：每次 push / PR 跑 shellcheck、安装脚本沙箱模拟、Rust `cargo test`、aarch64 交叉编译；只证明代码在电脑上行为正确，不代替真机 |
+| 自动检查（CI） | `.github/workflows/ci.yml`：每次 push / PR 跑 shellcheck、安装脚本沙箱模拟、网关网页脚本检查与 node 测试、enhance 的 C 单测、Rust `cargo test`、aarch64 交叉编译；只证明代码在电脑上行为正确，不代替真机 |

@@ -1,8 +1,8 @@
 # reMarkable 书架白皮书 · 历史附录
 
-> **这是什么**：从[书架白皮书](reMarkable书架白皮书.md)挪出来的纯历史章节——已经移除的能力（2026-10-07 前的设备端优化、入库 PDF 转换、KOReader、漫画转 PDF / 分卷等）的当年做法、真机排查经过，以及第五轮审计（§03bu）的完整清单。
+> **这是什么**：从[书架白皮书](reMarkable书架白皮书.md)挪出来的纯历史章节——已经移除的能力（2026-10-07 前的设备端优化、入库 PDF 转换、KOReader、漫画转 PDF / 分卷等）的当年做法、真机排查经过，第五轮审计（§03bu）的完整清单，以及 2026-10-07 清理与代码审查（§03bx、§03by）的逐项明细。
 > **为什么留着**：xochitl 的 EPUB 渲染器闭源、行为反常识，这里记的真机量出来的规矩、排查方法和事故教训仍有参考价值；别处文档与代码注释引用的 § 编号也要能查到。**这里描述的功能都不是现役**，现状看主白皮书「给新读者」「现状总览」。
-> 主白皮书里这些 § 的标题原样保留、正文换成指向本文的一行链接；本文各节标题与原编号一致。文中提到的其他 § 编号（如 §03bw、§03bx）在主白皮书里。
+> 主白皮书各章末尾的「本章已挪走的节」表按编号指到这里；本文各节标题与原编号一致。2026-10-09 起，§03bx、§03by 的逐项明细也挪到本文末尾（主白皮书留结论与取舍）。文中提到的其他 § 编号（如 §03bw、§03bx）在主白皮书里。
 
 ## 第 B 章坑位表（设备端优化时期）
 
@@ -239,7 +239,7 @@ host 质量门 `check_output.py` 当时移植成 `bookconv::check`；host 门与
 - book-serve：host CLI 专用的 `SourceRef` / `set_source` / 入库参数 `?srcName=&srcBytes=`；`DeliverCheck.progress`；边车写入合并到 `update_sidecar`；`optimizable` / `deliverable`；`agent_wait`。
 - 网关与网页：`MODULES` 的 koreader 项（`/api/koreader/*` 不再代理）、`/api/foundation` 的 appload/koreader/weread 探测、批量动作 `koreader`、闸门 `KoreaderAdopt`、词典格式；网页「其他」的 KOReader 子标签、母版库 KOReader 位置与「已加入KO」徽章、笔记页「KOReader 回流」、引导页两读器对比、基石列表的 appload/KOReader/WeRead，删 44 个语言键。
 - **行为变化**：「已完成」只认加入过 xochitl，只加入过 KOReader 的旧书会回到「待处理」；旧 `batch.json` 残留的 koreader 任务读回时只剔除这几项。
-- 当时保留：`koreader-serve` 源码；ink-serve 的 `/koreader/import` 与 `koreader.rs`（见 §03ar）。**同日稍后这些也从仓库删除**（见附录 A 演进记录表“09-30 末”一行），旧数据兼容部分（条目来源枚举、`koreader:` 早退、边车 `koreader` 字段）保留。〔2026-10-07 代码审查（§03by，未部署）：边车 `koreader` 字段也从结构体删了，旧边车里的当未知字段忽略。〕
+- 当时保留：`koreader-serve` 源码；ink-serve 的 `/koreader/import` 与 `koreader.rs`（见 §03ar）。**同日稍后这些也从仓库删除**（见附录 A 演进记录表“09-30 末”一行），旧数据兼容部分（条目来源枚举、`koreader:` 早退、边车 `koreader` 字段）保留。〔2026-10-07 代码审查（§03by，10-07 15:54 已部署）：边车 `koreader` 字段也从结构体删了，旧边车里的当未知字段忽略。〕
 
 **安装与卸载**：`install.sh --only` 也刷新设备上的 `shelf-uninstall` 与 `~/.local/lib/shelf/{manifest.sh,devlib.sh}`（此前只有整包安装才刷，`--only` 部署新 qmd 后卸载会拿旧清单漏删）；卸载时 `[ -d ] && rmdir` 在 `set -e` 下遇到非空目录会让整段卸载退出，已改；每次安装清掉旧设备上的 `koreader-serve` 单元与二进制（`manifest.sh` 的 `SHELF_LEGACY_*`）。全套脚本改动见 `packaging/README.md`。
 
@@ -249,3 +249,74 @@ host 质量门 `check_output.py` 当时移植成 `bookconv::check`；host 门与
 
 - **超过 90MB 的第三方 PDF 能整本加入了**：大文件通道要把真页数写进 `.content`，此前读页数只认本项目自己写的结构（传统 xref 表 + 对象 2 是 `/Pages`），第三方 PDF 常用的交叉引用流 / 对象流（PDF 1.5+）、页树根不在对象 2 都整本拒收。新模块 `bookconv::convert::pdfmeta` 按规范从 `startxref` 沿 `/Prev` 链找到 `/Root` → `/Pages` → `/Count`，只读用到的几个对象、只解压用到的那个流；内存硬上限（字典 4MB、流 16MB 压缩 / 32MB 解压、`/Prev` 64 节、页数 20 万，最坏约 48MB），坏文件一律报错不 panic。lopdf 的 `load_metadata` 也是整份读进内存，没复用。详见传书线架构 §6.1。
 - **书名很长也能看到处理状态了**：边车 `.<书名>.delivered` 超过 255 字节时改用 `.<书名截到 200 字节>.<sha256 前 16 位>.delivered`；普通书名的边车名逐字节不变（设备上已有记录照常认）。读写、改名、删除、孤儿清理、启动修复都走同一个 `sidecar::file_name_for`；孤儿清理按"目录里现存书 → 边车名"的反查表认主，不误删。详见传书线架构 §2.2。
+
+## 第 B 章：不再优化后的清理与代码审查明细（2026-10-07）
+
+> 主白皮书 §03bx、§03by 只留结论、取舍和部署状态；下面是当时逐项的"删了什么、为什么、怎么验证"。两节都已于 10-07 15:54 部署（部署自检 36✓ 1⚠ 0✗），功能未在真机逐项手测（主白皮书附录 §05 #23）。
+
+### 03bx｜（明细）2026-10-07 稍后：清理不再优化后剩下的东西（10-07 15:54 已部署并整机重启，部署自检 36✓ 1⚠ 0✗，功能未手测）
+
+**起因**：§03bw 删掉设备端优化后，书架里还留着几样只为优化服务、或者已经没人读的东西：为了读 EPUB 借用 sheng-ren 的整个 `bookconv`、按字数估期望页数的渲染自检、网关的并发/内存闸门、几处旧数据迁移与网页上永远用不到的按钮和筛选。这一轮把它们清掉，不改加入 xochitl 本身的行为。最后用户又定：书架只管入库，翻页方向交给书本身，日漫翻页一并删掉。
+
+**删掉 / 改掉的**：
+
+| 层 | 内容 | 为什么 |
+|---|---|---|
+| 依赖 | 不再 git 依赖 sheng-ren `bookconv`；shelf-conv 新增 `epub` 模块（`shelf/crates/shelf-conv/src/epub.rs`）：读 container.xml/OPF、`dc:title`/作者/语言（`dc_text`、`title_of`）、封面图（声明的封面，没有就取前 12 个 spine 页里第一张图）、spine 翻页方向（`spine_is_rtl`）、sheng-ren 的漫画页边距标记（`READER_MARGINS_MARKER`、`reader_margins_of`），外加写占位 EPUB 的小 `EpubWriter` | 书架只用到这几样，`bookconv` 却连带拉进图片处理、网页正文抽取、HTTP 客户端等；`shelf/Cargo.lock` 309 → 214 个包，`cargo update -p bookconv` 不再有 |
+| 书名规范化 | `canonical_book_name`（文件名规范成 `书名 - N卷`）连同测试从 sheng-ren `bookconv::naming` 复制进 `shelf_conv::naming` | 同上；代价见下面取舍 |
+| 渲染自检 | 不再按正文字数估期望页数（中文每页 460 字、英文 960 字）、不再报 `warn`（`WARN_RATIO` 50%）；删 `shelf_conv::stats`；边车 `RenderCheck.expected` 字段删（旧边车里的读时忽略，旧 `warn` 记录网页按普通页数徽章显示）。状态只剩 `pending` / `ok` / `onopen`（大文件通道的 EPUB，首次打开才渲染）/ `timeout` | `warn` 主要抓的是设备上优化出错（如 §03aa 的双 id 吞整章）；书改在电脑上用 sheng-ren 优化，有它的质量门把关 |
+| 大文件通道占位 | 显示名一律取书里的 `dc:title`，删 `has_volume_marker`（以前带卷标记时用规范名） | sheng-ren 已经写好规范书名，普通上传和大文件通道显示名从此一致 |
+| 旧迁移 / 旧清单 | 删 `backfill_render_records`（每次启动都扫全库的一次性迁移）；不再读阅读方向旧手动清单 `rtl-overrides.json`（当时方向只看 OPF；随后日漫翻页整个删除，见下一行） | 迁移早已跑完；清单 09-30 起只读。删前核对设备上这份清单：15 个 uuid 都已不在 xochitl 书库里，删掉没影响任何现有的书；文件 10-07 当天已从设备删除 |
+| 日漫翻页 | book-serve 删 `GET /reading-direction/{uuid}` 与 `reading_direction.rs`；shelf-conv 删 `epub_is_rtl` / `spine_is_rtl`；`shelf/xovi/reader-page-turn.qmd` 删日漫分支（`cjRtl`、开书查方向、`nextPageGesture`/`prevPageGesture` 里的滑动对调），**单击翻页 `tapPageTurn` 保留**；网关与网页删「日漫翻页规则」开关（`rtlPageTurn`，单独传它回 400，`/api/enhance/status` 不再返回）；`reading-qol.json` 里的旧 `rtlPageTurn` 键不清，无人再读 | 用户定：书架只管入库，翻页方向交给书本身。**后果（用户已知悉）**：xochitl 不看 OPF 的 `page-progression-direction`，日漫在 xochitl 里一律从左往右翻 |
+| book-serve `GET /status` | 只回 `{ok, xochitlFolders}`；删 `uploadReachable`（xochitl 不在时每次刷新白等 3 秒）、`nativeUploadLimitBytes`、`spool`；状态缓存只在加入 / 直接导入后失效（文件夹会变），inbox 追平不再让它失效 | 网页从来不读这三项；rmsvc-core 的 `Xochitl::reachable` 随之没有调用方，删掉 |
+| 网关闸门 | 删 `gateway/src/budget.rs`、`/api/budget/status`、`/api/budget/cancel`、`proxy.rs` 里的闸门分支、`budget` 事件；"等这本书处理完"的轮询（`poll_until_settled`，`books_wake` 事件驱动、`MIN_REQUERY` 5 秒、连续失败 6 次才放弃、上限 1 小时）从 `proxy.rs` 挪进 `batch.rs` | 网页的「加入 xochitl」只走批量队列，队列本来就一本处理完才取下一本；加入是流式上传，book-serve 只多占几 MB；闸门"内存峰值≈文件体积"的前提来自设备端优化 |
+| 批量队列 | 删 `attempts`/`MAX_ATTEMPTS`（被打断的当前那本一律放回队首，不再"连续打断两次记失败"）；删 `parse_saved`（读回时剔除旧 optimize/koreader 任务的迁移，现在严格按当前格式读，文件坏了＝当作没有未完成的队列）；删不会再出现的 `cancelled` 分支 | 网关不读书的内容，不可能是崩溃元凶，防崩溃循环的计数没有意义 |
+| 网页 | 删行内「取消排队」及两条提示、「排队等待并发名额…」、页头「⏳ 排队 N 本 · 处理中 M 本」（`#stgnotice`）、渲染徽章「⚠ 只渲染 N 页 / 预期≈M」、格式筛选「其它」（只有 EPUB/PDF）、cbz 残留、进度条的百分比分支（`renderBusy` 只剩不确定态）；母版库行内从此没有按钮；修正母版库说明 `transfer.staging.optNote`（还写着要开「实验室→漫画页边距」，开关同日早些时候已删）为"带标记的漫画加入后首次打开会自动把页边距设到最小"；语言包每种 474 → 465 个键（删 9 个；随后删日漫翻页再删 `manage.enhance.pageTurn.rtlToggle`、`rtlHint` 两个、`pageTurn.desc` 改成只说单击翻页，最终 463）；删没用的 CSS（`.crumb`、`.stg-actions`、`.stgbar-count`、`.stg-root`）；母版库三档刷新请求数 2/3/4 → 1/2/3 | 都只服务于已删的闸门、`warn` 或格式 |
+
+**对拍**：本地 107 本 EPUB，新 `shelf-conv::epub` + `naming` 与 `bookconv` 对比书名、封面（扩展名与字节）、翻页方向、规范名，全部一致（翻页方向这部分代码随后随日漫翻页删除）。
+
+**qmd 离线验证**（`reader-page-turn.qmd`，未上真机）：从设备 .172 的 xochitl 二进制解出真实 QML，`qmldiff apply-diffs` 三个 AFFECT 都应用上；新旧补丁的输出逐文件对比，差异正好是删掉的日漫代码；qmllint 无语法错误，告警数下降（DocumentView 602→599、SceneViewGestures 180→173、DeviceSceneView 92→92）。
+
+**保留的**：渲染自检本身（普通上传 `/upload` 不回 uuid，只能靠它按 `dc:title` / 文件名 stem / 最新一本认出新文档，登记漫画页边距要 uuid）；批量队列的落盘续跑与「全部中止」；`OpRegistry` 忙锁；大文件通道的占位（`placeholder`）与第三方 PDF 页数（`pdfmeta`）。
+
+**取舍：复制两处常量 / 规则，而不是继续依赖 sheng-ren**：
+- 优势：`shelf/Cargo.lock` 少了 95 个包，编译和交叉编译都轻，不会因为 sheng-ren 加了图片 / 网络依赖而跟着变；书架用到的读 EPUB 逻辑只有几百行，自己维护得动。
+- 劣势 / 风险：**两边会漂**。`READER_MARGINS_MARKER`（`META-INF/eink-reader-margins`）必须和 sheng-ren 的同名常量一致，sheng-ren 改名后书架就不再认漫画、不自动设页边距；`canonical_book_name` 的规则 sheng-ren 改了，书架入库的文件名规则就和它不一致。两处都没有自动检查，只在代码注释里写明"必须与 sheng-ren 一致"。对拍是一次性的，以后 sheng-ren 改了要重新对一次。
+
+**验证**（开发机，2026-10-07，实跑；含删日漫翻页之后）：book-serve 81、shelf-conv 27、gateway 61、rmsvc-core 108（另 1 个 ignored）个测试通过；网页 node 测试 locales 4 / net 3 / xss 3 项通过；浏览器冒烟（`gateway/ui/test/smoke.puppeteer.mjs`）通过。之后 10-07 15:54 部署并整机重启，功能未手测，手测项见主白皮书附录 §05 #23。
+
+**已知没改的**：`shelf/xovi/shelf-comic-margins.qmd` 第 6 行注释还指向已删的"bookconv 白皮书 §20"。改 qmd 下次部署就要整机重启，只为一行注释不值得，留着。〔同日稍后的代码审查（§03by）已改掉：本分支反正要因 `reader-page-turn.qmd` 整机重启一次，顺手把这处和"实验室开关"两处过时注释改了；`qmldiff apply-diffs` 输出与改前逐字节相同。〕
+
+### 03by｜（明细）2026-10-07 再稍后：代码审查修复（与 §03bx 同批 10-07 15:54 部署，功能未在真机上手测）
+
+**起因**：§03bx 清理完后对书架、网关、基座、网页做了一轮代码审查，找出几处会出错的地方，顺手把重复代码合并。下面按"修的 bug → 效率 → 合并 / 删除"列，网关和网页那部分的细节在网关白皮书（§02、§04、§05、§06），这里只记书架这边要知道的。
+
+**修的 bug**：
+
+| 问题 | 以前 | 现在 | 代码 |
+|---|---|---|---|
+| 直接导入的原地替换留半成品 | 请求体直接写在书库里的 `<uuid>.epub.new`；进程被杀时最大 1GB 的半成品一直留在书库，启动清理只管 `import-tmp/` | 先落 `import-tmp/`（与书库同在 /home 分区）再 rename 进书库 | `import.rs` |
+| 原地替换重设漫画页边距 | sheng-ren 每次同步替换都重新登记页边距，用户在阅读器里调过的被覆盖 | 替换不再登记，每本只在首次加入时设一次 | `import.rs` |
+| 加入后改名卡在「渲染中」 | 渲染自检线程按旧名找书，改名后找不到，一直显示渲染中直到重启 | 改名时边车里还在 `pending` 的渲染自检直接收成 `timeout`（网页显示「未见渲染」） | `staging/library.rs` |
+| 建文件夹白等 | 入队时文件夹刚好已经建出来（`mkdir.add` 回 0）也进 `watch_until`，没有新事件就白等满 20 秒 | 已出现就不等 | `staging/deliver.rs` |
+| 批量把结果不明记成成功（网关） | 只认 `failed`；等满 1 小时、book-serve 连续查不到、条目途中消失、仍 `pending` 都记成功 | 只有 `delivered.deliver.status=ok` 算成功，其余记失败并提示"请到 xochitl 书库里核对" | `gateway/src/batch.rs` |
+| 慢网大文件被截断（网关） | 代理设 900 秒整请求时长 | 只设空闲超时（连 3 秒 / 读 900 秒 / 写 120 秒） | `gateway/src/proxy.rs` |
+| 母版库筛选计数加不拢（网页） | 正在处理、加入失败的书既不算「已加入」也不算「未加入」 | 「未加入」＝「已加入」的补集 | `gateway/ui/app.js` |
+
+**效率**：直接导入认领新文档改成书库目录事件驱动（`fswatch::watch_until`，防抖 500ms；以前每 200ms 扫一遍书库，最长 120 秒）；shelf-conv 新增 `epub::Book`，一本书只解一次 zip，书名、封面、页边距标记都从它取（以前落库开 2 次、大文件通道开 3 次）。
+
+**合并重复 / 删除**：
+
+- `OpRegistry::try_guard` 返回 RAII 忙锁，改名、删除、落库、替换统一用它（以前各处手写加锁解锁，改名要配对解两把）。
+- 临时文件守卫与取名合成 `scratch::ScratchFile`，母版库中转和直接导入共用。
+- 大文件通道"造占位 → 上传 → 替换 → 登记页边距"合成 `Staging::upload_large`，落库和直接导入共用；漫画页边距登记不再写四遍。
+- 读 `.metadata` 用基座的 `rmsvc_core::xochitl::read_metadata`（回收站代理、直接导入共用）；母版库剩余空间用基座的 `rmsvc_core::fs::fs_space`（与网关设备健康同一份 statvfs），book-serve 去掉 `libc` 直接依赖。
+- 删无人调用的 `POST /staging/mark` 与边车 `koreader` 字段（旧边车里的当未知字段忽略）；格式 `cbz` 并入 `other`；`epub_placeholder` 不再收书名参数（一律取书里的 `dc:title`）；`GET /trash`、`GET /mkdir` 注明只供调试。
+- `shelf-comic-margins.qmd` 只改注释（"实验室开关"与已删白皮书的引用），`qmldiff apply-diffs` 输出与改前逐字节相同，§03bx 记的"已知没改"就此了结。
+
+**取舍**：
+
+- 批量"只认 `ok`"——优势：网关没看到结果时不再报喜，用户不会以为书已经进去了；劣势：书其实加进去了、只是网关没等到结果（book-serve 重启、超时）时会多一条"失败"。所以失败原因写成"请到 xochitl 书库里核对"，不让人直接重加，免得书库里出现两本。
+- 原地替换不重设页边距——优势：用户在阅读器里调回的页边距不被每次同步覆盖；劣势：如果 sheng-ren 的新版本改了页边距标记的值，已有的书不会跟着变，要删了重新导入。
+
+**验证**（开发机，2026-10-07 实跑）：book-serve 81、shelf-conv 26、gateway 62、rmsvc-core 109（另 1 个 ignored）、笔记线 workspace 240、font-serve 10、wallpaper-serve 11 个测试通过；网页 node 测试 locales 4 / net 3 / xss 3 项通过；浏览器冒烟通过；clippy 无告警。aarch64 release：book-serve 3,580,056 字节、gateway 3,014,872 字节、ink-serve 2,768,912 字节。之后 10-07 15:54 部署（`deploy.sh --only book,ink` + 整机重启），部署自检 36✓ 1⚠（刚开机）0✗，功能未在真机上手测，手测项见主白皮书附录 §05 #23。

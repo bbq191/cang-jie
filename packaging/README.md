@@ -58,14 +58,14 @@ sh uninstall-all.sh <host> --skip chrony-boot-wakelock,wifi-watch,xovi-persist,h
 
 | 顺序 | 步骤名 | 脚本 | 装什么 | 前置 |
 |---|---|---|---|---|
-| 1 | `chrony-cn` | `deploy-chrony-cn.sh` | 国内 NTP 服务器（阿里云/腾讯云等） | 无 |
+| 1 | `chrony-cn` | `deploy-chrony-cn.sh` | 国内 NTP 服务器（阿里云/腾讯云等）。配置写好就退出 0；一时没同步上（没网、热点没通）只打 ⚠，chronyd 联网后自己会同步（10-09 起；以前记成失败） | 无 |
 | 2 | `chrony-boot-wakelock` | `deploy-chrony-boot-wakelock.sh` | 开机头一小段持 wakelock，防自动休眠打断首次校时（根因见文末「踩过的坑」） | 无；设备缺 `/sys/power/wake_lock` 时开机自动跳过 |
 | 3 | `timezone-cn` | `deploy-timezone-cn.sh` | 默认时区 Asia/Shanghai | 无；缺 zoneinfo 时警告后退出 0 |
 | 4 | `wifi-watch` | `deploy-wifi-watch.sh` | WiFi 载波假死看护；链路正常时只读 sysfs、零 fork | 无 |
 | 5 | `xovi-persist` | `deploy-xovi-persist.sh` | xovi 开机自动恢复（`xovi-reenable.service`） | 已 `vellum add xovi` |
 | 6 | `hl-snap` | `deploy-hl-snap.sh` | 荧光笔 CJK 精确吸附（xovi 扩展），**只落盘** | 同上 |
 | 7 | `ui-font` | `deploy-ui-font.sh` | 界面字体（xovi 扩展，换 xochitl 应用默认字体；2026-10-07），**只落盘** | 同上 |
-| 8 | `shelf` | `deploy.sh` | 网关 + book/font/wallpaper + 笔记线 ink/transcribe/mind/note，共 8 个服务；随服务带的 qmd（字体菜单、界面字体令牌、回收站代理、建文件夹代理、漫画页边距、单击翻页）**只落盘** | 无；没装 qt-resource-rebuilder 时只跳过 qmd，服务照装 |
+| 8 | `shelf` | `deploy.sh` | 网关 + book/font/wallpaper + 笔记线 ink/transcribe/mind/note，共 8 个服务；随服务带的 7 个 qmd（字体菜单、界面字体令牌、回收站代理、建文件夹代理、漫画页边距、阅读位置代理、单击翻页；清单在 `shelf/manifest.sh` 的 `shelf_svc_qmds`）**只落盘** | 无；没装 qt-resource-rebuilder 时只跳过 qmd，服务照装 |
 | — | `清理已移除:battop`、`清理已移除:handwriting-stroke` | `removal.sh`（函数，不是脚本） | 清旧设备上已移除功能的残留（见上「已退役 / 已移除的步骤」）；摘了正加载着的 `hw-stroke.so` 会记待生效标记 | 无 |
 | 9 | `xovi-apply` | `deploy-xovi-apply.sh` | 让上面落盘的扩展/qmd 统一生效：**有待生效改动（或 xovi 未生效）才**整机重启一次；`--force` 无条件 | 同 5–7 |
 
@@ -81,13 +81,13 @@ sh uninstall-all.sh <host> --skip chrony-boot-wakelock,wifi-watch,xovi-persist,h
 
 `--dry-run` 不做以上任何检查，只在本机走一遍步骤表，每步打印 `[dry-run] 将执行：<命令>`。
 
-### 连接与传输的三道保护（2026-10-09，未上真机）
+### 连接与传输的三道保护（2026-10-09；正常路径已随当天两次真机 `install-all` 跑过）
 
 | 保护 | 做法 | 防的是什么 |
 |---|---|---|
 | 设备端脚本整组传输 | `lib.sh` 的 `dev_pipe` 把整段设备端脚本包成 `{ …; } </dev/null` 再经 `ssh sh -s` 送上去；`dev_script`（拼上 `devlib.sh`）和 `chrony-cn` / `timezone-cn` 都走它 | shell 要读到配对的 `}` 才开始执行：传输断在半截只会是语法错误、**一条都不执行**，不会"前半截已执行"。组内标准输入是 `/dev/null`，读 stdin 的子命令不会再把后面没执行的脚本当输入吃掉 |
 | ssh 保活 | `CJ_SSH_OPTS` 加 `ServerAliveInterval=5`、`ServerAliveCountMax=3` | 连上之后设备休眠、拔线、WiFi 掉了，TCP 收不到断开通知，旧版 ssh/scp 会无限挂着；现在约 15 秒判定断线并报错。设备端命令长时间不输出（装书架、等重启）不受影响 |
-| 部署期唤醒锁 | 顶层编排者（`install-all` / `uninstall-all` / 单独跑的 `deploy.sh`）开始时 `device_awake_hold` 往 `/sys/power/wake_lock` 写一把**带超时**的锁（`CJ_AWAKE_SECS`=1200 秒），结束时 `device_awake_release` 放掉；被编排的子脚本见到 `CJ_AWAKE_HELD` 就不再各拿各放 | 设备在两次 ssh 之间自动休眠。到点内核自动释放，电脑被 Ctrl-C、断网、崩掉，设备最多多醒 20 分钟；最后一步整机重启时锁随之消失，脚本不再连回去放。设备没有该接口时什么都不做；`CJ_AWAKE=0` 关掉 |
+| 部署期唤醒锁 | 顶层编排者（`install-all` / `uninstall-all` / 单独跑的 `deploy.sh`）开始时 `device_awake_hold` 往 `/sys/power/wake_lock` 写一把名为 `cangjie-deploy`、**带超时**的锁（`CJ_AWAKE_SECS`=1200 秒），结束时 `device_awake_release` 放掉；被编排的子脚本见到 `CJ_AWAKE_HELD` 就不再各拿各放 | 设备在两次 ssh 之间自动休眠。到点内核自动释放，电脑被 Ctrl-C、断网、崩掉，设备最多多醒 20 分钟；最后一步整机重启时锁随之消失，脚本不再连回去放。设备没有该接口时什么都不做；`CJ_AWAKE=0` 关掉 |
 
 ### 收尾汇总（四栏，`install-all` / `uninstall-all` 共用 `print_step_summary`）
 
@@ -172,7 +172,7 @@ sh verify-on-device.sh --from d.txt        # 不连设备，离线重判存下�
 - **只读**：设备上不重启、不写、不删、不 mount，连临时文件都不建；只读 `/proc`、`systemctl show`/`is-active`、`journalctl`、`dmesg`、`ls`/`stat`/`df`/`sha256sum`。
 - **一次 ssh 采集，判定全在本机**：设备端输出结构化文本（每行 `键<TAB>字段…`），本机逐项判 ✓/⚠/✗——所以 `--from` 能离线重判，模拟测试也直接喂构造好的文本。
 - **退出码**：没有 ✗ 为 0（可以有 ⚠）；有 ✗ 或连不上为 1；参数错误为 2。文本模式最后一行固定是 `VERIFY-SUMMARY host=… ok=N warn=N fail=N result=PASS|WARN|FAIL`。
-- 真机上的项数随装了多少东西变：09-25 装着 KOReader 时 44 项；09-30 15:23 移除电池刺客与手写优化后为 37 项（36✓ 1⚠ 0✗，⚠ 是开机不足 600 秒）；10-07 加了 ui-font 后为 39 项（38✓ 1⚠ 0✗）。
+- 真机上的项数随装了多少东西变：09-25 装着 KOReader 时 44 项；09-30 15:23 移除电池刺客与手写优化后为 37 项（36✓ 1⚠ 0✗，⚠ 是开机不足 600 秒）；10-07 加了 ui-font 后为 39 项（38✓ 1⚠ 0✗）；10-09 加了阅读位置代理 qmd 后为 40 项（39✓ 1⚠ 0✗）。
 - **退役遗留报警**（2026-09-30）：已退役或旧命名的单元（manifest 的 `SHELF_LEGACY_UNITS`：`koreader-serve`、`shelf-gateway`）单元或二进制还在报 ⚠；qrr 目录里还有侧栏入口 `koreader-sidebar-entry.qmd` 报 ⚠，如果 appload 已不在则报 ✗（它 IMPORT 的 AppLoad 模块找不到，Sidebar 补丁失效）。清法见 [`INSTALL.md`「从旧版升级」](../docs/INSTALL.md#从旧版升级清理已移除的组件)。
 - 给出的"只清某几样"清理命令（侧栏入口、已移除功能）里的 `--skip` 串都由步骤表经 `uninstall_only_skip` 算出（侧栏这一条 10-09 起），步骤表变了命令自动跟着变。
 - **已移除功能的残留报警**（2026-09-30）：`battop.service`/`battop.timer` 单元或 `/home/root/battop/battop` 还在（节 8，不计入在位统计）、`extensions.d/hw-stroke.so` 还在（节 2，不再当正常扩展判）、待换入区里有 `hw-stroke.so`（节 2），都报 ⚠，并给出清理命令：重跑 `install-all.sh`，或 `uninstall-all.sh --skip <uninstall_only_skip 的结果>` 后整机重启。
@@ -200,7 +200,7 @@ sh verify-on-device.sh --from d.txt        # 不连设备，离线重判存下�
 | `lib.sh` | **host 侧**共用库：`rssh`/`rssh_in`/`rscp`（统一 `BatchMode` + `ConnectTimeout`，设备休眠时快速失败而不是卡死）、`shquote`（安全拼远端命令行）、`dev_pipe`/`dev_script`（把设备端脚本整组包好经 `ssh sh -s` 送上设备执行，见「连接与传输的三道保护」）、`device_awake_hold`/`_release`（部署期唤醒锁）、`push_verified`（一批文件 scp 到暂存路径后逐个 md5 对拍，不对就删那个暂存文件并失败；一次 ssh 建目录并取暂存路径上已有文件的 md5 → 只 scp 内容变了的文件 → 有上传才再一次 ssh 复核 md5。2026-09-30 起相同文件不重传）、载荷清单 `step_payload`/`step_payload_dir`（部署推送与卸载清理共用）、步骤表 `STEP_ORDER`/`STEP_DEFER`/`STEP_RETIRED`/`STEP_RETIRED_AUTOCLEAN`/`STEP_CONFIG_ONLY`、`uninstall_only_skip`、参数解析 `parse_step_args`/`host_arg`、`require_device`、`fw_gate`、`preflight_device`、`run_step`（含 `--dry-run` 与四栏记账）、`print_step_summary`、`step_skipped`、`run_apply`/`wait_reboot_and_verify` |
 | `devlib.sh` | **设备侧**共用库（POSIX sh，兼容 busybox）：rootfs 读写窗口（remount rw 后无论成败、被信号打断都恢复 ro，含 ssh 断连的 SIGPIPE）、`cj_safe_replace` 原子替换（不在运行中进程已映射的 inode 上原地写）、备份与轮转、`cj_backup_if_differs`、`/usr` 单元的安装/删除（先过 dm-verity 门）、待生效标记 `cj_pending_mark`/`_list`/`_clear` 与 `cj_apply_needed`、待换入区 `cj_so_stage`/`_unstage`/`_commit`、`cj_xochitl_apply`/`cj_xochitl_health` |
 | `deploy-usr-unit.sh` | 把一个 systemd 单元装进设备 `/usr` 的统一部署器；`deploy-chrony-boot-wakelock.sh` / `deploy-xovi-persist.sh` / `deploy-wifi-watch.sh` 是它的薄包装 |
-| `deploy-xovi-ext.sh` + `xovi-ext-install.sh` | 装一个独立 xovi 扩展：host 侧构建+推送 / 设备侧安装流程。`deploy-hl-snap.sh`、`deploy-ui-font.sh` 是薄包装（`deploy-xovi-ext.sh hw-stroke` 报"已移除"退出 2）；各扩展的 `deploy/install.sh` 只剩数据（名字、配置键）并 source `xovi-ext-install.sh` |
+| `deploy-xovi-ext.sh` + `xovi-ext-install.sh` | 装一个独立 xovi 扩展：host 侧构建+推送 / 设备侧安装流程。`deploy-hl-snap.sh`、`deploy-ui-font.sh` 是薄包装（`deploy-xovi-ext.sh hw-stroke` 报"已移除"退出 2）；各扩展的 `deploy/install.sh` 只剩数据（名字、配置键、`EXT_MAPTAG`＝`maps` 里确认已加载用的正则，带 `.so` 免得同名目录或配置文件被误算）并 source `xovi-ext-install.sh` |
 | `deploy.sh` | shelf 整包部署：组载荷 → 本地打 tar → 推到设备 `shelf-pkg.new`，确认有 `install.sh` 才换掉 `shelf-pkg` → 设备端 `install.sh`。`--password` 经标准输入走 0600 临时文件，不上命令行，装完无论成败都清掉；`--only` 的选服务规则与设备端共用 `shelf/manifest.sh` 的 `shelf_select`；载荷只带要装的服务的二进制与单元，推送前核对都在（缺了指路 `sh shelf/build.sh`） |
 | `deploy-xovi-apply.sh` / `deploy-chrony-cn.sh` / `deploy-timezone-cn.sh` | 各自的部署脚本（都支持 `-h`，未知/多余参数退出 2，ssh 不通中文报错退出 1） |
 | `verify-on-device.sh` | 部署后只读核对（见上） |
@@ -313,7 +313,7 @@ sh verify-on-device.sh --from d.txt        # 不连设备，离线重判存下�
 ## 测试：不碰真机验证脚本
 
 ```sh
-bash packaging/tests/run_sim_tests.sh      # 2026-10-09 第六轮审计后实跑 370 项断言全过；也由 tests/test_install_scripts_sim.py 经 pytest 调用
+bash packaging/tests/run_sim_tests.sh      # 2026-10-09 实跑 371 项断言全过；也由 tests/test_install_scripts_sim.py 经 pytest 调用
 git ls-files -z '*.sh' | xargs -0 shellcheck --severity=warning   # 全仓库 34 个 .sh，零告警
 shellcheck --severity=warning --shell=sh packaging/tests/stubs/*   # 测试桩（无 .sh 后缀），10-09 起 CI 同样门控
 ```
@@ -338,7 +338,7 @@ shellcheck --severity=warning --shell=sh packaging/tests/stubs/*   # 测试桩�
 
 这些是本机模拟，**不能代替真机验证**。
 
-**CI 现状**：`.github/workflows/ci.yml` 在 push / PR 时跑 shellcheck（含测试桩）、这套模拟测试（经 pytest）、各 Rust crate 的 `cargo test`、enhance 的 C 单测与 aarch64 交叉编译冒烟，也可以在 GitHub 网页上手动触发。2026-09-20 到 10-08 期间 Actions 因账户扣费问题没有执行；10-09 仓库公开后恢复，当天两轮全绿。CI 只证明"脚本在沙箱里行为对"，不代替真机。
+**CI 现状**：`.github/workflows/ci.yml` 在 push / PR 时跑 shellcheck（含测试桩）、这套模拟测试（经 pytest）、网关网页脚本的语法检查与 node 测试、各 Rust crate 的 `cargo test`、enhance 的 C 单测（`enhance/shared`、`ui-font`）与 aarch64 交叉编译冒烟，也可以在 GitHub 网页上手动触发。2026-09-20 到 10-08 期间 Actions 因账户扣费问题没有执行；10-09 仓库公开后恢复，当天两轮全绿。CI 只证明"脚本在沙箱里行为对"，不代替真机。
 
 ## 固件升级（OTA）之后
 
@@ -371,7 +371,7 @@ shellcheck --severity=warning --shell=sh packaging/tests/stubs/*   # 测试桩�
 
 | 主题 | 日期 | 结论 |
 |---|---|---|
-| 整轮 `install-all.sh` | 09-11（当时八步）、09-22、09-24、09-25（先整轮卸载再全新安装，途中踩到"停 xochitl 会崩"，改为整机重启后复核）、09-30 15:23 | 通过：9 个服务健康、`NRestarts` 0、hook 全部"安装完成"。09-30 这轮用的是第四、五轮审计与移除两样之后的脚本：自动清掉电池刺客（单元 + `/home/root/battop`）与 `hw-stroke.so`，**只整机重启一次**；核对 36✓ 1⚠（刚开机）0✗，`/usr` 单元 12/12，9 个常驻服务 RSS 1–4.5MB、开机后 7–9 秒起齐，设备二进制 md5 与本地构建一致，xochitl maps 里已无 `hw-stroke.so`，日志无 warning 以上 |
+| 整轮 `install-all.sh` | 09-11（当时八步）、09-22、09-24、09-25（先整轮卸载再全新安装，途中踩到"停 xochitl 会崩"，改为整机重启后复核）、09-30 15:23、10-09 13:48（WiFi）与 15:53（USB） | 通过。10-09 两轮用的是第六轮审计后的脚本（整组传输、ssh 保活、唤醒锁），整机重启后核对 38✓ 1⚠、39✓ 1⚠（⚠ 是刚开机）0✗。9 个服务健康、`NRestarts` 0、hook 全部"安装完成"。09-30 这轮用的是第四、五轮审计与移除两样之后的脚本：自动清掉电池刺客（单元 + `/home/root/battop`）与 `hw-stroke.so`，**只整机重启一次**；核对 36✓ 1⚠（刚开机）0✗，`/usr` 单元 12/12，9 个常驻服务 RSS 1–4.5MB、开机后 7–9 秒起齐，设备二进制 md5 与本地构建一致，xochitl maps 里已无 `hw-stroke.so`，日志无 warning 以上 |
 | 单独 `deploy.sh`（书架整包） | 09-30 14:10 | 通过：部署第五轮审计版后整机重启，核对 38✓ 1⚠（刚开机）0✗；09-29 手动卸载的遗留查过，无残留（所以 verify 的"退役遗留报警"分支本身没在真机触发过） |
 | 整轮 `uninstall-all.sh` | 09-25 | 通过：8 步逆序全部成功；`/usr` 单元、服务二进制、两个扩展、qmd 全部清掉，端口释放，书架/笔记数据保留；卸载期间 xochitl 不重启，被删的 `.so` 在 maps 里变成 `(deleted)`——**删掉正被映射的 `.so` 本身不崩**。小尾巴：09-20 之前的手工备份 `*.bak.pre-*` 卸载器不认识、没动；`SleepScreenPath` 被运行中的 xochitl 写回 |
 | 生效方式：换入后整机重启 | 09-25 | 通过：只卸 `hl-snap` → `deploy-hl-snap.sh` 换入、打印 `CJ-APPLY-REBOOTING`、`systemctl reboot`；约 20 秒回来，上次关机无 SEGV / core dump / 应急服务，hook "安装完成"，`verify-on-device.sh` 43 ✓。同一次顺带核了 lo-alias：没插 USB 冷启动，`10.11.99.1` 挂上 `lo` 与 `usb1`，xochitl :80 已绑定 |
@@ -385,7 +385,7 @@ shellcheck --severity=warning --shell=sh packaging/tests/stubs/*   # 测试桩�
 
 ### 没有真机验证（只有本机模拟或代码审查）
 
-- **2026-10-09 第六轮审计的全部脚本改动**：整组传输、ssh 保活、部署期唤醒锁、无 xovi 时报错不重启、单元只缺链接不重复备份、dm-verity 下"已是最新"、`xovi/start` 路径健康检查核对 ui-font、扩展加载判据改成匹配 `hl-snap.so` / `ui-font.so`、汇总合并、shelf 卸载记 `shelf-qmd` 标记。只有本机模拟（370 项）与代码审查，**未部署**。
+- **2026-10-09 第六轮审计的脚本改动中没在真机走到的分支**：断在半截不执行、ssh 断线判定、唤醒锁到点自动释放、无 xovi 时报错不重启、单元只缺链接不重复备份、dm-verity 下"已是最新"、`xovi/start` 路径健康检查核对 ui-font、shelf 卸载记 `shelf-qmd` 标记。只有本机模拟（371 项）与代码审查。正常路径（整组传输、保活、拿放唤醒锁、按 `hl-snap.so` / `ui-font.so` 判加载、合并后的汇总）随 10-09 两轮真机 `install-all` 跑过，见上表。
 
 - **生效判定的"不重启"一侧**：`xovi-apply` 无标记时跳过、`--force-apply` / `--force`、单独部署无变化不重启。
 - **关键区忽略信号**：换入 → 清标记 → 排重启途中 ssh 断连仍会把重启排上。
