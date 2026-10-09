@@ -1370,7 +1370,10 @@ function renderManage(sec){sec.innerHTML=`
       const right=el('span',{style:'display:flex;gap:.4em;align-items:center'});
       if(m.installed){
         const t=btn(m.running?T('manage.modules.turnOff'):T('manage.modules.turnOn'),async()=>{await modAct(m.seg,m.running?'stop':'start',true);setTimeout(refresh,600)});
-        const u=btn(T('manage.modules.uninstallBtn'),async()=>{if(await confirmDialog(T('manage.modules.confirmUninstall',{label}))){if((await modAct(m.seg,'uninstall',true)).ok!==false)toast(T('manage.modules.uninstalled',{label}),'ok');setTimeout(()=>location.reload(),800)}});
+        // 成功才整页重载（tab 集合变了）；失败时 sendT 已弹出原因，此前照样 0.8 秒后重载，原因一闪就没了。
+        const u=btn(T('manage.modules.uninstallBtn'),async()=>{if(!await confirmDialog(T('manage.modules.confirmUninstall',{label})))return;
+          if((await modAct(m.seg,'uninstall',true)).ok===false){refresh();return}
+          toast(T('manage.modules.uninstalled',{label}),'ok');setTimeout(()=>location.reload(),800)});
         right.append(t,u);
       }else right.appendChild(el('span',{class:'small',html:T('manage.modules.installCmd',{only:esc(m.only)})}));
       ul.appendChild(el('li',{style:'flex-wrap:wrap'},[left,right]))});
