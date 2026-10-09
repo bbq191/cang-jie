@@ -158,6 +158,9 @@ out.dialogs = await page.evaluate(async () => {
   p = promptDialog('x', 'abc'); document.querySelector('.confirm-overlay').click(); r.push(await p);
   key('Enter'); // 已关闭的对话框不该再响应
   r.push(document.querySelectorAll('.confirm-overlay').length);
+  // 焦点在「否」按钮上按 Enter：交给按钮（= 否），不能被文档级 Enter 当成"是"
+  p = confirmDialog('x'); const no = document.querySelector('.confirm-actions .btn:not(.pri)'); no.focus();
+  no.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true})); no.click(); r.push(await p);
   return r;
 });
 // 笔记 tab：正在输入框里打字时 SSE 事件不重画（光标不丢），失焦后补一次；事件刷新不重查「导入 md」开关
@@ -213,7 +216,7 @@ assert.ok(out.listText.includes('<img src=x'), '文件名应作为文本显示')
 assert.ok(out.afterBurst >= 1 && out.afterBurst <= 2, `事件突发应合并，实际 ${out.afterBurst} 次`);
 assert.equal(out.burstFolders, 0, 'book-serve 的 staging 事件只重取母版库列表与排队状态，不重取 xochitl 文件夹列表');
 assert.equal(out.koreaderHits, 0, 'KOReader 已卸载：网页不该再请求 /api/koreader/*');
-assert.deepEqual(out.dialogs, [true, false, 'abc', null, 0], '对话框行为');
+assert.deepEqual(out.dialogs, [true, false, 'abc', null, 0, false], '对话框行为');
 assert.equal(out.noteTa, true, '笔记 tab 应渲染出条目文本框');
 assert.equal(out.noteWhileTyping, 0, '正在输入时事件不该触发重画');
 assert.equal(out.noteFocusKept, true, '输入框焦点不该被重画冲掉');

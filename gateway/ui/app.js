@@ -71,7 +71,9 @@ const modal=(cancelValue,build,onKey)=>new Promise(resolve=>{
   const close=v=>{document.removeEventListener('keydown',key);overlay.remove();resolve(v)};
   const {nodes,focus}=build(close);
   const overlay=el('div',{class:'confirm-overlay'},[el('div',{class:'confirm-box'},nodes)]);
-  const key=e=>{if(e.key==='Escape')close(cancelValue);else if(onKey)onKey(e,close)};
+  // 焦点在对话框里的某个按钮上时，Enter 交给那个按钮自己（浏览器把它当点击）：此前 Tab 到「否」再按 Enter，
+  // 文档级的 Enter=确认 先触发，删除之类的操作就被当成"是"执行了。
+  const key=e=>{if(e.key==='Escape')close(cancelValue);else if(e.key==='Enter'&&e.target.tagName==='BUTTON')return;else if(onKey)onKey(e,close)};
   overlay.onclick=e=>{if(e.target===overlay)close(cancelValue)};
   document.addEventListener('keydown',key);
   document.body.appendChild(overlay);
@@ -471,8 +473,8 @@ function renderTransfer(sec){sec.innerHTML=`
    `seg`（2026-10-09 起；此前网页为它另取一次 /api/manage），见下面 init() 里的 AREA 变量：手搓的映射会跟 MODULES 改名/新增
    悄悄脱节，SSE 事件的 area 就对不上、对应 tab 的事件驱动刷新会静默失效。 */
 const TABS={
- 'note-serve':{titleKey:'tab.notes',title:'笔记',render:renderNotes},
- 'font-serve':{render(sec){renderFonts(sec)}},
+ 'note-serve':{titleKey:'tab.notes',render:renderNotes},
+ 'font-serve':{render:renderFonts},
  'wallpaper-serve':{render(sec){assetTab(sec,'/api/wallpapers',{
    hint:T('wallpaper.hint'),
    header:`<label class="field">${T('wallpaper.rotateLabel')}</label><div class="row"><select id="wpmode" style="max-width:12em"><option value="sequential">${T('wallpaper.mode.sequential')}</option><option value="random">${T('wallpaper.mode.random')}</option><option value="fixed">${T('wallpaper.mode.fixed')}</option></select><span id="wpst" class="small"></span></div>`,
@@ -1443,7 +1445,7 @@ function renderManage(sec){sec.innerHTML=`
       if(!rendered){rendered=true;render(sec)}else if(sec.refresh)refreshSec(sec)};
     nav.appendChild(b);main.appendChild(sec);if(first)b.onclick();return sec};
   addTab(T('tab.transfer'),renderTransfer,true,'books');          // 总入口（入库｜母版库），固定第一位（book-serve 不在时列表里提示去管理页开）
-  noteSvc.forEach((s)=>addTab(TABS[s.name].titleKey?T(TABS[s.name].titleKey):TABS[s.name].title,TABS[s.name].render,false,AREA[s.name]||s.name));
+  noteSvc.forEach((s)=>addTab(T(TABS[s.name].titleKey),TABS[s.name].render,false,AREA[s.name]||s.name));
   if(otherSvcs.length){
     const otherSec=addTab(T('tab.other'),(sec)=>renderOther(sec,otherSvcs,n=>AREA[n]||n),false,'other');
     // fonts/wallpapers 的 SSE 事件都指向同一个「其他」section，由它的 onEvent 只刷发事件的那块子面板
