@@ -5,6 +5,8 @@ const $=(s,r=document)=>r.querySelector(s);
    textContent/el({text}) 天然安全，不需要它。 */
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmtB=n=>n>1048576?(n/1048576).toFixed(1)+' MB':n>1024?(n/1024).toFixed(0)+' KB':n+' B';
+// 母版库剩余空间告急：优先用 book-serve 给的 lowSpace（阈值由后端定）；旧版 book-serve 没有这个字段时退回前端按 300MB 判。
+const stagingLowSpace=d=>typeof d.lowSpace==='boolean'?d.lowSpace:d.freeBytes!=null&&d.freeBytes<300*1048576;
 // 小徽章：renderManage 的「基石与模块」列表用。
 const badge=(t,ok)=>`<span class="badge ${ok?'on':'off'}">${t}</span>`;
 // 「已加载/未加载」徽章（xovi 有没有进 xochitl）：管理页基石、设备健康的概览与扩展三处共用。
@@ -462,7 +464,7 @@ function renderTransfer(sec){sec.innerHTML=`
     items=d.items||[];const tot=items.reduce((a,b)=>a+b.bytes,0);g('stgcap').textContent=items.length?T('transfer.staging.capSummary',{count:items.length,size:fmtB(tot)}):'';
     // 清掉选中集合里的幽灵条目（书被改名/删除后旧名字再也选不中也取消不掉）
     const names=new Set(items.map(it=>it.name));for(const n of [...picked])if(!names.has(n))picked.delete(n);
-    const fr=d.freeBytes;const low=fr!=null&&fr<300*1048576;g('stgfree').style.color=low?'var(--bad)':'';g('stgfree').textContent=fr!=null?T('transfer.staging.freeSpace',{free:fmtB(fr),lowWarn:low?T('transfer.staging.lowWarn'):''}):'';
+    const fr=d.freeBytes;const low=stagingLowSpace(d);g('stgfree').style.color=low?'var(--bad)':'';g('stgfree').textContent=fr!=null?T('transfer.staging.freeSpace',{free:fmtB(fr),lowWarn:low?T('transfer.staging.lowWarn'):''}):'';
     g('stgnames').innerHTML=stgNameOptions(items);render()});
   const refreshAt=lvl=>{need=Math.max(need,lvl);return run()};
   uploader($('.up',sec),'/api/books/staging',BOOK_EXT,()=>refresh(),'/api/books/staging');   // 书籍格式原样入库；选中即按 BOOK_EXT 拦；传 dedupeApi 防重传出重复
