@@ -62,8 +62,8 @@ The scripts build the programs on your computer and install them on the device o
 2. **Install the 2 device prerequisites by hand, in order** (xovi → qt-resource-rebuilder). To make them take effect, reboot the whole device (`reboot`) rather than `systemctl restart xochitl` (see issue ③).
 3. **Rehearse first** (runs only on your computer, never touches the device):
    ```sh
-   git clone https://github.com/bbq191/rm-tweak.git
-   cd rm-tweak/packaging
+   git clone https://github.com/bbq191/cang-jie.git
+   cd cang-jie/packaging
    sh install-all.sh --dry-run          # prints which steps would run; add --skip to preview a partial install
    ```
    The rehearsal does **not** check the firmware or the device; it only proves your command line is right.

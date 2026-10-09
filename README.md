@@ -9,9 +9,8 @@ reMarkable Paper Pro Move 的设备增强套件。**不修改 xochitl**（设备
 > **这一页讲**：能做什么、怎么装和卸、细节去哪看。
 > 想 10 分钟看懂全貌，读 [`docs/OVERVIEW.md`](docs/OVERVIEW.md)；想知道最近改了什么，读 [`docs/CHANGELOG.md`](docs/CHANGELOG.md)。
 >
-> 这是带完整开发历史的**私有**仓库。对外分享的是精简的公开发行版 [`rm-tweak`](https://github.com/bbq191/rm-tweak)
-> （没有开发历史，Apache-2.0）。最近一次同步是 2026-09-30（tag `v2026.09.30`）：有 shelf / notes / enhance / gateway / rmsvc-core / packaging
-> （含 `install-all.sh` 和 `verify-on-device.sh`），没有 `defw/`。
+> 本仓库 2026-10-09 起公开（Apache-2.0）。早先的公开版 [`rm-tweak`](https://github.com/bbq191/rm-tweak) 是从这里导出的无历史快照，
+> 最后一次同步是 2026-09-30，现已归档，以后只在这里更新。
 
 ## 能做什么
 
@@ -38,8 +37,8 @@ reMarkable Paper Pro Move 的设备增强套件。**不修改 xochitl**（设备
 2. 电脑上要有 Rust 交叉编译环境，并能免密 ssh 到设备的 root（清单见 [INSTALL.md「装之前」](docs/INSTALL.md#装之前)）。用 USB 线连上设备，然后：
 
    ```sh
-   git clone https://github.com/bbq191/rm-tweak.git
-   cd rm-tweak/packaging
+   git clone https://github.com/bbq191/cang-jie.git
+   cd cang-jie/packaging
    sh install-all.sh --dry-run        # 先预演：只打印计划，不连设备
    sh install-all.sh 10.11.99.1
    ```
@@ -78,6 +77,8 @@ reMarkable Paper Pro Move 的设备增强套件。**不修改 xochitl**（设备
 
 ## 协议 / 免责
 
-个人自用项目，不对外分发预编译产物。涉及第三方许可证的地方（词典数据、字体等）以代码注释里的实测记录为准，
-不构成法律意见。与 reMarkable、[xovi](https://github.com/asivery/xovi)、vellum、KOReader 等第三方项目或商标没有
-从属关系。
+本仓库代码以 **[Apache License 2.0](LICENSE)** 开源，可自由使用、修改、分发（含商用），需保留版权声明；
+协议本身附带专利授权条款。原本作为个人自用工具开发，源码按现状（as-is）提供，不附带任何担保。
+
+涉及第三方许可证的地方（词典数据、字体等）以代码注释里的实测记录为准，不构成法律意见。与 reMarkable、
+[xovi](https://github.com/asivery/xovi)、vellum、KOReader 等第三方项目或商标没有从属关系。

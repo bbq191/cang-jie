@@ -60,8 +60,8 @@
 2. **按顺序手动装好设备上那 2 样**（xovi → qt-resource-rebuilder）。装完要让它们生效，直接整机重启设备（`reboot`），别 `systemctl restart xochitl`（见问题③）。
 3. **先预演**（只在电脑上跑，不连设备）：
    ```sh
-   git clone https://github.com/bbq191/rm-tweak.git
-   cd rm-tweak/packaging
+   git clone https://github.com/bbq191/cang-jie.git
+   cd cang-jie/packaging
    sh install-all.sh --dry-run          # 只打印将执行哪些步骤；可以加 --skip 看跳过后的样子
    ```
    预演**不**核对固件、**不**检查设备，只证明命令行写对了。
