@@ -12,7 +12,8 @@
 use crate::netinfo::{ipv4_ifaces, Iface};
 use socket2::{Domain, Protocol, Socket, Type};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
+use crate::sys::poll_readable;
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::time::Duration;
 
 const GROUP: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 251);
@@ -100,18 +101,6 @@ impl AddrWatch {
             }
         }
     }
-}
-
-/// `poll` 一组描述符的"可读"位；`timeout_ms` 为 -1 表示无限等。`EINTR` 返回全 false（调用方重进循环即可）。
-fn poll_readable(fds: &[RawFd], timeout_ms: i32) -> Vec<bool> {
-    let mut pfds: Vec<libc::pollfd> = fds.iter().map(|&fd| libc::pollfd { fd, events: libc::POLLIN, revents: 0 }).collect();
-    // SAFETY: pfds 是长度如实的可写 pollfd 数组。
-    let rc = unsafe { libc::poll(pfds.as_mut_ptr(), pfds.len() as libc::nfds_t, timeout_ms) };
-    if rc <= 0 {
-        return vec![false; fds.len()];
-    }
-    // POLLERR/POLLHUP 也当"可读"交给读调用去取错误，别让它空转。
-    pfds.iter().map(|p| p.revents & (libc::POLLIN | libc::POLLERR | libc::POLLHUP) != 0).collect()
 }
 
 /// 一次重扫后更新已加入多播组的地址表：已经不在本机的地址先移出（地址删了又回来——WiFi 断开重连拿到同一个
@@ -233,7 +222,7 @@ pub fn serve(names: Vec<String>) -> Result<(), String> {
         }
         if let Some(w) = &watch {
             // 两个描述符一起无限期等：空闲时不醒。地址变化先处理（重扫在前），同一轮里到的查询就能按新地址答。
-            let ready = poll_readable(&[sock.as_raw_fd(), w.fd.as_raw_fd()], -1);
+            let ready = poll_readable(&[sock.as_raw_fd(), w.fd.as_raw_fd()], None);
             if ready[1] && w.drain() {
                 rescan(&mut ifaces, &mut joined);
                 last_scan = Some(std::time::Instant::now());
@@ -398,7 +387,7 @@ mod tests {
         };
         let t = std::time::Instant::now();
         let _ = w.drain();
-        let ready = poll_readable(&[w.fd.as_raw_fd()], 10);
+        let ready = poll_readable(&[w.fd.as_raw_fd()], Some(Duration::from_millis(10)));
         assert_eq!(ready.len(), 1);
         assert!(t.elapsed() < Duration::from_secs(5), "drain/poll 不该阻塞");
     }
@@ -413,11 +402,11 @@ mod tests {
         w.drain();
         let ip = |args: &[&str]| assert!(std::process::Command::new("ip").args(args).status().unwrap().success(), "ip {args:?}");
         ip(&["addr", "add", "10.254.0.1/24", "dev", "lo"]);
-        assert!(poll_readable(&[w.fd.as_raw_fd()], 2000)[0], "加地址后 netlink 应可读");
+        assert!(poll_readable(&[w.fd.as_raw_fd()], Some(Duration::from_millis(2000)))[0], "加地址后 netlink 应可读");
         assert!(w.drain(), "RTM_NEWADDR 应被识别");
         ip(&["addr", "del", "10.254.0.1/24", "dev", "lo"]);
-        assert!(poll_readable(&[w.fd.as_raw_fd()], 2000)[0]);
+        assert!(poll_readable(&[w.fd.as_raw_fd()], Some(Duration::from_millis(2000)))[0]);
         assert!(w.drain(), "RTM_DELADDR 应被识别");
-        assert!(!poll_readable(&[w.fd.as_raw_fd()], 50)[0], "没有变化时不该醒");
+        assert!(!poll_readable(&[w.fd.as_raw_fd()], Some(Duration::from_millis(50)))[0], "没有变化时不该醒");
     }
 }
