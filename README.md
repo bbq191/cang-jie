@@ -18,7 +18,7 @@ reMarkable Paper Pro Move 的设备增强套件。**不修改 xochitl**（设备
 |---|---|---|
 | 把书弄进设备自带的阅读器 xochitl | 书先在电脑上用 [sheng-ren](https://github.com/bbq191/sheng-ren)（booklib，`xochitl` 阅读模式）优化好，再在网页上传（或 scp 进 inbox）进"母版库"，勾选「加入 xochitl」。书架原样投书、不再改书（2026-10-07 起）。超过 xochitl 约 100MB 上传上限的大书也能整本进（最大 1GB）；sheng-ren 优化的漫画可自动把页边距设到最小；母版库里的书可以下载原件、改名 | [`shelf/`](shelf/README.md) |
 | 把荧光笔勾画和旁边的手写批注变成能整理的笔记 | 合上书自动收进条目库。在手机网页上校对手写转写、全文搜索、选 AI 模型提问，再投回设备笔记本（标题、列表、复选框用设备自带样式）或导出 Obsidian markdown | [`notes/`](notes/README.md) |
-| 系统层面的小改进 | 荧光笔划中文"划哪吸哪"、xochitl 阅读器单击翻页（日漫翻页规则 2026-10-07 删除）、字体和壁纸上传即用（手写笔画粗细优化、电池耗电诊断「电池刺客」2026-09-30 已移除） | [`enhance/`](enhance/README.md) |
+| 系统层面的小改进 | 荧光笔划中文"划哪吸哪"；xochitl 阅读器单击翻页；xochitl 界面字体（书库、设置、对话框换成你选的字体，阅读字体不变）；阅读字体和休眠壁纸上传即用。已移除：手写笔画优化、耗电诊断「电池刺客」（2026-09-30）、日漫翻页规则（2026-10-07） | [`enhance/`](enhance/README.md) |
 | 在手机或电脑上统一操作以上功能 | 一个 HTTPS 网页入口，带登录密码，把请求转给各个服务；另有「设备健康」页和固件升级后的重装提示 | [`gateway/`](gateway/README.md) |
 | 新设备一条命令装完 | 带固件兼容性校验，装完自动整机重启一次并只读核对设备；也能一条命令卸载 | [`packaging/`](packaging/README.md) |
 
@@ -48,6 +48,8 @@ reMarkable Paper Pro Move 的设备增强套件。**不修改 xochitl**（设备
 以前装过、要更新：直接重跑 `sh install-all.sh 10.11.99.1`，内容没变就不重启；已移除的组件（电池刺客、手写优化）会顺手清掉。
 
 卸载：`sh uninstall-all.sh 10.11.99.1`。前置条件、风险、固件升级（OTA）后怎么恢复，全部在 **[docs/INSTALL.md](docs/INSTALL.md)**。
+
+**改代码的人**：每次 push / PR，GitHub Actions 会自动跑 shellcheck、安装脚本的沙箱模拟测试、各 Rust crate 的 `cargo test` 和 aarch64 交叉编译（配置在 `.github/workflows/ci.yml`）。它只证明代码在电脑上行为正确，**改变设备行为的改动仍要在真机上验证**。
 
 ## 文档导航
 
