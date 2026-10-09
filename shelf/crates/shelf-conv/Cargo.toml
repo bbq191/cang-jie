@@ -6,6 +6,8 @@ license.workspace = true
 description = "书架投递 xochitl 用的读书工具：读 EPUB 的书名/封面/漫画页边距标记、第三方 PDF 页数、大文件占位文档、书名规范化；书本身的优化一律在电脑上用 sheng-ren 做"
 
 [dependencies]
+# EPUB 容器/OPF 只读解析，与笔记线 epubmap 共用（不依赖 rmsvc-core 本体，只多一个 path crate）
+epubpkg = { path = "../../../rmsvc-core/epubpkg" }
 regex = "1"
 # 只用 flate2 的 deflate（zip 的 "deflate" 特性还会带上用不到的 zopfli）
 zip = { version = "2", default-features = false, features = ["deflate-flate2", "flate2"] }
