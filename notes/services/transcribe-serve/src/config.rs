@@ -123,7 +123,7 @@ impl TranscribeConfig {
     }
     /// 套用 PUT /config 的 JSON：可改字段逐个覆盖；`apiKey` 非空才改（存到当前厂商名下）；
     /// `clearKey:true` 清当前厂商那把。`preset` 切换预置（未知预置名拒绝）；`preset:"custom"` 时
-    /// `model`/`baseUrl` 才生效，写进 `customModel`/`customBaseUrl`。`price:{input,output}` 存到当前
+    /// `model`/`baseUrl` 才生效，写进 `customModel`/`customBaseUrl`。`price:{inputPer1k,outputPer1k}`（老写法 `price:{input,output}` 也认）存到当前
     /// 预置名下。共享部分见 `vendorcfg::apply_common`，这里只补这条服务独有的字段
     /// （`backend`/节流四件套/`prompt`）。
     pub fn apply(&mut self, j: &JsonBody) -> Result<(), String> {
@@ -131,7 +131,7 @@ impl TranscribeConfig {
         if !backend.is_empty() {
             self.backend = backend.to_string();
         }
-        vendorcfg::apply_common(PRESETS, &j.0, &mut self.preset, &mut self.custom_model, &mut self.custom_base_url, &mut self.keys, &mut self.prices)?;
+        vendorcfg::apply_common(PRESETS, j, &mut self.preset, &mut self.custom_model, &mut self.custom_base_url, &mut self.keys, &mut self.prices)?;
         if let Some(v) = j.opt_u64("timeoutSecs") { self.timeout_secs = v.clamp(5, 600); }
         if let Some(v) = j.opt_u64("maxPerRun") { self.max_per_run = (v as usize).clamp(1, 500); }
         if let Some(v) = j.opt_u64("pauseMs") { self.pause_ms = v.min(60_000); }

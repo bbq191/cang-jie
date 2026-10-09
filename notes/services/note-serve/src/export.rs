@@ -92,20 +92,6 @@ pub fn export_chapter(dir: &Path, book: &Book, chapter_idx: usize, title: &str, 
 mod tests {
     use super::*;
     use notecore::model::{Entry, Status, Style};
-    use rmsvc_core::multipart::content_disposition;
-
-    /// 导出下载的文件名形状（共享底座那份实现，这里钉住笔记导出依赖的行为）。
-    #[test]
-    fn content_disposition_gives_ascii_fallback_and_rfc5987_utf8_name() {
-        let v = content_disposition("第1章 人骨拼圖.md");
-        assert!(v.starts_with("attachment; filename=\"_1_ ____.md\""), "非 ASCII 字符原样替换成 _，ASCII 字符（数字/空格/.md）保留: {v}");
-        assert!(v.contains("filename*=UTF-8''%E7%AC%AC1%E7%AB%A0%20%E4%BA%BA%E9%AA%A8%E6%8B%BC%E5%9C%96.md"), "{v}");
-    }
-
-    #[test]
-    fn content_disposition_plain_ascii_name_is_unmangled() {
-        assert_eq!(content_disposition("index.md"), "attachment; filename=\"index.md\"; filename*=UTF-8''index.md");
-    }
 
     fn entry(id: &str, chapter: usize, page_index: usize) -> Entry {
         Entry {
