@@ -1,0 +1,13 @@
+[package]
+name = "epubpkg"
+version = "0.1.0"
+edition = "2021"
+description = "EPUB 容器/OPF 的最小只读解析：container.xml → OPF 路径、manifest/spine/Dublin Core、href 解码（XML 实体 + 百分号）与 zip 内相对路径解析，条目解压有上限。笔记线 epubmap 与书架 shelf-conv 共用；放在 rmsvc-core 目录下但不依赖 rmsvc-core（不想让纯解析库连带编进 HTTP/TLS 那一整套）。"
+license = "MIT"
+
+[dependencies]
+regex = "1"
+# 只用 flate2 的 deflate（zip 的 "deflate" 特性还会带上用不到的 zopfli）；消费方自己开了别的特性，cargo 会合并
+zip = { version = "2", default-features = false, features = ["deflate-flate2", "flate2"] }
+# zip 的 "deflate-flate2" 不替 flate2 选后端（flate2 1.1 起不选就编不过）；纯 Rust 的 miniz_oxide 后端，与消费方依赖树里已有的同一份
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
