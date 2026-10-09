@@ -29,7 +29,7 @@
   <text x="40" y="332" font-size="12" fill="#6b7280">清洗/脚注/图片/漫画/PDF 转换（2026-10-07 已删）</text>
   <line x1="346" y1="316" x2="540" y2="316" stroke="#9ca3af" stroke-width="2" marker-end="url(#ar)"/>
   <rect x="546" y="288" width="410" height="56" rx="8" fill="#ede9fe" stroke="#7c3aed"/>
-  <text x="562" y="312" font-size="14" font-weight="bold" fill="#5b21b6">git 历史 + 书架白皮书第 B 章</text>
+  <text x="562" y="312" font-size="14" font-weight="bold" fill="#5b21b6">git 历史 + 书架白皮书历史附录</text>
   <text x="562" y="332" font-size="12.5" fill="#4c1d95">两份旧优化白皮书 10-07 已删，原文在 git 历史里</text>
   <rect x="24" y="356" width="320" height="56" rx="8" fill="#f3f4f6" stroke="#d1d5db"/>
   <text x="40" y="380" font-size="13" fill="#1f2937">现在整体什么状态？为什么这么定？</text>

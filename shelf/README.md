@@ -117,6 +117,7 @@ ssh root@10.11.99.1 '~/.local/bin/shelf-uninstall' [--only font] [--purge]
 | [`docs/传书EPUB线架构.md`](docs/传书EPUB线架构.md) | **传书线架构（现状）**：书在各服务间怎么流动、母版库状态、落库通道、内存设计、并发与锁、全部 API 与配置 |
 | sheng-ren 仓库 `docs/typesetting.md`、`docs/xochitl.md` | **书该被优化成什么样**：排版、注释、目录、漫画规则；xochitl 阅读器的实测踩坑（只认外链 CSS、书内跳转、目录查找等） |
 | [`docs/reMarkable书架白皮书.md`](docs/reMarkable书架白皮书.md) | **给新读者导读 + 现状总览 + 真机历史与坑**：各章"现状结论"、决策来由、事故与教训、待办、已砍能力（含 2026-10-07 删除的设备端优化） |
+| [`docs/reMarkable书架白皮书-历史附录.md`](docs/reMarkable书架白皮书-历史附录.md) | **已移除能力的历史细节**：设备端优化（原第 B 章）、入库 PDF 转换、KOReader 时期、漫画旧通道、第五轮审计清单；§ 编号与主白皮书一致 |
 | [`../rmsvc-core/README.md`](../rmsvc-core/README.md) | 书架、笔记、系统增强、网关共用的 Web 服务底座（路径、注册、HTTP、上传、往 xochitl 投书） |
 
 本仓库原有的《EPUB 优化规范白皮书》《bookconv 优化白皮书》2026-10-07 删除（规则在 sheng-ren）；要看原文，用 `git log --oneline -- shelf/docs/EPUB优化规范白皮书.md` 找到删除它的提交，再 `git show <该提交>^:shelf/docs/EPUB优化规范白皮书.md`。
