@@ -34,6 +34,18 @@ pub fn run(spec: &ServiceSpec, bind: &str, paths: &Paths, router: Router) -> Res
     run_with(spec, bind, paths, router, ServeOpts::default())
 }
 
+/// 各服务 `main` 的收尾：跑服务，失败打一行 `[<服务名>] <原因>` 并以退出码 1 结束（交给 systemd `Restart=on-failure`）。
+/// 此前 8 个服务 main 各写一遍 `if let Err(e) = service::run(..) { eprintln!(..); exit(1) }`。
+pub fn run_or_exit(spec: &ServiceSpec, bind: &str, paths: &Paths, router: Router, opts: ServeOpts) -> ! {
+    match run_with(spec, bind, paths, router, opts) {
+        Ok(()) => std::process::exit(0),
+        Err(e) => {
+            eprintln!("[{}] {e}", spec.name);
+            std::process::exit(1)
+        }
+    }
+}
+
 pub fn run_with(spec: &ServiceSpec, bind: &str, paths: &Paths, router: Router, opts: ServeOpts) -> Result<(), String> {
     paths.ensure().map_err(|e| format!("建目录失败: {e}"))?;
     let info = ServiceInfo {
