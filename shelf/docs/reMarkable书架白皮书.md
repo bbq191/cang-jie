@@ -502,7 +502,7 @@
 
 **统一命名规则**（当年在 `bookconv::naming`；现在是 `shelf_conv::naming` 的 `canonical_book_name` / `canonical_file_name`，从 sheng-ren 复制，幂等）：`卷02`/`第二卷`/`Vol.3` → `02卷`/`二卷`/`3卷`；`镖人(卷二)` → `镖人 - 二卷`；上/中/下原样；下载站尾巴去掉；无卷标记原样保留。带卷标记的书当时优化时把 OPF `dc:title` 也改成规范名；10-07 起书架不改书，只有大文件通道的占位仍用规范名。〔10-07 稍后：`canonical_book_name` 连同测试复制进 `shelf_conv::naming`、不再调 sheng-ren；占位显示名也一律改用书里的 `dc:title`（删 `has_volume_marker`），§03bx，未部署。〕
 
-### 03ca｜原地替换后找回阅读位置：book-serve 拍快照 + `shelf-keep-progress.qmd` 让 xochitl 自己跳页（2026-10-09，**未部署、未在真机验证**）
+### 03ca｜原地替换后找回阅读位置：book-serve 拍快照 + `shelf-keep-progress.qmd` 让 xochitl 自己跳页（2026-10-09，**已部署，真机验证一次通过**）
 
 **问题**：sheng-ren 经 `POST /import?uuid=` 原地替换一本在读的 EPUB（传书线架构「直接导入」）：删 `<uuid>.pdf`、`<uuid>.epubindex`，换上新 `<uuid>.epub`，xochitl 下次打开整本重排。`.metadata` 的 `lastOpenedPage` 还是旧排版的页号；xochitl 自己在 `document.onPageCountChanged` 里按"旧页 / (旧总页数 − 1)"比例估一页，目录到达时 `chapterPositionTracker.restore` 再按章节相对位置修一次——但 tracker 在关书时就 `reset()` 了，替换后重开用不上，只剩比例估页，书改动大（加了注释、换了排版）时偏很远。外部改 `.metadata`/`.content` 会被运行中的 xochitl 盖回去（同漫画页边距的结论，传书线架构 §3），只能让 xochitl 自己跳页。
 
@@ -527,6 +527,8 @@
 **已知限制**：粒度是"文件内比例"，同一文件里内容增删多时偏几页；书里插过笔记页时页序换算靠 `.content` 页表，重排后 xochitl 怎么安置这些笔记页没核实过；快照时刻与文件修改时间比较依赖设备时钟不倒退。
 
 **离线验证**：book-serve 单测用真机《人骨拼圖》的 `.epubindex`（39 个文件、523 页）造前后两份，覆盖 v1/v2 页表换算、同文件比例、改名兜底、最后一个文件、202/200/404、再次替换、30 天清理、快照写不进去时替换照常。开发机实跑：book-serve 113 个测试（新增 12）、shelf-conv 25、epubpkg 11、rmsvc-core 133（另 1 个 ignored）、笔记线 workspace 通过，clippy 0 告警；安装脚本模拟测试 371 项通过、shellcheck 0 告警。qmd 按系统增强线白皮书 §04 的办法：本机编 `asivery/qmldiff`，把 .172 解出的 DocumentView / DeviceSceneView / SceneViewGestures 放到 hashtab 里的真实资源路径，与 `shelf-comic-margins.qmd`、`reader-page-turn.qmd` 一起 `apply-diffs`：三份补丁在 DocumentView 都应用（3 diff），插入位置都在 `ChapterPositionTracker` 之后（依次是翻页、阅读位置、页边距），另两个文件输出与不加新补丁时逐字节相同；`qmllint` 无语法错误，告警 390→396，新增 6 条都是本机缺设备私有模块（`Document` 类型解析不了）一类，原文件里同类告警本来就有。
+
+**真机验证（10-09 16:00，《绍宋》）**：替换前 `lastOpenedPage` 14（屏幕第 15 页），快照记成 `Vol1-Chapter02.xhtml` 文件内 0.5；重新打开时新 `.epubindex` 在打开当场写出（16:03:00），约 2 秒后日志 `CJ-KEEP-PROGRESS: … -> 14`、快照销账，用户确认停在原来的位置；之后没有被 xochitl 自己的估页盖掉。`.content` 是 formatVersion 2，页对象带 `redir`。这次替换前后该章排版没变，"内容变了、页数变了"时的偏差还没测。下面 ①③ 已有答案，②④ 只看到这一次。
 
 **要真机确认**（§05 #26）：① 替换后第一次打开时新 `.epubindex` 什么时候写出来（排版完当场写，还是关书才写；后者的话 60 秒放弃会让功能基本不起作用，要改策略）；② xochitl 自己的比例估页 / 章节恢复会不会在我们跳完之后再把页盖掉（15 秒内的跳回是否够用）；③ 3.28 EPUB 的 `.content` 是 v1 还是 v2，v2 页对象带不带 `redir`；④ 新 `.content` 的 `pageCount` 是否与新 `.epubindex` 同时更新。
 
@@ -955,7 +957,7 @@ qmd 和 xovi 扩展只在 xochitl **启动时**注入，所以改了要让 xochi
 
 ### 05｜真机待办（滚动更新，2026-10-09 刷新）
 
-> 这里是书架线"还没在真机上看过"的唯一清单。#12、#17–#19、#22–#24 都**已部署、部署自检通过**，缺的是逐项功能手测；#25（10-09 第六轮审计）、#26（10-09 找回阅读位置）**还没部署**。2026-10-07 书架不再优化书后，凡是只针对设备端优化 / PDF 转换 / 抓网文的条目都作废（#1、#6、#11、#16、#20、#21，以及 #18、#19 里的相关几项），条目留着对得上号。
+> 这里是书架线"还没在真机上看过"的唯一清单。#12、#17–#19、#22–#24 都**已部署、部署自检通过**，缺的是逐项功能手测；#25（10-09 第六轮审计）、#26（10-09 找回阅读位置）10-09 已部署，#26 真机验证过一次（同章排版不变的情形）。2026-10-07 书架不再优化书后，凡是只针对设备端优化 / PDF 转换 / 抓网文的条目都作废（#1、#6、#11、#16、#20、#21，以及 #18、#19 里的相关几项），条目留着对得上号。
 
 | # | 事项 | 现状与缺口 | 见 |
 |---|---|---|---|
