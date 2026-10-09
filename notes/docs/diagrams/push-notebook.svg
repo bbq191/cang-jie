@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1160 700" width="1160" height="700" font-family="Noto Sans SC, Noto Sans CJK SC, sans-serif">
+<defs><marker id="mk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker><marker id="mr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b0451f"/></marker></defs>
+<rect x="0" y="0" width="1160" height="700" fill="#fbfbfa"/>
+<text x="580" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a" xml:space="preserve">「推送本章」怎么把一章写成设备笔记本（note-serve · 2026-10-09 现状）</text>
+<text x="580" y="52" text-anchor="middle" font-size="12.5" font-weight="normal" fill="#6a6a6a" xml:space="preserve">generate_chapter / upload_page；生成、md 导入、md 导出共用一把锁。「导入 md 文档」走同一条上传路（第 ③～⑥ 步），只是不经条目库、不写记录</text>
+<rect x="24" y="74" width="660" height="64" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
+<text x="38" y="96" text-anchor="start" font-size="12.5" font-weight="bold" fill="#1a1a1a" xml:space="preserve">① 算本章指纹</text>
+<text x="38" y="115" text-anchor="start" font-size="11.2" font-weight="normal" fill="#3a3a3a" xml:space="preserve">章名 + 各条目 id / 样式 / 小节名 / 文字 / 原文 / 回答</text>
+<text x="38" y="132" text-anchor="start" font-size="11.2" font-weight="normal" fill="#555" xml:space="preserve">和上次记录一样 → 返回“没变化”，不联网</text>
+<polyline points="354,138 354,146" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
+<rect x="24" y="146" width="660" height="64" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
+<text x="38" y="168" text-anchor="start" font-size="12.5" font-weight="bold" fill="#1a1a1a" xml:space="preserve">② 编码成一页 .rm，打包 .rmdoc</text>
+<text x="38" y="187" text-anchor="start" font-size="11.2" font-weight="normal" fill="#3a3a3a" xml:space="preserve">rmv6 只编 RootTextBlock，其余块套真机模板</text>
+<text x="38" y="204" text-anchor="start" font-size="11.2" font-weight="normal" fill="#2f7d45" xml:space="preserve">几 KB，全程在内存里（10-09 起不落临时文件）</text>
+<polyline points="354,210 354,218" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
+<rect x="24" y="218" width="660" height="64" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
+<text x="38" y="240" text-anchor="start" font-size="12.5" font-weight="bold" fill="#1a1a1a" xml:space="preserve">③ 找书所在的文件夹</text>
+<text x="38" y="259" text-anchor="start" font-size="11.2" font-weight="normal" fill="#3a3a3a" xml:space="preserve">读书本 .metadata 的 parent → 文件夹 uuid（空 = 书库根）</text>
+<text x="38" y="276" text-anchor="start" font-size="11.2" font-weight="normal" fill="#555" xml:space="preserve">名字：首次查重加后缀；重新生成沿用上次的名字</text>
+<polyline points="354,282 354,290" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
+<rect x="24" y="290" width="660" height="64" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
+<text x="38" y="312" text-anchor="start" font-size="12.5" font-weight="bold" fill="#1a1a1a" xml:space="preserve">④ 记下上传前已有的同名文档</text>
+<text x="38" y="331" text-anchor="start" font-size="11.2" font-weight="normal" fill="#3a3a3a" xml:space="preserve">书库里 visibleName 相同、创建时间在窗口内的</text>
+<text x="38" y="348" text-anchor="start" font-size="11.2" font-weight="normal" fill="#2f7d45" xml:space="preserve">认领时排除它们，不把旧文档错认成新的（10-09）</text>
+<polyline points="354,354 354,362" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
+<rect x="24" y="362" width="660" height="64" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
+<text x="38" y="384" text-anchor="start" font-size="12.5" font-weight="bold" fill="#1a1a1a" xml:space="preserve">⑤ upload_into(字节, 文件夹 uuid)</text>
+<text x="38" y="403" text-anchor="start" font-size="11.2" font-weight="normal" fill="#3a3a3a" xml:space="preserve">xochitl：GET /documents/&lt;uuid&gt; 设当前文件夹 → POST /upload</text>
+<text x="38" y="420" text-anchor="start" font-size="11.2" font-weight="normal" fill="#2f7d45" xml:space="preserve">设文件夹失败退回书库根（10-09）</text>
+<polyline points="354,426 354,434" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
+<rect x="24" y="434" width="660" height="64" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
+<text x="38" y="456" text-anchor="start" font-size="12.5" font-weight="bold" fill="#1a1a1a" xml:space="preserve">⑥ 认领设备新分配的 uuid</text>
+<text x="38" y="475" text-anchor="start" font-size="11.2" font-weight="normal" fill="#3a3a3a" xml:space="preserve">fswatch::wait_for 等书库目录变化，最多 5 秒</text>
+<text x="38" y="492" text-anchor="start" font-size="11.2" font-weight="normal" fill="#2f7d45" xml:space="preserve">xochitl 会重新分配 uuid，只能按名字 + 创建时间找回</text>
+<polyline points="354,498 354,506" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
+<rect x="24" y="506" width="660" height="64" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
+<text x="38" y="528" text-anchor="start" font-size="12.5" font-weight="bold" fill="#1a1a1a" xml:space="preserve">⑦ 旧版本送进回收站</text>
+<text x="38" y="547" text-anchor="start" font-size="11.2" font-weight="normal" fill="#3a3a3a" xml:space="preserve">交给 book-serve 回收站队列 → shelf-trash-agent.qmd</text>
+<text x="38" y="564" text-anchor="start" font-size="11.2" font-weight="normal" fill="#555" xml:space="preserve">运行中的 xochitl 会覆盖外部改的 parent，只能走这条路</text>
+<polyline points="354,570 354,578" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
+<rect x="24" y="578" width="660" height="64" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
+<text x="38" y="600" text-anchor="start" font-size="12.5" font-weight="bold" fill="#1a1a1a" xml:space="preserve">⑧ 写本章记录</text>
+<text x="38" y="619" text-anchor="start" font-size="11.2" font-weight="normal" fill="#3a3a3a" xml:space="preserve">notebooks/&lt;书 uuid&gt;.json：doc_uuid · 名字 · 指纹 · 时间</text>
+<text x="38" y="636" text-anchor="start" font-size="11.2" font-weight="normal" fill="#555" xml:space="preserve">任何一步失败都不写，下次照常重试</text>
+<rect x="710" y="74" width="426" height="282" rx="10" fill="#fdf1ec" stroke="#c0602d" stroke-width="1.6"/>
+<text x="724" y="98" text-anchor="start" font-size="13" font-weight="bold" fill="#b0451f" xml:space="preserve">2026-09-09 ～ 10-09 的 bug：笔记本一直落在书库根</text>
+<text x="724" y="124" text-anchor="start" font-size="11.5" font-weight="normal" fill="#3a3a3a" xml:space="preserve">09-09 改成“放进书本自己的文件夹”时：</text>
+<text x="724" y="146" text-anchor="start" font-size="11.5" font-weight="normal" fill="#3a3a3a" xml:space="preserve">· 第 ③ 步拿到的是文件夹 uuid</text>
+<text x="724" y="166" text-anchor="start" font-size="11.5" font-weight="normal" fill="#3a3a3a" xml:space="preserve">· 却交给了按文件夹“名字”找的 Xochitl::upload</text>
+<text x="724" y="186" text-anchor="start" font-size="11.5" font-weight="normal" fill="#3a3a3a" xml:space="preserve">· 按名字找不到 → 静默落到书库根，不报错</text>
+<text x="724" y="206" text-anchor="start" font-size="11.5" font-weight="normal" fill="#3a3a3a" xml:space="preserve">· 查重名却查的是书所在的文件夹（两边对不上）</text>
+<text x="724" y="234" text-anchor="start" font-size="11.5" font-weight="normal" fill="#3a3a3a" xml:space="preserve">文档原先把这一项记成“真机验证”，那次验证没能</text>
+<text x="724" y="254" text-anchor="start" font-size="11.5" font-weight="normal" fill="#3a3a3a" xml:space="preserve">暴露这个 bug（书本身在根目录时，落根看起来是对的）。</text>
+<text x="724" y="282" text-anchor="start" font-size="11.5" font-weight="normal" fill="#3a3a3a" xml:space="preserve">10-09 修：改走按 uuid 的 upload_into（第 ⑤ 步），</text>
+<text x="724" y="302" text-anchor="start" font-size="11.5" font-weight="normal" fill="#3a3a3a" xml:space="preserve">假 xochitl 回归测试钉住“文件夹 uuid 真的传下去”。</text>
+<text x="724" y="330" text-anchor="start" font-size="12" font-weight="bold" fill="#b0451f" xml:space="preserve">未部署、未在真机验证。</text>
+<polyline points="710,340 690,390" fill="none" stroke="#b0451f" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#mr)"/>
+<rect x="710" y="372" width="426" height="170" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
+<text x="724" y="396" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a" xml:space="preserve">第 ⑥ 步：认领怎么变的（10-09）</text>
+<text x="724" y="420" text-anchor="start" font-size="11.5" font-weight="normal" fill="#3a3a3a" xml:space="preserve">以前：固定每 1.5 秒查一次书库，最多 4 次</text>
+<text x="724" y="440" text-anchor="start" font-size="11.5" font-weight="normal" fill="#3a3a3a" xml:space="preserve">现在：先挂 inotify 监听再查；文件落盘就认领，</text>
+<text x="724" y="460" text-anchor="start" font-size="11.5" font-weight="normal" fill="#3a3a3a" xml:space="preserve">　　　空等时不定时醒；最多 5 秒</text>
+<text x="724" y="484" text-anchor="start" font-size="11.5" font-weight="normal" fill="#3a3a3a" xml:space="preserve">认不到：报错并提示“稍后重试”；设备上可能</text>
+<text x="724" y="504" text-anchor="start" font-size="11.5" font-weight="normal" fill="#3a3a3a" xml:space="preserve">留下一份没人追踪的同名文档（已知风险，看着</text>
+<text x="724" y="524" text-anchor="start" font-size="11.5" font-weight="normal" fill="#3a3a3a" xml:space="preserve">重复就手动删掉多的那份）</text>
+<rect x="710" y="558" width="426" height="118" rx="10" fill="#f1f1ef" stroke="#8a8a8a" stroke-width="1.6"/>
+<text x="724" y="582" text-anchor="start" font-size="12.5" font-weight="bold" fill="#1a1a1a" xml:space="preserve">图例</text>
+<rect x="724" y="592" width="18" height="12" rx="3" fill="#eaf6ec" stroke="#3f9a55"/>
+<text x="750" y="603" text-anchor="start" font-size="11.5" font-weight="normal" fill="#3a3a3a" xml:space="preserve">10-09 第六轮审计改过的步骤（未部署）</text>
+<text x="724" y="628" text-anchor="start" font-size="11.5" font-weight="normal" fill="#3a3a3a" xml:space="preserve">同一章被并发推送两次（双击、两个浏览器页）时，</text>
+<text x="724" y="648" text-anchor="start" font-size="11.5" font-weight="normal" fill="#3a3a3a" xml:space="preserve">锁让第二次看到第一次的记录、指纹相同 → 跳过，</text>
+<text x="724" y="668" text-anchor="start" font-size="11.5" font-weight="normal" fill="#3a3a3a" xml:space="preserve">不会各传一份、认领到同一个 uuid。</text>
+</svg>
