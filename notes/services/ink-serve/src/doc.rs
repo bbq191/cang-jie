@@ -5,16 +5,8 @@
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
-#[derive(Deserialize, Debug, Default, Clone, PartialEq)]
-#[serde(default)]
-pub struct Metadata {
-    #[serde(rename = "visibleName")]
-    pub visible_name: String,
-    #[serde(rename = "type")]
-    pub kind: String,
-    pub parent: String,
-    pub deleted: bool,
-}
+/// `.metadata` 的强类型视图与"活文档"判据用共享底座那份（书架/网关同一套）。
+pub use rmsvc_core::xochitl::Metadata;
 
 #[derive(Deserialize, Debug, Default, Clone, PartialEq)]
 #[serde(default)]
@@ -48,12 +40,6 @@ impl Content {
     }
 }
 
-impl Metadata {
-    pub fn is_live_document(&self) -> bool {
-        self.kind == "DocumentType" && self.parent != "trash" && !self.deleted
-    }
-}
-
 /// 一份文档的路径集合。
 pub struct Doc {
     pub uuid: String,
@@ -74,26 +60,14 @@ impl Doc {
     /// 或格式不认识）。摄取拿前者当"书没了"去撤销条目；后者只能跳过这次，不能当成书没了——此前两者都是 `None`，
     /// 一次读到半截的 `.metadata` 就会把整本书的活条目全标 `Revoked`（2026-09-25 第四轮审计）。
     pub fn read_metadata(&self) -> Result<Option<Metadata>, String> {
-        let p = self.side("metadata");
-        let text = match std::fs::read_to_string(&p) {
-            Ok(t) => t,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(e) => return Err(format!("读 {} 失败: {e}", p.display())),
-        };
-        serde_json::from_str(&text).map(Some).map_err(|e| format!("{} 解析失败（先跳过，下次再试）: {e}", p.display()))
+        rmsvc_core::xochitl::read_meta(&self.lib, &self.uuid).map_err(|e| format!("{e}（先跳过，下次再试）"))
     }
     pub fn content(&self) -> Option<Content> {
         serde_json::from_str(&std::fs::read_to_string(self.side("content")).ok()?).ok()
     }
-    /// 只取 `.content` 的 `fileType`（不把整张页 id 表解析成 `Vec<String>`）。
+    /// 只取 `.content` 的 `fileType`（流式，不把整张页 id 表解析成 `Vec<String>`）；缺这个字段 → `None`。
     pub fn file_type(&self) -> Option<String> {
-        #[derive(Deserialize)]
-        struct OnlyFileType {
-            #[serde(rename = "fileType", default)]
-            file_type: String,
-        }
-        let f = std::fs::File::open(self.side("content")).ok()?;
-        serde_json::from_reader::<_, OnlyFileType>(std::io::BufReader::new(f)).ok().map(|c| c.file_type)
+        rmsvc_core::xochitl::file_type(&self.lib, &self.uuid)
     }
     /// 打开 `.epub`（带缓冲、可 seek）：页→章只要目录那一两个 zip 条目，不整本读进内存。
     pub fn epub_file(&self) -> Option<std::io::BufReader<std::fs::File>> {
@@ -132,7 +106,7 @@ impl Doc {
 /// 从书库目录事件文件名里认出文档 uuid（`<uuid>.content` / `<uuid>.metadata` / `<uuid>`）。
 pub fn uuid_of_event(name: &str) -> Option<&str> {
     let stem = name.split('.').next()?;
-    (stem.len() == 36 && stem.chars().all(|c| c.is_ascii_hexdigit() || c == '-')).then_some(stem)
+    rmsvc_core::xochitl::is_uuid_shape(stem).then_some(stem)
 }
 
 #[cfg(test)]

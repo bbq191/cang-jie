@@ -33,7 +33,7 @@ use ink::{EntryStore, InkHttp};
 use notebooks::NotebookState;
 use publish::{generate_book, generate_chapter, ChapterResult, Ctx, Uploader, XochitlUploader};
 use rmsvc_core::events::EventBus;
-use rmsvc_core::http::{bind, ApiError, ApiResult, Reply, Request, Router};
+use rmsvc_core::http::{bind, ApiError, ApiResult, Reply, Request, Router, ServeOpts};
 use rmsvc_core::paths::Paths;
 use rmsvc_core::service::{self, ServiceSpec};
 use std::sync::Arc;
@@ -208,7 +208,7 @@ fn main() {
             let title = book.chapters.get(idx).ok_or_else(|| ApiError::bad("没有这一章"))?.clone();
             let md = notecore::export::export_chapter_md(&book, idx).ok_or_else(|| ApiError::not_found("本章没有可导出的内容"))?;
             let filename = format!("{}.md", notecore::export::chapter_stem(idx, &title));
-            Ok(Reply::bytes("text/markdown; charset=utf-8", md.into_bytes()).with_header("Content-Disposition", &export::content_disposition(&filename)))
+            Ok(Reply::bytes(rmsvc_core::formats::mime_of(&filename), md.into_bytes()).with_header("Content-Disposition", &rmsvc_core::multipart::content_disposition(&filename)))
         }))
         // 读回 `POST .../export` 已经落盘的 vault 目录内容（不触发导出，纯读——调用方该自己先 POST export 保证内容
         // 是最新的）。原调用方 host `shelf notes pull` 已砍，见 `export::manifest` 文档。
@@ -218,10 +218,7 @@ fn main() {
             Ok(Reply::ok(&m))
         }));
     println!("[note-serve] 状态 {}；xochitl {}", st.notebooks.dir().display(), st.cfg.xochitl_host);
-    if let Err(e) = service::run(&SPEC, &bind_addr, &paths, router) {
-        eprintln!("[note-serve] {e}");
-        std::process::exit(1);
-    }
+    service::run_or_exit(&SPEC, &bind_addr, &paths, router, ServeOpts::default())
 }
 
 #[cfg(test)]

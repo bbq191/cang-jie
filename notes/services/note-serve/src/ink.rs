@@ -14,6 +14,13 @@ pub struct BookBrief {
     pub title: String,
 }
 
+/// ink-serve `GET /books` 的应答外壳（`{"items": [...]}`）。
+#[derive(serde::Deserialize)]
+struct Items {
+    #[serde(default)]
+    items: Vec<BookBrief>,
+}
+
 pub trait EntryStore: Send + Sync {
     fn list_books(&self) -> Result<Vec<BookBrief>, String>;
     fn book(&self, uuid: &str) -> Result<Book, String>;
@@ -29,10 +36,9 @@ impl InkHttp {
 
 impl EntryStore for InkHttp {
     fn list_books(&self) -> Result<Vec<BookBrief>, String> {
-        let v = self.0.get_json("/books")?;
-        serde_json::from_value(v.get("items").cloned().unwrap_or_default()).map_err(|e| format!("books 形状不对: {e}"))
+        Ok(self.0.get_typed::<Items>("/books")?.items)
     }
     fn book(&self, uuid: &str) -> Result<Book, String> {
-        serde_json::from_value(self.0.get_json(&format!("/books/{}", enc(uuid)))?).map_err(|e| format!("book 形状不对: {e}"))
+        self.0.get_typed(&format!("/books/{}", enc(uuid)))
     }
 }

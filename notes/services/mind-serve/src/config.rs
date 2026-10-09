@@ -9,6 +9,7 @@
 //! **没有 `maxPerRun`/`pauseMs`/`auto`/`maxAttempts` 这些节流字段**——mind-serve 不跑批量循环，纯粹是
 //! "问一条答一条"，见 `worker.rs`/`main.rs` 文档。
 use serde::{Deserialize, Serialize};
+use rmsvc_core::http::JsonBody;
 use std::collections::BTreeMap;
 use vendorcfg::{Preset, Price, VendorConfig, DASHSCOPE, DEEPSEEK, GEMINI, OPENAI};
 
@@ -107,13 +108,14 @@ impl MindConfig {
         self
     }
     /// 套用 PUT /config 的 JSON（同 `transcribe-serve::config::apply` 的规则，少了节流字段）。
-    pub fn apply(&mut self, j: &serde_json::Value) -> Result<(), String> {
-        if let Some(v) = j.get("backend").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()) {
-            self.backend = v.to_string();
+    pub fn apply(&mut self, j: &JsonBody) -> Result<(), String> {
+        let backend = j.str_or("backend", "");
+        if !backend.is_empty() {
+            self.backend = backend.to_string();
         }
-        vendorcfg::apply_common(PRESETS, j, &mut self.preset, &mut self.custom_model, &mut self.custom_base_url, &mut self.keys, &mut self.prices)?;
-        if let Some(v) = j.get("timeoutSecs").and_then(|v| v.as_u64()) { self.timeout_secs = v.clamp(5, 600); }
-        if let Some(v) = j.get("prompt") {
+        vendorcfg::apply_common(PRESETS, &j.0, &mut self.preset, &mut self.custom_model, &mut self.custom_base_url, &mut self.keys, &mut self.prices)?;
+        if let Some(v) = j.opt_u64("timeoutSecs") { self.timeout_secs = v.clamp(5, 600); }
+        if let Some(v) = j.0.get("prompt") {
             self.prompt = v.as_str().unwrap_or("").trim().to_string();
         }
         Ok(())
@@ -144,22 +146,22 @@ mod tests {
     fn switching_provider_does_not_leak_other_providers_key() {
         let mut c = MindConfig::default();
         c.keys.insert("dashscope".into(), "ds-key".into());
-        c.apply(&serde_json::json!({"preset": "gpt-5.6-luna"})).unwrap();
+        c.apply(&JsonBody(serde_json::json!({"preset": "gpt-5.6-luna"}))).unwrap();
         assert_eq!(c.key(), None, "切到 OpenAI，还没存过它的 key");
-        c.apply(&serde_json::json!({"apiKey": "oa-key"})).unwrap();
+        c.apply(&JsonBody(serde_json::json!({"apiKey": "oa-key"}))).unwrap();
         assert_eq!(c.key(), Some("oa-key".into()));
-        c.apply(&serde_json::json!({"preset": "qwen-max"})).unwrap();
+        c.apply(&JsonBody(serde_json::json!({"preset": "qwen-max"}))).unwrap();
         assert_eq!(c.key(), Some("ds-key".into()), "切回 DashScope 系预置，之前存的 key 还在");
     }
 
     #[test]
     fn apply_updates_only_given_fields() {
         let mut c = MindConfig::default();
-        c.apply(&serde_json::json!({"apiKey": "k1", "model": "m2"})).unwrap();
+        c.apply(&JsonBody(serde_json::json!({"apiKey": "k1", "model": "m2"}))).unwrap();
         assert_eq!(c.key().as_deref(), Some("k1"), "preset 缺省不是 custom，model 字段不生效");
-        c.apply(&serde_json::json!({"apiKey": ""})).unwrap();
+        c.apply(&JsonBody(serde_json::json!({"apiKey": ""}))).unwrap();
         assert_eq!(c.key().as_deref(), Some("k1"), "空 apiKey 不改");
-        c.apply(&serde_json::json!({"clearKey": true})).unwrap();
+        c.apply(&JsonBody(serde_json::json!({"clearKey": true}))).unwrap();
         assert!(c.key().is_none());
         assert_eq!(c.timeout_secs, 60, "没给的字段不动");
     }
@@ -168,9 +170,9 @@ mod tests {
     fn preset_selection_sets_model_and_base_url_atomically_and_rejects_unknown() {
         let mut c = MindConfig::default();
         assert_eq!(c.preset, "qwen-plus", "缺省值就是第一个预置");
-        c.apply(&serde_json::json!({"preset": "qwen-max"})).unwrap();
+        c.apply(&JsonBody(serde_json::json!({"preset": "qwen-max"}))).unwrap();
         assert_eq!((c.model(), c.base_url()), ("qwen-max", "https://dashscope.aliyuncs.com/compatible-mode/v1"));
-        let err = c.apply(&serde_json::json!({"preset": "gpt-4o"})).unwrap_err();
+        let err = c.apply(&JsonBody(serde_json::json!({"preset": "gpt-4o"}))).unwrap_err();
         assert!(err.contains("未知的模型预置"), "{err}");
         assert_eq!(c.preset, "qwen-max", "拒绝后不改动");
     }
@@ -178,7 +180,7 @@ mod tests {
     #[test]
     fn custom_preset_leaves_model_and_base_url_to_the_old_manual_fields() {
         let mut c = MindConfig::default();
-        c.apply(&serde_json::json!({"preset": "custom", "model": "my-model", "baseUrl": "https://x.example/v1"})).unwrap();
+        c.apply(&JsonBody(serde_json::json!({"preset": "custom", "model": "my-model", "baseUrl": "https://x.example/v1"}))).unwrap();
         assert_eq!((c.model(), c.base_url()), ("my-model", "https://x.example/v1"));
     }
 
@@ -195,7 +197,7 @@ mod tests {
     fn price_is_user_entered_per_model_and_defaults_to_zero() {
         let mut c = MindConfig::default();
         assert_eq!(c.price(), Price::default());
-        c.apply(&serde_json::json!({"price": {"input": 0.02, "output": 0.06}})).unwrap();
+        c.apply(&JsonBody(serde_json::json!({"price": {"input": 0.02, "output": 0.06}}))).unwrap();
         assert_eq!(c.price(), Price { input_per1k: 0.02, output_per1k: 0.06 });
     }
 
@@ -221,7 +223,7 @@ mod tests {
         assert_eq!(c.preset, "custom", "qwen3-vl-plus 不在文字预置表里，还是落 custom");
         assert_eq!(c.provider(), "dashscope", "但 baseUrl 认出来是 DashScope，key 该存这一格");
         assert_eq!(c.key().as_deref(), Some("real-device-key"));
-        c.apply(&serde_json::json!({"preset": "qwen-plus"})).unwrap();
+        c.apply(&JsonBody(serde_json::json!({"preset": "qwen-plus"}))).unwrap();
         assert_eq!(c.key().as_deref(), Some("real-device-key"), "切到同厂商的真实预置，key 还在，不用重新粘贴");
     }
 

@@ -55,9 +55,7 @@ impl<T: Clone + Serialize + DeserializeOwned> ChapterStore<T> {
         let Ok(p) = self.path(book_uuid) else { return BookRecord::default() };
         let Ok(bytes) = std::fs::read(&p) else { return BookRecord::default() };
         serde_json::from_slice(&bytes).unwrap_or_else(|e| {
-            let bak = p.with_extension("json.corrupt");
-            if !bak.exists() {
-                let _ = std::fs::copy(&p, &bak);
+            if let Some(bak) = rmsvc_core::config::backup_corrupt(&p, None) {
                 eprintln!("[note-serve] {} 解析失败，按空记录处理（原内容另存 {}）: {e}", p.display(), bak.display());
             }
             BookRecord::default()
