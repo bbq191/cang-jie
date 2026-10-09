@@ -849,6 +849,7 @@ check "  └ 在位统计仍是 12/12" test -n "$(vline '✓ 单元：12/12 个�
 vcase "旧版遗留的 battop.timer 还在 → ⚠" 0 "⚠ battop.timer：已移除的电池刺客（2026-09-30）遗留（单元 在，载荷 不在）" "s/^UNIT${T}removed${T}battop.timer${T}0/UNIT${T}removed${T}battop.timer${T}1/"
 vcase "已退役的侧栏 qmd 还在、appload 也在 → ⚠" 0 "⚠ koreader-sidebar-entry.qmd：已退役的 KOReader/WeRead 侧栏入口还在" "\$a QRR_FILE${T}koreader-sidebar-entry.qmd${T}1" "s/^HAS_APPLOAD${T}0/HAS_APPLOAD${T}1/"
 vcase "已退役的侧栏 qmd 还在、appload 已卸 → ✗（它 IMPORT 的模块不在了）" 1 "✗ koreader-sidebar-entry.qmd：已退役的侧栏入口还在，而 appload 已不在" "\$a QRR_FILE${T}koreader-sidebar-entry.qmd${T}1"
+check "  └ 清理命令只留 sidebar-entry 一步（--skip 由步骤表算出，不手写）" test -n "$(vline "uninstall-all.sh --skip chrony-boot-wakelock,wifi-watch,xovi-persist,hl-snap,ui-font,shelf,battop,handwriting-stroke")"
 vcase "journal 有 panic → ✗" 1 "✗ panic：1 条相关日志；最近一条：thread 'main' panicked at src/x.rs" "\$a ALERT${T}J${T}panic${T}1${T}thread 'main' panicked at src/x.rs"
 vcase "dmesg 与 journal 同一次 OOM 各一份 → 取较大计数、样例用 journal" 1 "✗ OOM：3 条相关日志；最近一条：J-sample" "\$a ALERT${T}K${T}oom${T}3${T}K-sample" "\$a ALERT${T}J${T}oom${T}2${T}J-sample"
 vcase "SHELF-MKDIR 超时只 ⚠" 0 "⚠ SHELF-MKDIR 超时：4 条相关日志" "\$a ALERT${T}J${T}mkdir-timeout${T}4${T}SHELF-MKDIR: transfer timeout after 9000ms"

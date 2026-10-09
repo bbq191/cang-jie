@@ -130,6 +130,8 @@ RETIRED_QMDS="koreader-sidebar-entry.qmd"
 # 已移除的 xovi 扩展（2026-09-30 移除的手写优化 hw-stroke.so）：在 extensions.d 或待换入区里就报 ⚠
 RETIRED_EXTS="hw-stroke.so"
 # 已移除功能（battop / handwriting-stroke）残留的清理办法：重新部署会自动清；只清这两样就用下面这条卸载命令（步骤表变了跟着变）
+# 已退役的 KOReader/WeRead 侧栏入口（sidebar-entry）只在用户明确卸载时才清（不进 install-all 自动清理，见 lib.sh STEP_RETIRED_AUTOCLEAN）
+SIDEBAR_FIX="sh uninstall-all.sh --skip $(uninstall_only_skip sidebar-entry)，之后整机重启（reboot）"
 REMOVED_FIX="sh install-all.sh（重新部署会自动清）；或只清这两样：sh uninstall-all.sh --skip $(uninstall_only_skip battop handwriting-stroke)，之后整机重启（reboot）"
 
 # ═════════════════════════════ 设备端采集 ═════════════════════════════
@@ -427,9 +429,9 @@ judge_qmd() {
     for q in $RETIRED_QMDS; do
         awk -F'\t' -v n="$q" '$1 == "QRR_FILE" && $2 == n { f = 1 } END { exit !f }' "$DUMP" || continue
         if [ "$(dget HAS_APPLOAD)" = 1 ]; then
-            item warn "$S" "$q" "已退役的 KOReader/WeRead 侧栏入口还在——清掉：sh uninstall-all.sh 只留 sidebar-entry 一步（其余用 --skip），之后整机重启"
+            item warn "$S" "$q" "已退役的 KOReader/WeRead 侧栏入口还在——清掉：$SIDEBAR_FIX"
         else
-            item fail "$S" "$q" "已退役的侧栏入口还在，而 appload 已不在：它 IMPORT 的 net.asivery.AppLoad 找不到，Sidebar 补丁失效（可能连带侧栏加载失败）——sh uninstall-all.sh 只留 sidebar-entry 一步清掉，之后整机重启"
+            item fail "$S" "$q" "已退役的侧栏入口还在，而 appload 已不在：它 IMPORT 的 net.asivery.AppLoad 找不到，Sidebar 补丁失效（可能连带侧栏加载失败）——清掉：$SIDEBAR_FIX"
         fi
     done
     [ -n "$expect" ] || item warn "$S" "qmd" "没有期望的 qmd（书架服务都没装？）"
