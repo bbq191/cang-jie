@@ -6,7 +6,8 @@
 //   ① 文件名/错误文案里的 HTML 不会注入 DOM（无 <img>、onerror 不触发）；
 //   ② 10 个 SSE 事件连发被 coalesce 成至多 2 次刷新；网关自身的批量/闸门事件只重取那两个状态，book-serve 的 staging 事件不重取
 //      xochitl 文件夹列表；③ 页面隐藏时不刷新、可见后补刷一次；④ 空闲无轮询；⑤ 确认/输入两种对话框的键盘/点击行为；⑥ 笔记 tab 正在输入时
-//      事件不重画、失焦补刷；⑦「其他」tab 的事件只刷发事件服务的子面板；⑧ 代理放弃横幅（显示 / 事件重取 / 知道了）。
+//      事件不重画、失焦补刷；⑦「其他」tab 的事件只刷发事件服务的子面板；⑧ 代理放弃横幅（显示 / 事件重取 / 知道了）；
+//   ⑨ 服务集合检查：隐藏时 manage 事件不取 /api/services、可见后与 SSE 重连后各补查一次。
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
@@ -30,13 +31,13 @@ const evil = '<img src=x onerror=window.__xss=1>.epub';
 const routes = {
   '/ui/locales/zh-CN.json': () => JSON.parse(zh),
   '/ui/locales/en-US.json': () => JSON.parse(zh), // 无头浏览器缺省英文界面：同样喂中文包，文案断言不必分两套
-  '/api/services': () => ({services: [{name:'note-serve', ui:{order:1}}, {name:'font-serve', ui:{order:2}}, {name:'wallpaper-serve', ui:{order:3}}]}),
-  '/api/manage': () => ({modules: [{service:'note-serve', seg:'notes'}, {service:'font-serve', seg:'fonts'}, {service:'wallpaper-serve', seg:'wallpapers'}]}),
+  '/api/services': () => ({services: [{name:'note-serve', seg:'notes', ui:{order:1}}, {name:'font-serve', seg:'fonts', ui:{order:2}}, {name:'wallpaper-serve', seg:'wallpapers', ui:{order:3}}]}),
   '/api/fonts': () => ({items:[]}), '/api/fonts/status': () => ({ok:true}),
   '/api/fonts/ui': () => ({ok:true, items:[{name:'Sarasa UI SC', bytes:135000000, extra:{names:{cn:'更纱黑体 UI SC'}, cjkPct:100, files:['a.ttf','b.ttf','c.ttf']}}, {name:evil, bytes:1, extra:{cjkPct:0}}], sans:'Sarasa UI SC', serif:'', restartNeeded:true}),
   '/api/wallpapers': () => ({items:[]}), '/api/wallpapers/status': () => ({ok:true, mode:'sequential'}),
   '/api/ink/books': () => ({items:[{uuid:'u1', title:'书', entries:1}]}),
-  '/api/ink/books/u1': () => ({uuid:'u1', entries:[{id:'e1', status:'pending', chapter:0, page_index:0, destination:'both', style:'body', text:'hi', updated:1}]}),
+  '/api/ink/books/u1': () => ({uuid:'u1', entries:[{id:'e1', status:'pending', chapter:0, page_index:0, destination:'both', style:'body', text:'hi', updated:1, ask_ai:true, question:'q'}]}),
+  '/api/mind/books/u1/entries/e1/ask': () => ({ok:false, message:'模型没配 key'}),
   '/api/notes/books/u1/sync': () => ({chapters:[]}),
   '/api/transcribe/status': () => ({failures:[]}),
   '/api/books/staging': () => ({ok:true, items:[{name: evil, format:'epub', bytes:1000, mtime:1, delivered:{deliver:{status:'failed', message:'"><img src=x onerror=window.__xss=1>'}}}], freeBytes: 9e9}),
@@ -114,6 +115,14 @@ out.hiddenHits = (await hits()) - h0;
 await page.evaluate(() => { window.__hidden = false; document.dispatchEvent(new Event('visibilitychange')); });
 await new Promise(r => setTimeout(r, 300));
 out.afterVisible = (await hits()) - h0;
+// 服务集合检查（tab 增减要整页重载）：隐藏时 manage 事件不取 /api/services，可见后补查一次
+{ const v0 = await hits('/api/services');
+  await page.evaluate(() => { window.__hidden = true; window.__es[0].onmessage({data: JSON.stringify({area:'manage', kind:'services'})}); });
+  await new Promise(r => setTimeout(r, 300));
+  const hiddenSvc = (await hits('/api/services')) - v0;
+  await page.evaluate(() => { window.__hidden = false; document.dispatchEvent(new Event('visibilitychange')); });
+  await new Promise(r => setTimeout(r, 300));
+  out.svcCheck = [hiddenSvc, (await hits('/api/services')) - v0]; }
 // 搜索框防抖：连敲字不立即整表重画，停手 150ms 后才生效
 out.searchImmediate = await page.evaluate(() => { const q = document.querySelector('#stgq'); q.value = 'zzz-no-match'; q.dispatchEvent(new Event('input')); return document.querySelectorAll('#stglist .stg-row').length; });
 await new Promise(r => setTimeout(r, 400));
@@ -123,12 +132,13 @@ out.esUrl = await page.evaluate(() => window.__es[0].u);
 await page.evaluate(() => { window.__hiddenCloseMs = 50; window.__hidden = true; document.dispatchEvent(new Event('visibilitychange')); });
 await new Promise(r => setTimeout(r, 300));
 out.esClosedWhileHidden = await page.evaluate(() => window.__es[window.__es.length - 1].closed);
-const h2 = await hits();
+const h2 = await hits(), v2 = await hits('/api/services');
 await page.evaluate(() => { window.__hidden = false; document.dispatchEvent(new Event('visibilitychange')); });
 await new Promise(r => setTimeout(r, 400));
 out.esCount = await page.evaluate(() => window.__es.length);
 out.esReopenedOpen = await page.evaluate(() => !window.__es[window.__es.length - 1].closed);
 out.reopenRefresh = (await hits()) - h2;
+out.reopenSvc = (await hits('/api/services')) - v2;
 // 浏览器放弃重连（连上时回了非 200，如网关重启后会话失效 401）：EventSource 进 CLOSED 不再自己重试——页面要查一次会话再退避重开
 { const n0 = await page.evaluate(() => window.__es.length), s0 = await hits('/api/session');
   await page.evaluate(() => { window.__fastRetry = true; const e = window.__es[window.__es.length - 1]; e.readyState = 2; e.onerror(); });
@@ -148,6 +158,9 @@ out.dialogs = await page.evaluate(async () => {
   p = promptDialog('x', 'abc'); document.querySelector('.confirm-overlay').click(); r.push(await p);
   key('Enter'); // 已关闭的对话框不该再响应
   r.push(document.querySelectorAll('.confirm-overlay').length);
+  // 焦点在「否」按钮上按 Enter：交给按钮（= 否），不能被文档级 Enter 当成"是"
+  p = confirmDialog('x'); const no = document.querySelector('.confirm-actions .btn:not(.pri)'); no.focus();
+  no.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true})); no.click(); r.push(await p);
   return r;
 });
 // 笔记 tab：正在输入框里打字时 SSE 事件不重画（光标不丢），失焦后补一次；事件刷新不重查「导入 md」开关
@@ -168,6 +181,11 @@ out.noteEventEnhance = (await hits('/api/enhance/status')) - e0;
   await page.evaluate(() => { const b = document.querySelectorAll('#nexporttabs button'); b[1].click(); b[0].click(); const c = document.querySelector('#nchaptertabs button'); if (c) c.click(); });
   await new Promise(r => setTimeout(r, 300));
   out.noteLocalSwitchTranscribe = (await hits('/api/transcribe/status')) - t0; }
+// 「提问」失败：状态行显示服务端原因，不重取整本书（失败不重画，提示留着）
+{ const b0 = await hits('/api/ink/books/u1');
+  out.askFail = await page.evaluate(async () => { const b = document.querySelector('[data-askbtn]'); if (!b) return null; b.click();
+    await new Promise(r => setTimeout(r, 300)); return {stat: document.querySelector('[data-askstat]').textContent, disabled: b.disabled}; });
+  out.askFailReload = (await hits('/api/ink/books/u1')) - b0; }
 // 「其他」tab：壁纸服务的事件只刷壁纸子面板，不连带重取字体
 await page.evaluate(() => document.querySelectorAll('#tabs button')[2].click()); // 传书 / 笔记 / 其他 / 管理
 await new Promise(r => setTimeout(r, 500));
@@ -198,13 +216,15 @@ assert.ok(out.listText.includes('<img src=x'), '文件名应作为文本显示')
 assert.ok(out.afterBurst >= 1 && out.afterBurst <= 2, `事件突发应合并，实际 ${out.afterBurst} 次`);
 assert.equal(out.burstFolders, 0, 'book-serve 的 staging 事件只重取母版库列表与排队状态，不重取 xochitl 文件夹列表');
 assert.equal(out.koreaderHits, 0, 'KOReader 已卸载：网页不该再请求 /api/koreader/*');
-assert.deepEqual(out.dialogs, [true, false, 'abc', null, 0], '对话框行为');
+assert.deepEqual(out.dialogs, [true, false, 'abc', null, 0, false], '对话框行为');
 assert.equal(out.noteTa, true, '笔记 tab 应渲染出条目文本框');
 assert.equal(out.noteWhileTyping, 0, '正在输入时事件不该触发重画');
 assert.equal(out.noteFocusKept, true, '输入框焦点不该被重画冲掉');
 assert.equal(out.noteAfterBlur, 1, '失焦后补刷一次');
 assert.equal(out.noteEventEnhance, 0, '事件刷新不重查 /api/enhance/status');
 assert.equal(out.noteLocalSwitchTranscribe, 0, '切导出 tab / 章节标签不该再请求 /api/transcribe/status');
+assert.deepEqual(out.askFail, {stat: '✗ 模型没配 key', disabled: false}, '提问失败：显示原因、按钮解禁');
+assert.equal(out.askFailReload, 0, '提问失败不重取整本书');
 assert.equal(out.otherFonts, 0, '壁纸事件不该重取字体列表');
 assert.ok(out.uiFont && out.uiFont.sans === 'Sarasa UI SC' && out.uiFont.serif === '' && out.uiFont.opts === 3 && out.uiFont.firstOpt === '' && out.uiFont.restart, '界面字体：下拉 = 原生 + 两个已装、选中当前、显示待重启');
 assert.ok(out.uiFont.rows === 2 && out.uiFont.img === 0 && out.uiFont.text.includes('<img src=x'), '界面字体列表：两行、名字按文本显示');
@@ -221,6 +241,8 @@ assert.equal(out.esClosedWhileHidden, true, '页面隐藏超时后应断开 SSE'
 assert.equal(out.esCount, 2, '重新可见应重连（新建一条 EventSource）');
 assert.equal(out.esReopenedOpen, true);
 assert.equal(out.reopenRefresh, 1, '重连成功应补刷当前 tab 一次');
+assert.equal(out.reopenSvc, 1, '重连成功应补查一次服务集合（断线期间可能漏了 manage 事件）');
+assert.deepEqual(out.svcCheck, [0, 1], '隐藏时 manage 事件不取 /api/services，可见后补查一次');
 assert.deepEqual(out.closedRecovery, [1, 1, true], 'EventSource 进 CLOSED：关掉旧的、查一次会话、退避后新开一条');
 assert.equal(out.connectingUntouched, 1, '浏览器自己在重连（CONNECTING）时不另开连接');
 assert.equal(out.idleHits, 0, '空闲时不该有轮询');

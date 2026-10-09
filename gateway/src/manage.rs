@@ -44,6 +44,24 @@ pub fn service_of(seg: &str) -> Option<&'static str> {
     by_seg(seg).map(|m| m.service)
 }
 
+/// `GET /api/services`：注册表里在跑的服务，每项补上目录表里的 URL 段 `seg`（不在目录表里的——网关自己——为 `null`）。
+/// 网页拿它建 tab 并把 SSE 事件的 `svc`/`area` 对到 tab 上：此前网页启动时为这张映射另取一次 `/api/manage`，
+/// 两边各自从 MODULES 派生；现在映射随服务列表一起给，网页少一个请求、也只认这一处事实源。
+pub fn services(paths: &Paths) -> Reply {
+    let list: Vec<serde_json::Value> = registry::list(paths)
+        .into_iter()
+        .map(|s| {
+            let seg = MODULES.iter().find(|m| m.service == s.name).map(|m| m.seg);
+            let mut v = serde_json::to_value(&s).unwrap_or_default();
+            if let Some(o) = v.as_object_mut() {
+                o.insert("seg".into(), seg.into());
+            }
+            v
+        })
+        .collect();
+    Reply::ok(&serde_json::json!({ "services": list }))
+}
+
 /// 外部命令默认超时。`systemctl start/stop` 正常几十毫秒到几秒；给 30 秒是为了容纳慢启动服务，
 /// 又不至于在 systemd 卡死（2026-08-29 cgroup/RCU 事故那类）时让请求线程无限堆积。
 const RUN_TIMEOUT: Duration = Duration::from_secs(30);
@@ -114,12 +132,9 @@ pub fn status(paths: &Paths) -> Reply {
             let inst = installed(paths, m);
             serde_json::json!({
                 "seg": m.seg, "service": m.service, "only": m.only, "label": m.label,
-                // 原来的"门控未上线"开关（`installable`）所有模块都是 true，2026-10-07 删掉；这个键先照旧回 true，
-                // 网页不再判断它之后可以一起删。
-                "installable": true,
+                // 原来还有恒为 true 的 `installable` 与跟 `installed` 恒等的 `hasWeb`：网页、脚本都不读，2026-10-09 删掉。
                 "installed": inst,
                 "running": running(&reg, m),
-                "hasWeb": inst,
             })
         })
         .collect();
@@ -218,10 +233,23 @@ mod tests {
         let find = |svc: &str| mods.iter().find(|m| m["service"] == svc).unwrap();
         assert_eq!(find("book-serve")["installed"], true);
         assert_eq!(find("book-serve")["running"], false);
-        assert_eq!(find("book-serve")["hasWeb"], true);
         assert_eq!(find("font-serve")["installed"], false);
-        assert_eq!(find("font-serve")["hasWeb"], false, "未装则网页无该功能");
+        assert!(mods.iter().all(|m| m.get("installable").is_none() && m.get("hasWeb").is_none()), "不再回没人读的冗余键");
         assert!(mods.iter().all(|m| m["service"] != "weread-serve"));
+    }
+    #[test]
+    fn services_carry_url_segment_from_catalog() {
+        let t = tempfile::tempdir().unwrap();
+        let paths = crate::testutil::sandbox(&t);
+        let reg = |name: &str| registry::ServiceInfo { name: name.into(), port: 1, label: String::new(), version: String::new(), pid: std::process::id(), ui: None };
+        let _a = registry::register(&paths, &reg("note-serve")).unwrap();
+        let _b = registry::register(&paths, &reg("gateway")).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&services(&paths).body).unwrap();
+        let list = v["services"].as_array().unwrap();
+        let find = |n: &str| list.iter().find(|s| s["name"] == n).unwrap();
+        assert_eq!(find("note-serve")["seg"], "notes");
+        assert!(find("gateway")["seg"].is_null(), "网关自己不在目录表里");
+        assert_eq!(find("note-serve")["port"], 1, "注册表原有字段照旧");
     }
     #[test]
     fn foundation_probes_only_xovi_and_qrr() {
