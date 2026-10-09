@@ -27,6 +27,8 @@ jobs:
         # --severity=warning：只在 warning/error 上门控，容忍 runner apt shellcheck(0.9.x)
         # 与本地(0.11)对 info/style(SC2015/SC2002…)判定的版本漂移。真问题都是 warning+。
         run: git ls-files '*.sh' | xargs -r shellcheck --severity=warning
+      - name: 模拟测试的桩命令（无 .sh 后缀的 POSIX sh 脚本，同样门控）
+        run: shellcheck --severity=warning --shell=sh packaging/tests/stubs/*
 
   # ── host 侧测试：安装脚本沙箱模拟（pytest）+ 网关前端 JS + enhance/shared C 单测 ──
   tests:
