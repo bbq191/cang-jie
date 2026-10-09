@@ -32,3 +32,8 @@ strip = true
 # 失败应该只影响那一项，不该让所有在途操作一起陪葬；代价是二进制体积略增（见提交说明）。
 panic = "unwind"
 codegen-units = 1
+
+# host 测试提速：登录相关测试每次要算 60 万轮 PBKDF2（rmsvc-core 里单态化），debug 下一次就是几秒、整套测试 40 多秒。
+# 只给依赖（含 path 依赖 rmsvc-core）开优化，本 crate 照旧 debug 便于调试；不影响设备上的 release 构建。
+[profile.dev.package."*"]
+opt-level = 2
