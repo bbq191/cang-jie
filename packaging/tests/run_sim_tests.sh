@@ -340,8 +340,10 @@ echo old > "$CJ_SYSD/shelf-gateway.service"; echo old > "$R/home/root/.local/bin
 echo "user note" > "$R/home/root/.local/share/shelf/user-file.txt"
 mkdir -p "$R/home/root/.local/state/notes"; echo keep > "$R/home/root/.local/state/notes/entries.json"
 : > "$CJ_SIM_LOG"
+rm -rf "$CJ_PENDING_DIR"   # 清掉 install 自己留下的待生效标记，下面断言的标记只能来自 uninstall
 run sh "$R/home/root/.local/bin/shelf-uninstall" >"$R/out.txt" 2>&1; rc=$?
 check "uninstall 全量：退出 0" test "$rc" -eq 0
+check "uninstall：删了 qmd → 记下待生效标记 shelf-qmd（下次部署才知道要整机重启卸下注入）" test -f "$CJ_PENDING_DIR/shelf-qmd"
 POST_SIG="$(tree_sig | grep -v -e 'home/root/\.config/shelf/' -e 'home/root/\.local/share/shelf/' -e 'home/root/\.local/state/shelf/' -e 'home/root/\.local/state/notes/')"
 sig_eq "uninstall：装过的每个文件都被删（文件树回到安装前，仅剩用户数据）" "$PRE_SIG" "$POST_SIG"
 check "uninstall：comic-margins qmd 也删了" test ! -e "$Q/shelf-comic-margins.qmd"

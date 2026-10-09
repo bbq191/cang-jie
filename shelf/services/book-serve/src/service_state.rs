@@ -182,8 +182,7 @@ mod tests {
     #[test]
     fn inbox_lands_books_and_fails_non_books() {
         let t = tempfile::tempdir().unwrap();
-        let h = t.path().to_str().unwrap().to_string();
-        let paths = Paths::resolve(move |k| if k == "HOME" || k == "XDG_RUNTIME_DIR" { Some(h.clone()) } else { None });
+        let paths = Paths::sandbox(t.path());
         let mut st = State::new(&paths);
         st.inbox_settle = Duration::ZERO;
         st.ensure_dirs().unwrap();
@@ -200,8 +199,7 @@ mod tests {
 
     /// 造一个 xochitl 指向本机关闭端口（连接秒拒，不会真等 3 秒超时）的 State。
     fn state_with_dead_xochitl(home: &std::path::Path) -> State {
-        let h = home.to_str().unwrap().to_string();
-        let paths = Paths::resolve(move |k| if k == "HOME" || k == "XDG_RUNTIME_DIR" { Some(h.clone()) } else { None });
+        let paths = Paths::sandbox(home);
         let cfg = paths.service_config("book");
         std::fs::create_dir_all(cfg.parent().unwrap()).unwrap();
         std::fs::write(&cfg, r#"{"xochitlHost":"127.0.0.1:9"}"#).unwrap();
@@ -231,8 +229,7 @@ mod tests {
     #[test]
     fn inbox_defers_files_still_being_written() {
         let t = tempfile::tempdir().unwrap();
-        let h = t.path().to_str().unwrap().to_string();
-        let paths = Paths::resolve(move |k| if k == "HOME" || k == "XDG_RUNTIME_DIR" { Some(h.clone()) } else { None });
+        let paths = Paths::sandbox(t.path());
         let st = State::new(&paths);
         st.ensure_dirs().unwrap();
         let f = st.spool.inbox().join("scp.epub");
@@ -251,8 +248,7 @@ mod tests {
     fn inbox_rejects_retired_host_convertible_exts() {
         // 2026-09-17 EPUB 线架构调整：azw3/mobi/fb2/txt 不再自动转 EPUB，母版库直接拒收。
         let t = tempfile::tempdir().unwrap();
-        let h = t.path().to_str().unwrap().to_string();
-        let paths = Paths::resolve(move |k| if k == "HOME" || k == "XDG_RUNTIME_DIR" { Some(h.clone()) } else { None });
+        let paths = Paths::sandbox(t.path());
         let mut st = State::new(&paths);
         st.inbox_settle = Duration::ZERO;
         st.ensure_dirs().unwrap();

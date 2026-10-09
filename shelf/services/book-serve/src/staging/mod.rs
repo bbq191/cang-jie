@@ -7,7 +7,7 @@
 use crate::mkdir::MkdirQueue;
 use crate::ops::{OpGuard, OpRegistry};
 use crate::render_check;
-use crate::scratch::ScratchFile;
+use rmsvc_core::fs::ScratchFile;
 use crate::sidecar::{self, Delivered, RenderCheck};
 use serde::Serialize;
 use rmsvc_core::asset::{AssetItem, AssetStore};
@@ -26,6 +26,7 @@ pub(crate) use self::deliver::MAX_DIRECT_BYTES;
 pub(crate) use self::deliver::FOLDER_WAIT_TIMEOUT;
 mod intake;
 mod library;
+pub use self::library::low_space;
 
 use self::library::ListCaches;
 

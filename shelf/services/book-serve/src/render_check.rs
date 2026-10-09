@@ -1,5 +1,5 @@
 //! 投原生后的**渲染自检**：xochitl 导入 EPUB 后渲染（真机：导入当下同步渲染），渲染完在 `<uuid>.content` 写 `pageCount`。
-//! 投书后起一条线程，**限时**监听书库目录（`fswatch::watch_until`，最长 [`TIMEOUT`]，结束即撤、不常驻），认出这本书就
+//! 投书后起一条线程，**限时**监听书库目录（`fswatch::wait_for`，最长 [`TIMEOUT`]，结束即撤、不常驻），认出这本书就
 //! 记下 uuid 和页数、登记漫画页边距（普通上传拿不到 uuid，只能在这里认）。结果写进母版库边车 `.<name>.delivered` 的
 //! `render` 字段（事件是有损信号，状态必须落盘），并推 `books/render` 事件（带 name/status/pages）。
 //! 2026-10-07 前还按正文字数估期望页数、页数远低于期望时报 `warn`（抓整章渲染失败）：那主要是设备上优化出错的症状，
@@ -10,7 +10,7 @@ use crate::sidecar::RenderCheck;
 use crate::staging::{RenderPlan, Staging};
 use rmsvc_core::clock::now_secs as now;
 use rmsvc_core::events::EventBus;
-use rmsvc_core::fswatch::watch_until;
+use rmsvc_core::fswatch::wait_for;
 use rmsvc_core::xochitl::{find_documents_since, page_count, DocInfo};
 use std::path::Path;
 use std::time::Duration;
@@ -35,7 +35,7 @@ pub fn run_with(staging: &Staging, bus: &EventBus, lib_dir: &Path, plan: &Render
         if let Err(e) = staging.set_render(&plan.name, rc) {
             println!("[book-serve] 渲染自检记录《{}》失败: {e}", plan.name);
         }
-        bus.publish_raw(&serde_json::json!({"area":"books","kind":"render","name":plan.name,"status":status,"pages":pages,"at":now()}).to_string());
+        bus.publish_with("books", "render", serde_json::json!({"name": plan.name, "status": status, "pages": pages}));
         println!("[book-serve] 渲染自检《{}》: {status} pages={pages} uuid={uuid}", plan.name);
     };
     write("", 0, "pending");
@@ -47,11 +47,7 @@ pub fn run_with(staging: &Staging, bus: &EventBus, lib_dir: &Path, plan: &Render
             write(&uuid, pages, "ok")
         })
     };
-    if check().is_some() {
-        return;
-    }
-    let found = watch_until(lib_dir, debounce, timeout, |_| check().is_some());
-    if !found && check().is_none() {
+    if wait_for(lib_dir, debounce, timeout, check).is_none() {
         write("", 0, "timeout");
     }
 }
@@ -65,7 +61,7 @@ pub fn probe(lib_dir: &Path, plan: &RenderPlan) -> Option<(String, u64)> {
 
 /// 候选（新→旧）里挑：visibleName 与 dc:title / 文件名 stem 相符（忽略大小写）者优先，否则最新一本。
 pub fn pick<'a>(docs: &'a [DocInfo], title: Option<&str>, name: &str) -> Option<&'a DocInfo> {
-    let stem = name.rsplit_once('.').map(|(s, _)| s).unwrap_or(name);
+    let stem = rmsvc_core::formats::stem_of(name);
     let eq = |a: &str, b: &str| a.trim().eq_ignore_ascii_case(b.trim());
     docs.iter().find(|d| title.is_some_and(|t| eq(&d.visible_name, t)) || eq(&d.visible_name, stem)).or(docs.first())
 }
@@ -164,7 +160,7 @@ mod tests {
         });
         run_with(&s, &EventBus::new(), &lib, &plan(), MS(30), Duration::from_secs(10));
         let rc = render_of(&s).unwrap();
-        assert_eq!((rc.status.as_str(), rc.pages, rc.uuid.as_str()), ("ok", 42, "u2"), "watch_until 应在书出现后很快检出");
+        assert_eq!((rc.status.as_str(), rc.pages, rc.uuid.as_str()), ("ok", 42, "u2"), "wait_for 应在书出现后很快检出");
     }
 
     #[test]
