@@ -40,10 +40,11 @@ fn is_live(v: &serde_json::Value) -> bool {
     str_of(v, "parent") != "trash" && v.get("deleted").and_then(|x| x.as_bool()) != Some(true)
 }
 
-/// 书库里所有**活的**条目（非回收站、未删除，文件夹与文档都有）→ (uuid, `.metadata` JSON)。只读；解析失败的跳过。
-/// 网关「设备健康 → 清理」列书库用（此前自己再写一遍遍历 + 过滤）。
-pub fn live_entries(dir: &Path) -> Vec<(String, serde_json::Value)> {
-    metadata_entries(dir).into_iter().filter(|(_, v)| is_live(v)).collect()
+/// 书库里所有**活的**条目（非回收站、未删除，文件夹与文档都有）→ (uuid, 强类型 [`Metadata`])。只读；读不了、
+/// 解析不了（含字段类型不对，如 `deleted` 不是布尔）的跳过。网关「设备健康 → 清理」列书库、book-serve 直接导入
+/// 查同文件夹重复用（10-09 起直接给 `Metadata`，调用方不再各自 `from_value` 一遍）。
+pub fn live_entries(dir: &Path) -> Vec<(String, Metadata)> {
+    metadata_entries(dir).into_iter().filter_map(|(uuid, v)| serde_json::from_value::<Metadata>(v).ok().filter(Metadata::is_live).map(|m| (uuid, m))).collect()
 }
 
 /// `.metadata` 的 `createdTime`（毫秒；xochitl 写成字符串，也认数字）；缺或解析不了 → 0。
@@ -288,6 +289,12 @@ mod tests {
         assert!(read_meta(d, "c").is_err(), "半截 → Err，不当成没有");
         assert_eq!(file_type(d, "a").as_deref(), Some("epub"));
         assert_eq!(file_type(d, "b"), None);
+        // live_entries：跳过回收站里的 b、半截的 c、已删除的 e、字段类型不对的 f，只剩 a（直接给强类型）
+        std::fs::write(d.join("e.metadata"), r#"{"visibleName":"删","type":"DocumentType","parent":"","deleted":true}"#).unwrap();
+        std::fs::write(d.join("f.metadata"), r#"{"visibleName":"怪","type":"DocumentType","parent":"","deleted":"yes"}"#).unwrap();
+        let live = live_entries(d);
+        assert_eq!(live.len(), 1);
+        assert_eq!((live[0].0.as_str(), live[0].1.visible_name.as_str()), ("a", "书"));
     }
 
     #[test]

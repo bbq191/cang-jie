@@ -141,7 +141,7 @@
   - `Metadata`（10-09）：`.metadata` 的强类型视图，只取各服务真用到的字段（`visibleName`、`type`、`parent`、`deleted`、`createdTime`），带 `is_live` / `is_document` / `is_folder` / `is_live_document` / `created_ms`。字段写成 JSON `null` 时按缺省值处理（否则一个 `"parent": null` 会让整条解析失败）。
   - `read_meta(dir, uuid)`（10-09）：**区分"没有"与"读不了"**——文件不在 → `Ok(None)`（书被彻底删了）；读失败/解析失败 → `Err`（可能正被 xochitl 改写，调用方应跳过这次，别当成书没了）。book-serve 回收站代理靠这个区分不再丢待办。
   - `file_type(dir, uuid)`：流式只取 `.content` 的 `fileType`，不整份解析。
-  - `read_metadata`（返回原始 JSON）、`live_entries`（非回收站、未删除的条目，网关清理页用）、`created_ms`、`is_uuid_shape`（10-07）。
+  - `read_metadata`（返回原始 JSON）、`live_entries`（非回收站、未删除的条目，直接给 `(uuid, Metadata)`，解析不了的跳过；网关清理页、book-serve 直接导入查重用）、`created_ms`、`is_uuid_shape`（10-07）。
 
 ### xochitl_conf —— 改 xochitl.conf 的单键（wallpaper-serve）
 

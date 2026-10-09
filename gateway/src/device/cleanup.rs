@@ -126,11 +126,10 @@ pub fn list_library(xochitl_dir: &Path) -> Vec<LibraryDoc> {
     let mut docs = Vec::new();
     let mut folders: HashMap<String, String> = HashMap::new();
     // 遍历与"活的"判定（非回收站、未删除）用 rmsvc-core 的同一套书库读取（`live_entries` + 强类型 `Metadata`）。
-    for (uuid, v) in rmsvc_core::xochitl::live_entries(xochitl_dir) {
+    for (uuid, m) in rmsvc_core::xochitl::live_entries(xochitl_dir) {
         if !rmsvc_core::xochitl::is_uuid_shape(&uuid) {
             continue;
         }
-        let Ok(m) = serde_json::from_value::<rmsvc_core::xochitl::Metadata>(v) else { continue };
         if m.is_folder() {
             folders.insert(uuid, m.visible_name);
         } else if m.is_document() {
