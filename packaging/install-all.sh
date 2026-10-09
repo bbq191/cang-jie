@@ -72,6 +72,10 @@ else
     export CJ_DEVICE_OK="$HOST"   # 各步骤脚本不再各自重复做连通检查（见 lib.sh 的 require_device）
     fw_gate "$FORCE" || exit 1
     preflight_device || exit 1
+    # 整轮装期间别让设备自动休眠（带超时的唤醒锁，见 lib.sh；最后一步整机重启时锁随之消失）
+    trap 'device_awake_release' EXIT
+    trap 'exit 130' INT TERM HUP
+    device_awake_hold
 fi
 
 for step in $STEP_ORDER; do
@@ -106,15 +110,9 @@ done
 
 echo
 echo "═══════════════════════════════════════════════════════════"
-if [ "$DRY" = "1" ]; then
-    echo "dry-run 计划（未连接设备、未执行）：${DONE:-（无）}"
-else
-    echo "已安装：${DONE:-（无）}"
-fi
-[ -z "$SKIPPED" ] || echo "已跳过（--skip）：$SKIPPED"
-[ -z "$NOTAPPL" ] || echo "已跳过（前置条件不满足，非失败）：$NOTAPPL"
-if [ -n "$FAILED" ]; then
-    echo "❌ 失败：$FAILED —— 看对应步骤上面的原始报错，不会自动重试"
+print_step_summary 已安装
+if skip_has xovi-apply && [ "$DRY" = "0" ]; then
+    echo "⚠ 跳过了 xovi-apply：本轮若有 xovi 扩展/qmd 落盘改动，要等整机重启才生效——方便时设备上 reboot，或电脑上 sh deploy-xovi-apply.sh $HOST"
 fi
 echo "─── 不在本脚本范围内，需要手动处理 ───"
 echo "· vellum/xovi/qt-resource-rebuilder 引导（若 xovi-persist/hl-snap/"

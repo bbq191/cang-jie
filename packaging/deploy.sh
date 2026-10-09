@@ -76,6 +76,10 @@ done
 SEL="$(shelf_select "$ONLY")" || exit 2
 
 require_device
+# 单独跑时持设备唤醒锁到结束（被 install-all 编排时它已持有，这里什么都不做；见 lib.sh 的 device_awake_hold）
+trap 'device_awake_release' EXIT
+trap 'exit 130' INT TERM HUP
+device_awake_hold
 [ "${SHELF_NO_BUILD:-0}" = "1" ] || sh ../shelf/build.sh
 
 # 推送前先核对：要装的服务的二进制与单元都在（缺了指路，别传完才被设备端拒绝）
@@ -94,7 +98,7 @@ if [ -n "$MISSING" ]; then
 fi
 [ -z "$MISSING_UNITS" ] || { echo "!! 仓库里缺这些 systemd 单元：$MISSING_UNITS"; exit 1; }
 
-STAGE="$(mktemp -d)"; trap 'rm -rf "$STAGE"' EXIT
+STAGE="$(mktemp -d)"; trap 'rm -rf "$STAGE"; device_awake_release' EXIT
 P="$STAGE/pkg/shelf"
 mkdir -p "$P/bin" "$P/systemd" "$P/lo-alias" "$P/xovi"
 # 只放要装的服务（旧版把四个目录下的单元整批拷上去，含已退役的 koreader-serve.service）
