@@ -94,7 +94,7 @@
 | 剩余空间 | `GET /staging` 带 `freeBytes` 与 `lowSpace`（剩余 <300MiB；10-09 起由 book-serve 判，网页优先读它，未部署） | 传书线架构 §9 |
 | 阅读方向 | **书架不管**（10-07 稍后，用户定，§03bx）：xochitl 不看 OPF 方向标记，日漫一律从左往右翻（用户接受） | 传书线架构 §2.5 |
 | 加入 xochitl | ≤90MB 流式 `/upload` + 渲染自检（认出新文档的 uuid、记页数）；>90MB 走"占位+磁盘替换"（≤1GiB，整本；09-25 真机：156.5MB《乱马》首次打开约 74 秒渲染出 349 页）；走不了就整本拒绝。投到已被删的文件夹时落书库根（10-09 起；此前会落进上一本书的文件夹，未部署） | §03bn |
-| 读 EPUB 的内存上限 | `shelf-conv::epub` 只读 container.xml、OPF、几页正文和一张封面；单条目解压上限按用途分开：文本 16MB、封面图 64MB（10-09；此前统一 256MB，超过 book-serve 自己的 192MB 内存上限，坏书会让它被 OOM 杀，未部署） | §03bz |
+| 读 EPUB 的内存上限 | `shelf-conv::epub` 只读 container.xml、OPF、几页正文和一张封面；单条目解压上限按用途分开：文本 16MB（`epubpkg::MAX_TEXT_BYTES`）、封面图 64MB（10-09；此前统一 256MB，超过 book-serve 自己的 192MB 内存上限，坏书会让它被 OOM 杀，未部署） | §03bz |
 | 漫画页边距 | 书里带 sheng-ren 写的 `META-INF/eink-reader-margins` 时，加入后一律登记，首次打开由 qmd 代理设页边距 1（左右留白≈0）；不带标记的书不碰；没有开关 | 传书线架构 §3 |
 | xochitl 代理 | 建文件夹、移进回收站、漫画页边距都靠注入 xochitl 的 qmd 代理完成（外部改文件会被盖回去）；前两个长轮询 `?wait=290`，同一项最多交 5 次、出错退避到 120 秒。回收站代理读不了 `.metadata`（比如 xochitl 正在改写）时不再把待删项当"已完成"移出队列，已 `deleted` 的条目入队被拒（10-09，未部署） | §03aa、§03bz |
 | 建文件夹等待 | 落库前最多等 20 秒；10-09 起"先挂监听再查一次"（`fswatch::wait_for`），入队到挂上监听之间代理已经建好的不再白等满 20 秒（未部署） | 传书线架构 §4 |
@@ -105,7 +105,7 @@
 | 卸载 | `shelf-uninstall` 删了 qmd 时记"待生效"标记并提示整机重启（10-09；此前删了 qmd 却不提示，xochitl 里注入一直留到下次重启，未部署） | 第 F 章速查 |
 | 让 qmd 改动生效 | **整机重启**（09-25 起）。不再单独 `systemctl restart xochitl`：xochitl 退出时自身有概率崩溃；xovi 已生效时**绝不**跑 `xovi/start` | 第 F 章速查 |
 | 上传暂存与临时文件 | 书在 `books/.work/`；xochitl 字体/壁纸在 `~/.local/state/shelf/upload/`——都在 /home。母版库里的临时文件只剩跨分区入库中转 `.<pid>.<序号>.landing.tmp`，出错或 panic 当场删、启动再清一遍所有点前缀 `*.tmp` | 传书线架构 §2.2、§9 |
-| 测试 | `cd shelf && cargo test --workspace`：2026-10-09 实跑 book-serve 98 + shelf-conv 27 个通过；`rmsvc-core` 131 个（另 1 个 ignored）、网关 62 个通过；网页 node 测试 13 项通过；浏览器冒烟通过；clippy 无告警 | §03bz |
+| 测试 | `cd shelf && cargo test --workspace`：2026-10-09 实跑 book-serve 99 + shelf-conv 25 个通过（OPF 解析的测试随代码搬进 `rmsvc-core/epubpkg`，那边 10 个）；`rmsvc-core` 131 个（另 1 个 ignored）、网关 62 个通过；网页 node 测试 13 项通过；浏览器冒烟通过；clippy 无告警 | §03bz |
 
 **已砍/已被取代（别再找）**：网关并发闸门与行内"取消排队"、渲染自检的期望页数与 `warn`、sheng-ren `bookconv` 依赖、日漫翻页（10-07 稍后，§03bx）；`POST /staging/mark`、边车 `koreader` 字段、格式 `cbz` 单列（10-07 代码审查，§03by）；设备上的「优化」、入库 PDF 转换、原 PDF 备份、抓网文、联网补封面、旧产物兼容、中途取消、优化徽章与筛选（10-07，§03bw）；电脑端 `shelf` 命令行（09-18，附录 B）；KOReader 一切入口与 koreader-serve（09-29，附录 B）；超限书按卷拆分与按书设阅读方向（09-30，附录 B）；母版库"优化档位"与"投完自动删除"（09-19）；漫画"优化转 PDF"（09-19 做、09-20 换回 EPUB、09-30 代码删除）；三档格式（09-17/18 收成一档）；微信读书内容源（09-05）；bind-mount 壁纸（§03x）；`/inbox*` 与 `/staging/render/*` HTTP 接口（09-22 删，scp 进 `inbox/` 仍可用）；"restart xochitl 让改动生效"（09-25 改整机重启）。
 
@@ -991,6 +991,7 @@ qmd 和 xovi 扩展只在 xochitl **启动时**注入，所以改了要让 xochi
 | 10-07 | §03by；传书线架构 §2、§4、§7.2、§8、§9；网关白皮书 §02–§06 | **代码审查修复**：原地替换改走 `import-tmp/`、不再重设页边距；改名把 `pending` 渲染自检收成 `timeout`；建文件夹已出现就不等；导入认领改 inotify；`epub::Book` 一本只开一次 zip；`try_guard`/`ScratchFile`/`upload_large` 合并重复；删 `POST /staging/mark`、边车 `koreader`、`cbz` 单列；网关代理去掉 900 秒总时长、透传 `Cache-Control`，批量只认 `ok`、新增 `waitingService`；基座新增 `fs_space`/`Wake`/`registry_wake`/`read_metadata` 等；网页母版库筛选补集、底部栏运行中可操作、笔记页跳章丢字修复，语言键 463 → 468（10-07 15:54 已部署并整机重启，部署自检 36✓ 1⚠ 0✗，功能未手测） |
 | 10-07 傍晚 | 传书线架构 §4、§9「直接导入」 | sheng-ren 直接导入的 `folder` 按 `/` 拆成多级、逐级找或建；多级文件夹 10-07 约 16:32 已部署，功能未手测；同晚 17:27 又把直接导入改成异步任务（回 202 + 任务 id），部署记录里没有这一项 |
 | 10-09 | §03bz；传书线架构 §2、§4、§5、§6.1、§9 | **第六轮审计**：EPUB 解压上限按用途拆（文本 16MB / 封面 64MB）；回收站代理读不了 `.metadata` 不再静默丢待办；建文件夹等待先挂监听再查；`.reason` 原子写；`GET /staging` 带 `lowSpace`；投到已删文件夹落书库根；大文件通道认领改 inotify；卸载删 qmd 提示整机重启；book-serve 改用 rmsvc-core 公共件、删 `spawn_bg` 外壳与旧测试夹具（未部署，只有开发机测试） |
+| 10-09 | 传书线架构 §1 | **EPUB 容器/OPF 解析与笔记线合并**：shelf-conv `epub` 与 notes `epubmap` 各写的 container.xml → OPF、manifest/spine/Dublin Core、href 解码合成 `rmsvc-core/epubpkg`（独立小 crate，不依赖 rmsvc-core 本体）；书架这边行为不变，只是 `Book::opf()` 返回的 OPF 文本已去注释（未部署） |
 
 ### 附录 B｜已移除的能力：电脑端 `shelf` 命令行（原 `shelf/README.md`，2026-09-18 砍除）
 
@@ -1031,7 +1032,7 @@ qmd 和 xovi 扩展只在 xochitl **启动时**注入，所以改了要让 xochi
 | 路径 | 来历与易踩细节 |
 |---|---|
 | `Cargo.toml`·`build.sh` | 内部 workspace，成员 `shelf-conv`、`book-serve`（`koreader-serve` 09-29 退役、09-30 源码从仓库删除；`bookconv` 10-07 删、`pdf-extract-cj` 10-07 删）；`panic=unwind`（§03bq） |
-| `crates/shelf-conv/` | 10-07 新建，只读不改书：`epub`（`epub::Book` 一本书只开一次 zip〔10-07 审查修复〕；读 container.xml/OPF、`dc:title`/作者/语言、封面图、sheng-ren 漫画页边距标记 `READER_MARGINS_MARKER`，写占位 EPUB 的 `EpubWriter`）、`pdfmeta`（第三方 PDF 页数，有界解析）、`placeholder`（大文件通道占位：EPUB 带真书名封面、PDF 手写一页最小文件）、`naming`（书名规范 `canonical_book_name`，从 sheng-ren 复制；文件名版本 `canonical_file_name`）。10-07 稍后删 `stats`（渲染自检期望页数）、`epub_is_rtl`/`spine_is_rtl`（随日漫翻页），去掉 sheng-ren `bookconv` git 依赖（§03bx） |
+| `crates/shelf-conv/` | 10-07 新建，只读不改书：`epub`（`epub::Book` 一本书只开一次 zip〔10-07 审查修复〕；读 container.xml/OPF、`dc:title`/作者/语言、封面图、sheng-ren 漫画页边距标记 `READER_MARGINS_MARKER`，写占位 EPUB 的 `EpubWriter`；10-09 起 container.xml/OPF、manifest/spine/Dublin Core、href 解码、标签扫描、有上限地读条目改用与笔记线 epubmap 共用的 `../rmsvc-core/epubpkg`，`epub` 只剩封面挑选、页边距标记和写 EPUB）、`pdfmeta`（第三方 PDF 页数，有界解析）、`placeholder`（大文件通道占位：EPUB 带真书名封面、PDF 手写一页最小文件）、`naming`（书名规范 `canonical_book_name`，从 sheng-ren 复制；文件名版本 `canonical_file_name`）。10-07 稍后删 `stats`（渲染自检期望页数）、`epub_is_rtl`/`spine_is_rtl`（随日漫翻页），去掉 sheng-ren `bookconv` git 依赖（§03bx） |
 | ~~`crates/bookconv/`~~ | （10-07 删除，`git log -- shelf/crates/bookconv` 查删除前的版本）当时含 `optimize/`、`wash/`、`check.rs`（质量门）、`imgopt`/`imgpool`、`pdf_ingest/`、`comic_*`、`netimg.rs`、`naming.rs`、`placeholder.rs`、`article.rs`、`direction.rs`、`convert/` 与 `src/bin/` 开发工具 |
 | ~~`crates/pdf-extract-cj/`~~ | （10-07 删除）`pdf-extract` 0.12.1 本地 fork（MIT），给当时的 PDF 转 EPUB 用（§03br） |
 | `services/book-serve/` | `staging/`（`mod`〔含大文件通道 `upload_large`〕/`intake`/`deliver`/`library`/`tests`）、`scratch.rs`（`ScratchFile`，母版库中转与直接导入共用，10-07 稍后从 `staging/mod.rs` 挪出）、`sidecar.rs`、`render_check.rs`、`pending_queue.rs`（`PendingQueue` + 长轮询 `Handout`）、`agent_failures.rs`（代理放弃项的横幅记录）、`trash.rs`、`mkdir.rs`、`comic_margins.rs`、`import.rs`（直接导入 xochitl、不进母版库：`POST /import`、`GET /import/{uuid}`、`POST /import/states`〔一次查一批，10-09〕，sheng-ren 用，10-07）、`spool.rs`（inbox 追平）、`ops.rs`（忙锁，`try_guard` 返回 RAII 守卫）、`service_state.rs`；`staging/optimizing.rs` 与 `cover_fetch/` 10-07 删除，`reading_direction.rs`（`GET /reading-direction/{uuid}`）10-07 稍后随日漫翻页删除 |

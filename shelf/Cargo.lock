@@ -426,6 +426,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "epubpkg"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "regex",
+ "zip",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1262,6 +1271,7 @@ dependencies = [
 name = "shelf-conv"
 version = "0.1.0"
 dependencies = [
+ "epubpkg",
  "lopdf",
  "miniz_oxide 0.8.9",
  "regex",

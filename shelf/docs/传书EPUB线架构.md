@@ -61,9 +61,9 @@
 |---|---|---|
 | `gateway` | 唯一 Web 前端：网页 UI + 反向代理 + **批量队列（`batch.rs`）** + SSE 汇聚（并发闸门 `budget.rs` 2026-10-07 删除，§7.2） | `0.0.0.0:443`（HTTPS，登录墙） |
 | `book-serve` | 母版库领域服务：入库 / 改名 / 删除 / 下载原件 / 加入 xochitl，外加三个设备端代理队列（§4） | `127.0.0.1:8790`（只经网关访问） |
-| `shelf-conv` | **库，不是服务**，被 `book-serve` 进程内调用，**只读不改书**：`epub`（读 container.xml/OPF、书名作者语言、封面图、sheng-ren 的漫画页边距标记，写占位 EPUB 的小 zip 写入器）、`pdfmeta`（第三方 PDF 页数）、`placeholder`（大文件通道的占位文档；10-07 稍后前还读 EPUB 翻页方向 `epub_is_rtl`，随日漫翻页删除，§2.5）、`naming`（文件名规范化） | 无网络面 |
+| `shelf-conv` | **库，不是服务**，被 `book-serve` 进程内调用，**只读不改书**：`epub`（读 container.xml/OPF、书名作者语言、封面图、sheng-ren 的漫画页边距标记，写占位 EPUB 的小 zip 写入器；container.xml/OPF 解析与 href 解码用与笔记线共用的 `rmsvc-core/epubpkg`）、`pdfmeta`（第三方 PDF 页数）、`placeholder`（大文件通道的占位文档；10-07 稍后前还读 EPUB 翻页方向 `epub_is_rtl`，随日漫翻页删除，§2.5）、`naming`（文件名规范化） | 无网络面 |
 
-（2026-10-07 稍后起**不再依赖 sheng-ren `bookconv`**：此前书架经 git 依赖借用它的公开接口读 EPUB，连带拉进图片处理、网页正文抽取、HTTP 客户端等用不上的依赖；改成 `shelf-conv::epub` 的最小实现后 `shelf/Cargo.lock` 从 309 个包降到 214 个，`cargo update -p bookconv` 也不再有。两处是从 sheng-ren 抄过来、要跟着它改的：页边距标记名 `READER_MARGINS_MARKER`＝`META-INF/eink-reader-margins`，以及书名规范化 `canonical_book_name`，§2.1、§3。渲染自检的期望页数模块 `stats` 同日删除，§2.3。）
+（2026-10-07 稍后起**不再依赖 sheng-ren `bookconv`**：此前书架经 git 依赖借用它的公开接口读 EPUB，连带拉进图片处理、网页正文抽取、HTTP 客户端等用不上的依赖；改成 `shelf-conv::epub` 的最小实现后 `shelf/Cargo.lock` 从 309 个包降到 214 个，`cargo update -p bookconv` 也不再有。2026-10-09 这份最小实现里跟笔记线 `epubmap` 重复的部分〔container.xml → OPF、manifest/spine/Dublin Core、href 解 XML 实体与百分号、标签扫描、有上限地读条目〕合进 `rmsvc-core/epubpkg`，两边都改用它；它只依赖 regex/zip，不连带 rmsvc-core 的 HTTP/TLS。两处是从 sheng-ren 抄过来、要跟着它改的：页边距标记名 `READER_MARGINS_MARKER`＝`META-INF/eink-reader-margins`，以及书名规范化 `canonical_book_name`，§2.1、§3。渲染自检的期望页数模块 `stats` 同日删除，§2.3。）
 
 **网关代理**（`gateway/src/proxy.rs`）：`/api/{svc}/*` 按 URL 段（`books`→`book-serve`、`fonts`→`font-serve`、`wallpapers`→`wallpaper-serve` 等，唯一的表是 `gateway/src/manage.rs` 的 `MODULES`；`koreader` 段 2026-09-29 撤掉）转发到 loopback。**请求体真流式**（大文件上传不占网关内存）；**响应**：后端给了 `Content-Length` 的 200 应答，若是下载（带 `Content-Disposition`）或体积超过 256KB（`STREAM_MIN_BYTES`），网关按定长边读边发；其余小 JSON 与没有长度的应答读完再回（2026-09-24；没有长度的流只能走 SSE 那种"读到连接关闭"的通道，拿来做下载会让浏览器等不到结束）。2026-10-07 稍后起网关对 `POST staging/deliver` 也不再特殊处理，原样转发（此前要额外读一次小 JSON 并过并发闸门，闸门同日删除，§7.2）。**超时**只有空闲超时（连接 3 秒、读 900 秒、写 120 秒），不设总时长，进程内共用一个连接池（2026-10-07 审查修复；此前 900 秒是整请求时长，慢网下传几百 MB 的书超过 15 分钟会被截断）。
 

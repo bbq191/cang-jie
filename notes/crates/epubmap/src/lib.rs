@@ -8,7 +8,6 @@
 //!
 //! [`BookMap`] 把两者合起来：`chapter_of(page)` 给出该页所属的**章**（1 级祖先）与**小节**（本条目若 ≥2 级）。
 //! 页号 0-based（封面=0），与 `.rm` 页文件在 `.content` `pages` 里的位置一致。
-mod escape;
 pub mod index;
 pub mod toc;
 
@@ -112,71 +111,20 @@ pub fn read_toc_texts_from<R: Read + Seek>(epub: R) -> (Option<String>, Option<S
     if !exists(&mut ar, &ncx_name) {
         ncx_name = guess_ncx;
     }
-    let nav = read_capped(&mut ar, nav_name);
-    let ncx = read_capped(&mut ar, ncx_name);
-    (nav, ncx)
-}
-
-/// 读 zip 里一个文本条目。设读取上限：解压后的大小由 zip 自己声明，坏书/恶意书可以声称极大（笔记服务 MemoryMax=128M）。
-fn read_capped<R: Read + Seek>(ar: &mut zip::ZipArchive<R>, name: Option<String>) -> Option<String> {
-    const TOC_MAX: u64 = 16 << 20;
-    let mut s = String::new();
-    ar.by_name(&name?).ok()?.take(TOC_MAX).read_to_string(&mut s).ok()?;
-    Some(s)
+    // 读取上限：解压后的大小由 zip 自己声明，坏书/恶意书可以声称极大（笔记服务 MemoryMax=128M），超过
+    // epubpkg::MAX_TEXT_BYTES（16MB）的目录当读不到
+    let mut read = |n: Option<String>| epubpkg::read_text(&mut ar, &n?);
+    (read(nav_name), read(ncx_name))
 }
 
 /// OPF 声明的 (nav 文档, NCX) 在 zip 里的路径；没有 `container.xml`/OPF、或没声明的一项为 None。
+/// href 是 XML 属性原文：`href="a&amp;b.xhtml"` 指的是 `a&b.xhtml`（解码与相对路径都在 epubpkg 里）。
 fn opf_toc_names<R: Read + Seek>(ar: &mut zip::ZipArchive<R>) -> (Option<String>, Option<String>) {
-    use regex::Regex;
-    use std::sync::OnceLock;
-    static ROOT: OnceLock<Regex> = OnceLock::new();
-    static ITEM: OnceLock<Regex> = OnceLock::new();
-    static ATTR: OnceLock<Regex> = OnceLock::new();
-    let root = ROOT.get_or_init(|| Regex::new(r#"(?i)<rootfile\b[^>]*\bfull-path\s*=\s*["']([^"']+)["']"#).unwrap());
-    let item = ITEM.get_or_init(|| Regex::new(r"(?is)<(?:opf:)?item\b[^>]*>").unwrap());
-    let attr = ATTR.get_or_init(|| Regex::new(r#"(?s)([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')"#).unwrap());
-    let Some(container) = read_capped(ar, Some("META-INF/container.xml".into())) else { return (None, None) };
-    let Some(opf_path) = root.captures(&container).map(|c| escape::href_path(&c[1])) else { return (None, None) };
-    let Some(opf) = read_capped(ar, Some(opf_path.clone())) else { return (None, None) };
-    let dir = opf_path.rfind('/').map(|i| &opf_path[..=i]).unwrap_or("");
-    let (mut nav, mut ncx) = (None, None);
-    for m in item.find_iter(&opf) {
-        let (mut href, mut props, mut media) = (None, "", "");
-        // 属性值是 XML 文本：`href="a&amp;b.xhtml"` 指的是 `a&b.xhtml`（href 在 resolve_href 里解）
-        for c in attr.captures_iter(m.as_str()) {
-            let v = c.get(2).or_else(|| c.get(3)).map_or("", |v| v.as_str());
-            match c[1].to_ascii_lowercase().as_str() {
-                "href" => href = Some(v),
-                "properties" => props = v,
-                "media-type" => media = v,
-                _ => {}
-            }
-        }
-        let Some(href) = href else { continue };
-        let path = || resolve_href(dir, href);
-        if nav.is_none() && props.split_whitespace().any(|p| p == "nav") {
-            nav = Some(path());
-        } else if ncx.is_none() && media.eq_ignore_ascii_case("application/x-dtbncx+xml") {
-            ncx = Some(path());
-        }
-    }
+    let Ok(opf) = epubpkg::Package::read(ar) else { return (None, None) };
+    let items = opf.manifest();
+    let nav = items.iter().find(|i| i.has_property("nav")).map(|i| opf.item_path(i));
+    let ncx = items.iter().find(|i| !i.has_property("nav") && i.is_ncx()).map(|i| opf.item_path(i));
     (nav, ncx)
-}
-
-/// manifest 的 href 原始属性值（相对 OPF 所在目录、可能带 XML 实体与百分号编码、可能带 `./`/`../`）→ zip 条目路径。
-fn resolve_href(dir: &str, href: &str) -> String {
-    let decoded = escape::href_path(href);
-    let mut parts: Vec<&str> = dir.split('/').filter(|s| !s.is_empty()).collect();
-    for seg in decoded.split('/') {
-        match seg {
-            "" | "." => {}
-            ".." => {
-                parts.pop();
-            }
-            s => parts.push(s),
-        }
-    }
-    parts.join("/")
 }
 
 #[cfg(test)]
@@ -278,8 +226,8 @@ mod tests {
         // 没有 container.xml 的旧式包：退回按文件名猜，正好叫 nav.xhtml 的优先
         let bytes = zip_of(&[("OEBPS/canvas.xhtml", decoy), ("OEBPS/nav.xhtml", toc)]);
         assert!(read_toc_texts(&bytes).0.is_some_and(|n| n.contains("第二章")));
-        assert_eq!(resolve_href("OEBPS/text/", "../img/a%20b.xhtml#x"), "OEBPS/img/a b.xhtml");
-        assert_eq!(resolve_href("", "./nav.xhtml"), "nav.xhtml");
+        assert_eq!(epubpkg::resolve("OEBPS/text/", "../img/a%20b.xhtml#x"), "OEBPS/img/a b.xhtml");
+        assert_eq!(epubpkg::resolve("", "./nav.xhtml"), "nav.xhtml");
     }
 
     /// 回归：OPF / container.xml / nav 里的 href 带 XML 实体（`a&amp;b.xhtml`）时解到真文件 `a&b.xhtml`，
@@ -295,7 +243,7 @@ mod tests {
         let (nav, ncx_text) = read_toc_texts(&bytes);
         assert!(nav.as_deref().is_some_and(|n| n.contains("甲")), "按 OPF 声明找到 t&c.xhtml，而不是按名猜到 x-nav.xhtml: {nav:?}");
         assert!(ncx_text.is_some());
-        assert_eq!(resolve_href("O&P/", "t&amp;c.xhtml"), "O&P/t&c.xhtml");
+        assert_eq!(epubpkg::resolve("O&P/", "t&amp;c.xhtml"), "O&P/t&c.xhtml");
         let map = BookMap::new(vec![Section { file: "a&b.xhtml".into(), start_page: 0 }], Toc::parse(nav.as_deref(), None));
         let ch = map.chapter_of(0).expect("目录条目与 spine 文件名对上");
         assert_eq!(ch.title, "甲 & 乙", "标题里的实体也解掉");
