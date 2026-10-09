@@ -87,6 +87,18 @@ impl EventBus {
         self.publish_raw(&serde_json::json!({"area": area, "kind": kind, "at": at}).to_string());
     }
 
+    /// 同 [`Self::publish`]，再并进 `extra` 里的字段（对象以外的 `extra` 忽略；`area`/`kind`/`at` 不被覆盖）。
+    /// 渲染自检这类要带 uuid/状态的事件用，不必自己拼 `{"area","kind","at"}` 再 `publish_raw`。
+    pub fn publish_with(&self, area: &str, kind: &str, extra: serde_json::Value) {
+        let mut v = serde_json::json!({"area": area, "kind": kind, "at": crate::clock::now_secs()});
+        if let (Some(dst), serde_json::Value::Object(src)) = (v.as_object_mut(), extra) {
+            for (k, val) in src {
+                dst.entry(k).or_insert(val);
+            }
+        }
+        self.publish_raw(&v.to_string());
+    }
+
     /// 转发已成型的 JSON 行（网关汇聚用）。
     pub fn publish_raw(&self, json_line: &str) {
         let frame = format!("data: {json_line}\n\n");
@@ -263,6 +275,25 @@ pub fn follow_with(paths: &Paths, svc: &str, timing: &FollowTiming, stop: &Atomi
     }
 }
 
+/// 一条事件的公共部分（`{"area","kind",...}`）；[`follow`] 的订阅方据此判断"是不是我关心的那类变化"。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+pub struct Event {
+    #[serde(default)]
+    pub area: String,
+    #[serde(default)]
+    pub kind: String,
+}
+
+impl Event {
+    /// 解析一行事件 JSON；不是 JSON 对象 → `None`。
+    pub fn parse(json: &str) -> Option<Event> {
+        serde_json::from_str(json).ok()
+    }
+    pub fn is(&self, area: &str, kind: &str) -> bool {
+        self.area == area && self.kind == kind
+    }
+}
+
 /// 解析一行 SSE 文本：`data: {...}` → JSON 行；心跳/空行 → None。
 pub fn parse_sse_line(line: &str) -> Option<&str> {
     let line = line.trim_end_matches(['\r', '\n']);
@@ -312,6 +343,21 @@ mod tests {
         assert_eq!(parse_sse_line("data: {\"a\":1}\n"), Some("{\"a\":1}"));
         assert_eq!(parse_sse_line(": ping\n"), None);
         assert_eq!(parse_sse_line(""), None);
+    }
+
+    #[test]
+    fn publish_with_merges_extra_and_event_parses() {
+        let bus = EventBus::new();
+        let mut s = bus.subscribe();
+        bus.publish_with("books", "render", serde_json::json!({"uuid": "u1", "area": "evil"}));
+        let mut buf = [0u8; 2048];
+        let n = s.read(&mut buf).unwrap();
+        let line = parse_sse_line(std::str::from_utf8(&buf[..n]).unwrap().trim_end()).unwrap().to_string();
+        let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!((v["area"].as_str(), v["kind"].as_str(), v["uuid"].as_str()), (Some("books"), Some("render"), Some("u1")), "extra 不覆盖公共字段");
+        let e = Event::parse(&line).unwrap();
+        assert!(e.is("books", "render") && !e.is("notes", "render"));
+        assert_eq!(Event::parse("not json"), None);
     }
 
     #[test]

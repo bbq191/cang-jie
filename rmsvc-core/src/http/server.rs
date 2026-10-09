@@ -169,7 +169,9 @@ pub fn serve_with(bind: &str, router: Router, opts: ServeOpts) -> Result<(), Str
             }
             let path = path.to_string();
             if let Some(g) = &guard {
-                if let Some(reply) = (g.check)(&GuardRequest { method, path: path.clone(), headers: headers.clone(), remote }) {
+                // 守卫也可能 panic（读配置/会话表）：同处理函数一样兜成 JSON 500，而不是让线程带着 panic 消亡、回空 500。
+                let checked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (g.check)(&GuardRequest { method, path: path.clone(), headers: headers.clone(), remote })));
+                if let Some(reply) = checked.unwrap_or_else(|_| Some(Reply::error(500, "服务内部错误（已记录到日志）"))) {
                     let _ = req.respond(reply_to_tiny(reply));
                     return;
                 }
@@ -344,6 +346,21 @@ mod tests {
             }
             assert_eq!(ureq::get(&format!("http://127.0.0.1:{port}/ok")).call().unwrap().status(), 200);
         }
+    }
+
+    /// 守卫 panic 同样得到 JSON 500，服务照常。
+    #[test]
+    fn guard_panic_becomes_json_500() {
+        let router = Router::new().get("/ok", |_| Ok(Reply::ok(&serde_json::json!({"ok": true}))));
+        let guard = Guard { check: Arc::new(|g: &GuardRequest| if g.path == "/boom" { panic!("测试用守卫 panic") } else { None }) };
+        let port = free_port_and_wait(move |a| {
+            let _ = serve_with(&a, router, ServeOpts { guard: Some(guard), ..ServeOpts::default() });
+        });
+        match ureq::get(&format!("http://127.0.0.1:{port}/boom")).call() {
+            Err(ureq::Error::Status(500, r)) => assert!(r.into_string().unwrap().contains("内部错误")),
+            other => panic!("期望 JSON 500，得到 {other:?}"),
+        }
+        assert_eq!(ureq::get(&format!("http://127.0.0.1:{port}/ok")).call().unwrap().status(), 200);
     }
 
     /// 回归：已知长度的流（文件下载）要能完整收完、响应正常结束——此前走 SSE 的"读到连接关闭"路径，

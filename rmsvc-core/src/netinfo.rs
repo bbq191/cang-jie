@@ -14,7 +14,10 @@ pub struct Iface {
 impl Iface {
     /// `other` 是否与本地址同一子网。
     pub fn contains(&self, other: Ipv4Addr) -> bool {
-        let mask: u32 = if self.prefix == 0 { 0 } else { u32::MAX << (32 - self.prefix as u32) };
+        // 前缀来自解析（`ip` 输出的 `/24`），畸形值 >32 夹到 32：否则 `32 - prefix` 下溢、移位溢出，debug 直接 panic，
+        // 而调用方是 mDNS 线程，panic 了 mDNS 就无声无息地停了。
+        let prefix = self.prefix.min(32) as u32;
+        let mask: u32 = if prefix == 0 { 0 } else { u32::MAX << (32 - prefix) };
         (u32::from(self.ip) & mask) == (u32::from(other) & mask)
     }
 }
@@ -153,5 +156,7 @@ mod tests {
         assert!(v[0].contains("10.42.0.7".parse().unwrap()));
         assert!(!v[0].contains("10.11.99.2".parse().unwrap()));
         assert!(v[1].contains("10.11.99.2".parse().unwrap()));
+        let bad = Iface { name: "x".into(), ip: "10.0.0.1".parse().unwrap(), prefix: 99 };
+        assert!(bad.contains("10.0.0.1".parse().unwrap()) && !bad.contains("10.0.0.2".parse().unwrap()), "畸形前缀按 /32，不 panic");
     }
 }

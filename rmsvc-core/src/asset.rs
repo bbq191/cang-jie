@@ -69,6 +69,11 @@ pub fn all_ok(items: &[UploadOutcome]) -> bool {
 }
 
 /// 标准回执 `{ok, items, …extra}`——各上传处理器在此之上只加自己的字段（note / activated …）。
+/// 至少有一项成功（上传多个文件时，有成功的就该发"列表变了"事件）。
+pub fn any_ok(items: &[UploadOutcome]) -> bool {
+    items.iter().any(|i| i.ok)
+}
+
 pub fn receipt(items: &[UploadOutcome], extra: serde_json::Value) -> serde_json::Value {
     let mut v = serde_json::json!({"ok": all_ok(items), "items": items});
     if let (Some(dst), Some(src)) = (v.as_object_mut(), extra.as_object()) {
@@ -138,6 +143,14 @@ impl AssetUploadFlow {
 mod tests {
     use super::*;
     use std::sync::Mutex;
+
+    #[test]
+    fn any_ok_vs_all_ok() {
+        let ok = UploadOutcome { name: "a".into(), ok: true, message: String::new(), item: None };
+        let bad = UploadOutcome::fail("b", "x");
+        assert!(any_ok(&[ok.clone(), bad.clone()]) && !all_ok(&[ok.clone(), bad.clone()]));
+        assert!(!any_ok(&[bad]) && !any_ok(&[]) && all_ok(&[ok]));
+    }
 
     struct MemStore {
         dir: PathBuf,
