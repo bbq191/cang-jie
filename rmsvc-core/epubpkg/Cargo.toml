@@ -2,7 +2,7 @@
 name = "epubpkg"
 version = "0.1.0"
 edition = "2021"
-description = "EPUB 容器/OPF 的最小只读解析：container.xml → OPF 路径、manifest/spine/Dublin Core、href 解码（XML 实体 + 百分号）与 zip 内相对路径解析，条目解压有上限。笔记线 epubmap 与书架 shelf-conv 共用；放在 rmsvc-core 目录下但不依赖 rmsvc-core（不想让纯解析库连带编进 HTTP/TLS 那一整套）。"
+description = "EPUB 容器/OPF 的最小只读解析（外加 xochitl `.epubindex` 起始页表）：container.xml → OPF 路径、manifest/spine/Dublin Core、href 解码（XML 实体 + 百分号）与 zip 内相对路径解析，条目解压有上限。笔记线 epubmap 与书架 shelf-conv 共用；放在 rmsvc-core 目录下但不依赖 rmsvc-core（不想让纯解析库连带编进 HTTP/TLS 那一整套）。"
 license = "MIT"
 
 [dependencies]

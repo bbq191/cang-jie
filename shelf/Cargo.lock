@@ -167,6 +167,7 @@ dependencies = [
 name = "book-serve"
 version = "0.1.0"
 dependencies = [
+ "epubpkg",
  "rmsvc-core",
  "serde",
  "serde_json",

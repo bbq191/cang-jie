@@ -26,6 +26,8 @@ pub struct State {
     pub trash: TrashQueue,
     /// 漫画「页边距」待办（QML 代理 shelf-comic-margins.qmd 在书打开时查、设完销账，见 comic_margins.rs）。
     pub comic_margins: Arc<ComicMargins>,
+    /// 原地替换后找回阅读位置的快照（QML 代理 shelf-keep-progress.qmd 在书打开时查、跳完销账，见 progress.rs）。
+    pub progress: Arc<crate::progress::Progress>,
     /// 原生书库「建文件夹」队列（QML 代理 shelf-mkdir-agent.qmd 拉取执行，2026-09-19 复活，
     /// 见 mkdir.rs 模块文档）；`Arc` 是因为 `Staging::deliver` 的后台线程要跟 `bus` 一样带着走。
     pub mkdir: Arc<MkdirQueue>,
@@ -68,12 +70,13 @@ impl State {
         let comic_margins = Arc::new(ComicMargins::new(&books_state, &paths.xochitl_dir()));
         let staging = Staging::new(paths.staging_dir(), xochitl.clone(), cfg.native_upload_limit_bytes())
             .with_comic_margins(comic_margins.clone());
-        let import = crate::import::Importer::new(xochitl.clone(), staging.clone(), books_state.join("import-tmp"), cfg.native_upload_limit_bytes());
+        let progress = Arc::new(crate::progress::Progress::new(&books_state, &paths.xochitl_dir()));
+        let import = crate::import::Importer::new(xochitl.clone(), staging.clone(), books_state.join("import-tmp"), cfg.native_upload_limit_bytes()).with_progress(progress.clone());
         let bus = Arc::new(EventBus::new());
         let agent_failures = Arc::new(AgentFailures::new(&books_state, Some(bus.clone())));
         let trash = TrashQueue::new(&books_state, &paths.xochitl_dir()).with_failures(agent_failures.clone());
         let mkdir = Arc::new(MkdirQueue::new(&books_state, &paths.xochitl_dir()).with_failures(agent_failures.clone()));
-        State { cfg, spool, staging, xochitl, bus, trash, comic_margins, mkdir, agent_failures, import, import_jobs: crate::import_jobs::ImportJobs::default(), status_cache: Arc::new(TtlCache::new(STATUS_TTL)), inbox_settle: INBOX_SETTLE }
+        State { cfg, spool, staging, xochitl, bus, trash, comic_margins, progress, mkdir, agent_failures, import, import_jobs: crate::import_jobs::ImportJobs::default(), status_cache: Arc::new(TtlCache::new(STATUS_TTL)), inbox_settle: INBOX_SETTLE }
     }
 
     pub fn ensure_dirs(&self) -> std::io::Result<()> {
@@ -86,6 +89,10 @@ impl State {
         let stale_margins = self.comic_margins.prune_missing();
         if stale_margins > 0 {
             println!("[book-serve] 清掉 {stale_margins} 条书已不在库里的页边距待办");
+        }
+        let stale_progress = self.progress.prune(crate::progress::MAX_AGE);
+        if stale_progress > 0 {
+            println!("[book-serve] 清掉 {stale_progress} 份过期（或书已不在）的阅读位置快照");
         }
         let (fixed, tmps) = self.staging.recover_interrupted();
         if fixed > 0 || tmps > 0 {

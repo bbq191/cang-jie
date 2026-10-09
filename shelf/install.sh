@@ -9,7 +9,7 @@
 #   · XDG 目录：~/.config/shelf  ~/.local/share/shelf  ~/.local/state/shelf
 #   · systemd：shelf.target + 各服务单元 → /usr/lib/systemd/system（rootfs，普通重启不丢；OTA 冲掉后重跑本脚本）
 #     写 /usr 前实检 dm-verity，激活即跳过（安全红线）；绝不给 xochitl 加依赖。
-#   · qt-resource-rebuilder qmd：font（字体菜单）/ book（回收站代理、建夹代理、漫画页边距代理、阅读器翻页），qrr 目录在才装
+#   · qt-resource-rebuilder qmd：font（字体菜单）/ book（回收站代理、建夹代理、漫画页边距代理、阅读位置代理、阅读器翻页），qrr 目录在才装
 #
 # 用法：./install.sh [--only gateway,book,...] [--no-systemd] [--src DIR] [--password PW | --password-file FILE]
 #   --only          只装/更新列出的服务（网关总会装）；缺省全装
@@ -275,7 +275,7 @@ if [ -d "$QRR" ] && [ -d "$SRC/xovi" ]; then
     if sel_has book; then
         # 原生回收站代理（网页「设备健康 → 清理」、电脑上的 sheng-ren 删书走 book-serve /trash/*，MainView 注入）、
         # 建文件夹代理（「加入 xochitl → 文件夹」/ 直接导入的目标文件夹不存在时靠 /mkdir/* 真建出来，MainView 注入）、
-        # 漫画页边距代理（DocumentView 注入）、阅读器单击翻页（DocumentView/DeviceSceneView 注入）
+        # 漫画页边距代理、原地替换后找回阅读位置的代理（都是 DocumentView 注入）、阅读器单击翻页（DocumentView/DeviceSceneView 注入）
         for q in $(shelf_svc_qmds book); do
             if [ -f "$SRC/xovi/$q" ]; then
                 bk_keep_if_differs "$SRC/xovi/$q" "$QRR/$q"
@@ -291,7 +291,7 @@ if [ -d "$QRR" ] && [ -d "$SRC/xovi" ]; then
     done
     cj_stage_cleanup
 else
-    echo "-- （无 qt-resource-rebuilder 目录或载荷无 xovi/，跳过字体菜单/界面字体/回收站/建夹/漫画页边距/阅读器翻页 qmd；字体仍可用 fontconfig 装入）"
+    echo "-- （无 qt-resource-rebuilder 目录或载荷无 xovi/，跳过字体菜单/界面字体/回收站/建夹/漫画页边距/阅读位置/阅读器翻页 qmd；字体仍可用 fontconfig 装入）"
 fi
 if [ "$QMD_CHANGED" = "1" ]; then
     cj_pending_mark shelf-qmd || true   # 让 packaging/deploy-xovi-apply.sh 知道有 qmd 待生效

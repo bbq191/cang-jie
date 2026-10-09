@@ -11,6 +11,7 @@ mod import_jobs;
 mod mkdir;
 mod ops;
 mod pending_queue;
+mod progress;
 mod render_check;
 mod service_state;
 mod sidecar;

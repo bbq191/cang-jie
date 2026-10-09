@@ -115,11 +115,18 @@ pub struct Importer {
     pub claim_wait_slow: Duration,
     /// 每一级文件夹等代理建出来的上限，同落库的 `FOLDER_WAIT_TIMEOUT`（单测改短）。
     pub folder_wait: Duration,
+    /// 原地替换前给阅读位置拍快照（见 progress.rs）；`None` 时不拍（单测）。
+    progress: Option<Arc<crate::progress::Progress>>,
 }
 
 impl Importer {
     pub fn new(xochitl: Arc<Xochitl>, staging: Staging, tmp_dir: PathBuf, native_limit: u64) -> Importer {
-        Importer { xochitl, staging, tmp_dir, native_limit, replacing: OpRegistry::default(), claim_wait: CLAIM_WAIT, claim_wait_slow: CLAIM_WAIT_SLOW, folder_wait: crate::staging::FOLDER_WAIT_TIMEOUT }
+        Importer { xochitl, staging, tmp_dir, native_limit, replacing: OpRegistry::default(), claim_wait: CLAIM_WAIT, claim_wait_slow: CLAIM_WAIT_SLOW, folder_wait: crate::staging::FOLDER_WAIT_TIMEOUT, progress: None }
+    }
+
+    pub fn with_progress(mut self, p: Arc<crate::progress::Progress>) -> Importer {
+        self.progress = Some(p);
+        self
     }
 
     /// 建临时目录，并清掉上次进程留下的半成品（被杀时 Drop 来不及删）。返回清掉几个。
@@ -260,7 +267,8 @@ impl Importer {
         })
     }
 
-    /// 原地替换 `<uuid>.epub`，uuid 不变：请求体已在临时目录（0600，[`Self::accept_replace`] 收好）→ 删渲染缓存 → rename 进书库
+    /// 原地替换 `<uuid>.epub`，uuid 不变：请求体已在临时目录（0600，[`Self::accept_replace`] 收好）→ 给阅读位置拍快照
+    /// （progress.rs，2026-10-09）→ 删渲染缓存 → rename 进书库
     /// （同分区，原子）。`.content`/`.metadata` 不动（保留 `lastOpenedPage`、页边距、所在文件夹），漫画页边距不重新登记。
     ///
     /// 删 `.pdf`/`.epubindex` 让 xochitl 下次打开时重排，与大文件通道替换占位的做法一致——**那条路（从没打开过的占位）2026-09-20/25
@@ -271,6 +279,16 @@ impl Importer {
         stage("替换文件");
         // 任务可能在队列里排了一阵，期间用户可能在设备上把书删了：别把新文件写进回收站里的条目。
         self.replaceable(uuid)?;
+        // 删旧 .epubindex 之前给阅读位置拍快照，书下次打开时由 shelf-keep-progress.qmd 跳回去（progress.rs）。
+        // 拍不成只记日志，不影响替换。
+        if let Some(p) = &self.progress {
+            match p.before_replace(uuid) {
+                Ok(crate::progress::Taken::Saved(s)) => println!("[book-serve] 记下《{name}》的阅读位置：PDF 第 {} 页（{}）", s.old_page, s.file.as_deref().unwrap_or("?")),
+                Ok(crate::progress::Taken::KeptPrevious) => println!("[book-serve] 《{name}》上次替换后还没打开过，沿用上次记下的阅读位置"),
+                Ok(crate::progress::Taken::Skipped) => {}
+                Err(e) => eprintln!("[book-serve] 记阅读位置失败（不影响替换）: {e}"),
+            }
+        }
         let _ = std::fs::remove_file(lib.join(format!("{uuid}.pdf")));
         let _ = std::fs::remove_file(lib.join(format!("{uuid}.epubindex")));
         std::fs::rename(body.part.path(), lib.join(format!("{uuid}.epub"))).map_err(|e| ImportError::Failed(format!("替换文件失败: {e}")))?;
@@ -655,5 +673,34 @@ mod tests {
         let stray: Vec<_> = std::fs::read_dir(&lib).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| !n.starts_with(U) || n.ends_with(".new")).collect();
         assert!(stray.is_empty(), "书库里不该有别的文件：{stray:?}");
         assert_eq!(std::fs::read_dir(t.path().join("import-tmp")).unwrap().count(), 0, "临时文件用完即走");
+    }
+    /// 原地替换前给阅读位置拍快照（删旧 `.epubindex` 之前，progress.rs）；快照写不进去也照常替换。
+    #[test]
+    fn replace_snapshots_reading_position_and_survives_snapshot_failure() {
+        use crate::progress::{tests as pt, Lookup, Progress};
+        for broken in [false, true] {
+            let t = tempfile::tempdir().unwrap();
+            let (im, lib) = importer(&t, "127.0.0.1:9", 1 << 20);
+            put_doc(&lib, pt::U, r#"{"type":"DocumentType","visibleName":"人骨拼圖","parent":"","lastOpenedPage":200}"#);
+            std::fs::write(lib.join(format!("{}.epubindex", pt::U)), pt::REAL_INDEX).unwrap();
+            let state = t.path().join("state");
+            std::fs::create_dir_all(&state).unwrap();
+            if broken {
+                std::fs::write(state.join("progress"), b"").unwrap(); // 快照目录的位置被普通文件占着
+            }
+            let p = Arc::new(Progress::new(&state, &lib));
+            let im = im.with_progress(p.clone());
+            let new = mini_epub(&[("OEBPS/a.xhtml", "<p>新版</p>")]);
+            let d = im.replace(pt::U, "人骨拼圖.epub", &mut new.as_slice(), Some(new.len())).unwrap();
+            assert_eq!(d.uuid, pt::U);
+            assert_eq!(std::fs::read(lib.join(format!("{}.epub", pt::U))).unwrap(), new, "替换照常完成（broken={broken}）");
+            assert!(!lib.join(format!("{}.epubindex", pt::U)).exists());
+            if broken {
+                assert_eq!(p.lookup(pt::U, None), Lookup::None);
+            } else {
+                assert_eq!(p.load(pt::U).map(|s| s.old_page), Some(200));
+                assert_eq!(p.lookup(pt::U, None), Lookup::Pending, "新排版还没出来");
+            }
+        }
     }
 }
