@@ -129,7 +129,8 @@ pub fn generate_chapter(c: &Ctx, book: &Book, idx: usize) -> ChapterResult {
     ChapterResult { chapter: idx, title, outcome }
 }
 
-/// 一本书全部章节各生成/校验一遍。
+/// 一本书全部章节各生成/校验一遍（只给测试用：网页按章推送，整本生成的端点 2026-10-09 已删）。
+#[cfg(test)]
 pub fn generate_book(c: &Ctx, book_uuid: &str) -> Result<Vec<ChapterResult>, String> {
     let book = c.store.book(book_uuid)?;
     Ok((0..book.chapters.len()).map(|i| generate_chapter(c, &book, i)).collect())
@@ -221,15 +222,11 @@ impl Uploader for XochitlUploader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ink::BookBrief;
     use notecore::model::{Destination, Entry, Status, Style};
     use std::sync::Mutex;
 
     struct FakeStore(Book);
     impl EntryStore for FakeStore {
-        fn list_books(&self) -> Result<Vec<BookBrief>, String> {
-            Ok(vec![BookBrief { uuid: self.0.uuid.clone(), title: self.0.title.clone() }])
-        }
         fn book(&self, uuid: &str) -> Result<Book, String> {
             if uuid == self.0.uuid { Ok(self.0.clone()) } else { Err("没有这本书".into()) }
         }

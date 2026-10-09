@@ -358,7 +358,7 @@
 
 - `GET /books/{uuid}/sync`：每章给出 `notebookNeeded` / `notebookSynced` / `notebookGeneratedAt` 和对应的 `obsidian*` 三项。`*Needed` = 现在有没有条目要这个去处；`*Synced` = 当前内容指纹与上次推送一致；`*GeneratedAt` / `*ExportedAt` = 历史上推送过的时间。两条投影各算各的指纹。每次请求每本书的两份记录各只读一次（09-24 第三轮审计；原来逐章读，40 章的书一次刷新要读 80 遍）。
 - md 导出（`POST …/export`，单章或整本）落到设备 `~/.local/share/notes/vault/<书名>/`（书名里的 `/`、`\` 换成 `_`；整个书名是空串、`.` 或 `..` 时目录名用 `_`，防止写到 vault 之外——09-24 第三轮审计），指纹没变跳过；「推送本章」写出后在提示里给 `GET …/chapters/{idx}/export.md` 的链接，用户点了浏览器才下载（当场生成，不读盘；文件名按 RFC 5987 编码；2026-10-07 代码审查前是 `await` 之后自动 `window.open`，会被浏览器当弹窗拦掉，未部署）。为此网关代理额外转发 `Content-Disposition` 响应头（2026-10-07 起还转发 200 时的 `Cache-Control`，给裁图用）。
-- `GET /books/{uuid}/vault.json` 把已落盘的 md 原样读回，原本给 host 的 `shelf notes pull` 用；该命令 2026-09-18 已砍，接口还在，没有自动化调用方。
+- `GET /books/{uuid}/vault.json`（把已落盘的 md 原样读回，原本给 2026-09-18 已砍的 host `shelf notes pull` 用）和网页从没调过的 `GET /books`、`GET …/notebooks`、`GET …/exports`、整本的 `POST …/generate`、`POST …/export`，2026-10-09 一并删掉；网页只用按章的生成/导出/下载、`/sync` 和 `import-md`。
 
 ### 8.5 单篇 md 导入
 
@@ -517,7 +517,7 @@
 
 ### 明确不做（本期）
 
-有序列表被原文 / 回答段打断后编号从 1 重来、“（待转写）”占位（09-25 用户决定不改排版，真机上见过《13 級階梯》“1. 第一 / 1. 第2”）；扫描件 PDF、定稿 PDF；设备笔记本上的手写批注读回（设备只读）；颜色语义；自动清空回收站；Anki / Todoist / Readwise 外发；回收站长列表的折叠或按时间过滤（用户明确要求暂不加）；与 Obsidian 双向同步；从设备拉 md 到本机的自动化（host CLI 已砍，需要时手动 `curl …/vault.json`）。
+有序列表被原文 / 回答段打断后编号从 1 重来、“（待转写）”占位（09-25 用户决定不改排版，真机上见过《13 級階梯》“1. 第一 / 1. 第2”）；扫描件 PDF、定稿 PDF；设备笔记本上的手写批注读回（设备只读）；颜色语义；自动清空回收站；Anki / Todoist / Readwise 外发；回收站长列表的折叠或按时间过滤（用户明确要求暂不加）；与 Obsidian 双向同步；从设备拉 md 到本机的自动化（host CLI 已砍，`vault.json` 10-09 也删了；需要时在网页按章下载 md）。
 
 ## 附录 A 旧节号对照（演进表）
 
