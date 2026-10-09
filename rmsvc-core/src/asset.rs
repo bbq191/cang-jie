@@ -68,12 +68,12 @@ pub fn all_ok(items: &[UploadOutcome]) -> bool {
     !items.is_empty() && items.iter().all(|i| i.ok)
 }
 
-/// 标准回执 `{ok, items, …extra}`——各上传处理器在此之上只加自己的字段（note / activated …）。
 /// 至少有一项成功（上传多个文件时，有成功的就该发"列表变了"事件）。
 pub fn any_ok(items: &[UploadOutcome]) -> bool {
     items.iter().any(|i| i.ok)
 }
 
+/// 标准回执 `{ok, items, …extra}`——各上传处理器在此之上只加自己的字段（note / activated …）。
 pub fn receipt(items: &[UploadOutcome], extra: serde_json::Value) -> serde_json::Value {
     let mut v = serde_json::json!({"ok": all_ok(items), "items": items});
     if let (Some(dst), Some(src)) = (v.as_object_mut(), extra.as_object()) {

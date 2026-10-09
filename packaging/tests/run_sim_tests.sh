@@ -1185,7 +1185,7 @@ check "xovi-apply：xovi 未生效且没有 xovi/start（哪怕装了 xovi-reena
 # xovi/start 路径的健康检查也核对 ui-font
 new_sandbox; xovi_live off; echo x > "$R/home/root/xovi/extensions.d/hl-snap.so"; echo x > "$R/home/root/xovi/extensions.d/ui-font.so"
 ( cd "$PKG" && run sh deploy-xovi-apply.sh 127.0.0.1 ) >"$R/out.txt" 2>&1
-check "xovi-apply（xovi/start 路径）：健康检查同时列出 hl-snap 与 ui-font 的加载情况" test -n "$(grep 'hl-snap 加载' "$R/out.txt")" -a -n "$(grep 'ui-font 加载' "$R/out.txt")"
+check "xovi-apply（xovi/start 路径）：健康检查同时列出 hl-snap 与 ui-font 的加载情况" test -n "$(grep 'hl-snap\.so 加载' "$R/out.txt")" -a -n "$(grep 'ui-font\.so 加载' "$R/out.txt")"
 # /usr 单元内容没变、只缺 wants 链接：补链接，但不再堆一份同内容的备份
 new_sandbox
 ( cd "$PKG" && run sh deploy-chrony-boot-wakelock.sh 127.0.0.1 ) >/dev/null 2>&1

@@ -157,17 +157,29 @@ pub fn unique_document_name(dir: &Path, folder: &str, base_name: &str) -> String
 #[derive(serde::Deserialize, Debug, Default, Clone, PartialEq)]
 #[serde(default)]
 pub struct Metadata {
-    #[serde(rename = "visibleName")]
+    #[serde(rename = "visibleName", deserialize_with = "null_default")]
     pub visible_name: String,
     /// `DocumentType` / `CollectionType`。
-    #[serde(rename = "type")]
+    #[serde(rename = "type", deserialize_with = "null_default")]
     pub kind: String,
     /// 所在文件夹 uuid（空串＝根，`trash`＝回收站）。
+    #[serde(deserialize_with = "null_default")]
     pub parent: String,
+    #[serde(deserialize_with = "null_default")]
     pub deleted: bool,
     /// xochitl 写成毫秒字符串，也认数字；用 [`Metadata::created_ms`] 取。
     #[serde(rename = "createdTime")]
     pub created_time: serde_json::Value,
+}
+
+/// 字段写成 JSON `null` 时按缺省值处理（迁移前各服务手写的 `as_str().unwrap_or("")` 就是这样认的；
+/// 不然一个 `"parent": null` 会让整条 `.metadata` 解析失败）。
+fn null_default<'de, D, T>(d: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de> + Default,
+{
+    Ok(<Option<T> as serde::Deserialize>::deserialize(d)?.unwrap_or_default())
 }
 
 impl Metadata {
@@ -250,6 +262,14 @@ pub fn page_count(dir: &Path, uuid: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn metadata_null_fields_fall_back_to_default() {
+        let m: Metadata = serde_json::from_str(r#"{"visibleName":"书","type":"DocumentType","parent":null,"deleted":null}"#).unwrap();
+        assert_eq!(m.parent, "");
+        assert!(!m.deleted);
+        assert!(m.is_live_document());
+    }
 
     #[test]
     fn typed_metadata_and_file_type() {

@@ -51,6 +51,8 @@ pub fn mime_of(name: &str) -> &'static str {
         "epub" => "application/epub+zip",
         "pdf" => "application/pdf",
         "zip" => "application/zip",
+        // xochitl 自己的导出包（zip 容器），/upload 认 application/zip
+        "rmdoc" => "application/zip",
         "png" => "image/png",
         "jpg" | "jpeg" => "image/jpeg",
         "gif" => "image/gif",
