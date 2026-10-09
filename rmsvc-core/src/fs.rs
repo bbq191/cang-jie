@@ -122,18 +122,83 @@ pub enum Content<'a> {
     File(&'a Path),
 }
 
-/// 把文件挪到 `dest_dir` 下的唯一名：rename 优先，跨设备回退 copy+rm。返回落地路径（失败 None）。
+/// 把文件挪到 `dest_dir` 下的唯一名：rename 优先，跨设备回退 [`move_into`] 的"复制到同目录临时名再改名"。返回落地路径（失败 None）。
+/// 此前回退路径直接 `copy` 到正式名：复制途中正式名下就是半截文件（别的线程/inotify 监听看得到），复制失败还把半截文件留在那里。
 pub fn move_unique(src: &Path, dest_dir: &Path) -> Option<PathBuf> {
     let name = src.file_name().and_then(|s| s.to_str()).unwrap_or("file");
     let target = unique_path(dest_dir, name);
-    if std::fs::rename(src, &target).is_ok() {
-        Some(target)
-    } else if std::fs::copy(src, &target).is_ok() {
-        let _ = std::fs::remove_file(src);
-        Some(target)
-    } else {
-        None
+    move_into(src, &target).ok().map(|_| target)
+}
+
+/// 把 `src` 挪成 `dest`（覆盖）：同分区 rename；跨分区（EXDEV 等 rename 失败）时先复制到 `dest` 同目录的临时名
+/// （[`ScratchFile`]，失败/panic 时自动删），再 rename 成 `dest`（原子，看不到半截文件），最后删 `src`。
+pub fn move_into(src: &Path, dest: &Path) -> std::io::Result<()> {
+    if std::fs::rename(src, dest).is_ok() {
+        return Ok(());
     }
+    let dir = dest.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let tmp = ScratchFile::new(dir, ".", "moving.tmp");
+    std::fs::copy(src, tmp.path())?;
+    std::fs::rename(tmp.path(), dest)?;
+    let _ = std::fs::remove_file(src);
+    Ok(())
+}
+
+/// 临时文件路径守卫：名字 `<prefix><pid>.<序号>.<suffix>`（与业务名无关——按书名拼的话书名接近 255 字节上限时临时名超长），
+/// Drop 时删掉（正常路径下早已被 rename 走，删不到也无害；出错/panic 时不把半成品留到下次启动才清）。
+/// 进程被杀时 Drop 来不及跑，由调用方启动时按前缀/后缀清理（见 [`clean_dir`]）。
+pub struct ScratchFile(PathBuf);
+
+impl ScratchFile {
+    /// 在 `dir` 里取一个新名字（不建文件）。
+    pub fn new(dir: &Path, prefix: &str, suffix: &str) -> ScratchFile {
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+        ScratchFile(dir.join(format!("{prefix}{}.{seq}.{suffix}", std::process::id())))
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for ScratchFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// `dir` 下的**普通文件**名（不递归、跳过 `.` 开头的隐藏名/半成品、只留 `keep` 为真的），按名排序；目录不在 → 空。
+/// 字体库、壁纸池、设备健康页各自写过一份同样的遍历。
+pub fn list_files(dir: &Path, keep: impl Fn(&str) -> bool) -> Vec<String> {
+    let mut v: Vec<String> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+        .filter_map(|e| e.file_name().to_str().map(str::to_string))
+        .filter(|n| !n.starts_with('.') && keep(n))
+        .collect();
+    v.sort();
+    v
+}
+
+/// 删掉 `dir` 下名字满足 `pred` 的**普通文件**（启动时清上次进程被杀留下的半成品），返回删了几个。不递归、不碰目录。
+pub fn clean_dir(dir: &Path, pred: impl Fn(&str) -> bool) -> usize {
+    let Ok(rd) = std::fs::read_dir(dir) else { return 0 };
+    rd.flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+        .filter(|e| e.file_name().to_str().is_some_and(&pred))
+        .filter(|e| std::fs::remove_file(e.path()).is_ok())
+        .count()
+}
+
+/// 内容与现有文件相同就不写（不换 inode、不改 mtime，监听它的进程不会被白白唤醒），否则原子写。返回是否真的写了。
+pub fn write_atomic_if_changed(path: &Path, bytes: &[u8]) -> std::io::Result<bool> {
+    if same_content(path, Content::Bytes(bytes)) {
+        return Ok(false);
+    }
+    write_atomic(path, bytes).map(|_| true)
 }
 
 /// 设 unix 权限（如 0o600 给含密码哈希的配置）；非 unix 平台 no-op。失败静默（非致命）。
@@ -185,6 +250,40 @@ mod tests {
     }
 
     use super::*;
+    #[test]
+    fn scratch_list_clean_move_helpers() {
+        let t = tempfile::tempdir().unwrap();
+        let d = t.path();
+        let p = {
+            let s = ScratchFile::new(d, ".x", "tmp");
+            std::fs::write(s.path(), b"half").unwrap();
+            assert!(s.path().file_name().unwrap().to_str().unwrap().starts_with(".x"));
+            s.path().to_path_buf()
+        };
+        assert!(!p.exists(), "Drop 时删掉");
+        for n in ["b.ttf", "a.otf", ".hidden.ttf", "c.part"] {
+            std::fs::write(d.join(n), b"x").unwrap();
+        }
+        std::fs::create_dir(d.join("sub.ttf")).unwrap();
+        assert_eq!(list_files(d, |n| n.ends_with(".ttf") || n.ends_with(".otf")), ["a.otf", "b.ttf"], "排序、跳过隐藏名与目录");
+        assert_eq!(clean_dir(d, |n| n.ends_with(".part")), 1);
+        assert!(!d.join("c.part").exists() && d.join("sub.ttf").is_dir());
+        // move_into 覆盖目标、删源；move_unique 不覆盖
+        std::fs::write(d.join("src"), b"new").unwrap();
+        move_into(&d.join("src"), &d.join("b.ttf")).unwrap();
+        assert_eq!(std::fs::read(d.join("b.ttf")).unwrap(), b"new");
+        assert!(!d.join("src").exists());
+        std::fs::write(d.join("src"), b"z").unwrap();
+        let sub = d.join("dest");
+        std::fs::create_dir(&sub).unwrap();
+        std::fs::write(sub.join("src"), b"old").unwrap();
+        assert_eq!(move_unique(&d.join("src"), &sub).unwrap(), sub.join("1_src"));
+        // 只在内容变了时写
+        assert!(write_atomic_if_changed(&d.join("w"), b"1").unwrap());
+        assert!(!write_atomic_if_changed(&d.join("w"), b"1").unwrap());
+        assert!(write_atomic_if_changed(&d.join("w"), b"2").unwrap());
+    }
+
     #[test]
     fn atomic_write_creates_parent_and_leaves_no_tmp() {
         let t = tempfile::tempdir().unwrap();

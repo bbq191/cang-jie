@@ -2,7 +2,7 @@
 //! 路由 = (方法, 路径模式) → 处理函数；路径模式支持尾部 `/*` 前缀匹配与单段 `{param}`。
 mod router;
 mod server;
-pub use router::{parse_query, Router};
+pub use router::{encode_query, parse_query, Router};
 pub use server::{serve, serve_with, Guard, GuardFn, GuardRequest, ServeOpts, DEFAULT_MAX_CONCURRENT};
 
 use serde::Serialize;
@@ -31,6 +31,34 @@ impl Method {
             _ => Method::Other,
         }
     }
+
+    /// HTTP 方法名（`GET`/`POST`/…）；`Other` → `None`（反向代理转发时据此拒掉不认识的方法）。
+    pub fn as_str(self) -> Option<&'static str> {
+        Some(match self {
+            Method::Get => "GET",
+            Method::Post => "POST",
+            Method::Put => "PUT",
+            Method::Delete => "DELETE",
+            Method::Options => "OPTIONS",
+            Method::Other => return None,
+        })
+    }
+}
+
+/// HTML 文本/属性转义（`& < > " '`）：网关登录页、fontconfig XML 这类拼字符串的地方共用。
+pub fn html_escape(s: &str) -> String {
+    let mut o = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => o.push_str("&amp;"),
+            '<' => o.push_str("&lt;"),
+            '>' => o.push_str("&gt;"),
+            '"' => o.push_str("&quot;"),
+            '\'' => o.push_str("&#39;"),
+            c => o.push(c),
+        }
+    }
+    o
 }
 
 /// 进入领域的请求视图：body 是流（大文件不读进内存）。
@@ -74,6 +102,24 @@ impl JsonBody {
     pub fn bool_or(&self, key: &str, default: bool) -> bool {
         self.0.get(key).and_then(|v| v.as_bool()).unwrap_or(default)
     }
+    /// 必填布尔字段。
+    pub fn bool(&self, key: &str) -> Result<bool, ApiError> {
+        self.0.get(key).and_then(|v| v.as_bool()).ok_or_else(|| ApiError::bad(format!("缺 {key}")))
+    }
+    /// 可选字符串字段（原样，不去空白；缺或不是字符串 → `None`）。"没给"与"给了空串"要区分时用它。
+    pub fn opt_str(&self, key: &str) -> Option<&str> {
+        self.0.get(key).and_then(|v| v.as_str())
+    }
+    pub fn opt_bool(&self, key: &str) -> Option<bool> {
+        self.0.get(key).and_then(|v| v.as_bool())
+    }
+    pub fn opt_u64(&self, key: &str) -> Option<u64> {
+        self.0.get(key).and_then(|v| v.as_u64())
+    }
+    /// 字符串数组字段（缺 → 空；非字符串元素跳过）。
+    pub fn str_list(&self, key: &str) -> Vec<String> {
+        self.0.get(key).and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default()
+    }
 }
 
 impl Request<'_> {
@@ -96,6 +142,14 @@ impl Request<'_> {
     }
     pub fn q(&self, k: &str) -> Option<&str> {
         self.query.get(k).map(|s| s.as_str())
+    }
+    /// 必填查询参数（缺或空白 → 400 "缺 <k>"）。
+    pub fn q_required(&self, k: &str) -> Result<&str, ApiError> {
+        self.q(k).map(str::trim).filter(|s| !s.is_empty()).ok_or_else(|| ApiError::bad(format!("缺 {k}")))
+    }
+    /// 解析查询参数（`?limit=50`）：缺 → `None`；有但解析不了 → `None`（与缺省同处理，调用方 `unwrap_or(默认)`）。
+    pub fn q_parse<T: std::str::FromStr>(&self, k: &str) -> Option<T> {
+        self.q(k).and_then(|v| v.trim().parse().ok())
     }
     pub fn param(&self, k: &str) -> &str {
         self.params.get(k).map(|s| s.as_str()).unwrap_or("")
@@ -224,6 +278,26 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn method_names_escape_and_more_json_accessors() {
+        assert_eq!(Method::Delete.as_str(), Some("DELETE"));
+        assert_eq!(Method::Other.as_str(), None);
+        assert_eq!(html_escape(r#"<a href="x">'&'</a>"#), "&lt;a href=&quot;x&quot;&gt;&#39;&amp;&#39;&lt;/a&gt;");
+        let b = JsonBody(serde_json::json!({"s": " x ", "b": true, "n": 7, "l": ["a", 1, "b"]}));
+        assert_eq!(b.opt_str("s"), Some(" x "));
+        assert_eq!(b.opt_str("nope"), None);
+        assert_eq!((b.opt_bool("b"), b.opt_u64("n"), b.opt_u64("s")), (Some(true), Some(7), None));
+        assert!(b.bool("b").unwrap() && b.bool("n").is_err());
+        assert_eq!(b.str_list("l"), ["a", "b"]);
+        assert!(b.str_list("nope").is_empty());
+        let mut empty: &[u8] = b"";
+        let r = Request { method: Method::Get, path: "/".into(), query: parse_query("limit=50&bad=x&blank=%20"), params: HashMap::new(), content_type: String::new(), content_length: None, headers: vec![], body: &mut empty };
+        assert_eq!(r.q_parse::<usize>("limit"), Some(50));
+        assert_eq!(r.q_parse::<usize>("bad"), None);
+        assert_eq!(r.q_required("limit").unwrap(), "50");
+        assert_eq!(r.q_required("blank").unwrap_err().message, "缺 blank");
+    }
 
     #[test]
     fn json_body_accessors() {
