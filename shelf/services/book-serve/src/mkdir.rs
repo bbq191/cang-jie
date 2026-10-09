@@ -8,7 +8,7 @@
 //! 2026-09-09 note-serve 改成复用书本自己的设备文件夹后没了消费方，2026-09-15 被当死代码物理删除。
 //! 这次真正的消费方是网页母版库「加入 xochitl → 文件夹」自由输入框（2026-09-19 用户反馈"填个文件夹
 //! 名依然不会创建文件夹"）——`staging::Staging::deliver` 落库前调用，folder 不存在就入队，同步等
-//! （`fswatch::watch_until`）agent 真的建出来再继续投递，见 `staging/deliver.rs` 的 `ensure_folder`。代码本身
+//! （`fswatch::wait_for`）agent 真的建出来再继续投递，见 `staging/deliver.rs` 的 `ensure_folder`。代码本身
 //! `git show <删除前的 commit>^:...` 原样捞回，逻辑没变——当年写的时候就已经想清楚了，只是一直没等到
 //! 真消费方。**`Library.createCollection` 这条调用链当年只做到"反编译 + 静态调用链一致"，从没有真机
 //! 点过新建文件夹按钮做交叉验证**（见 `shelf-mkdir-agent.qmd` 头注原样保留的踩坑记录），这次借着

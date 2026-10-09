@@ -182,8 +182,7 @@ mod tests {
     #[test]
     fn inbox_lands_books_and_fails_non_books() {
         let t = tempfile::tempdir().unwrap();
-        let h = t.path().to_str().unwrap().to_string();
-        let paths = Paths::resolve(move |k| if k == "HOME" || k == "XDG_RUNTIME_DIR" { Some(h.clone()) } else { None });
+        let paths = Paths::sandbox(t.path());
         let mut st = State::new(&paths);
         st.inbox_settle = Duration::ZERO;
         st.ensure_dirs().unwrap();
@@ -230,8 +229,7 @@ mod tests {
     #[test]
     fn inbox_defers_files_still_being_written() {
         let t = tempfile::tempdir().unwrap();
-        let h = t.path().to_str().unwrap().to_string();
-        let paths = Paths::resolve(move |k| if k == "HOME" || k == "XDG_RUNTIME_DIR" { Some(h.clone()) } else { None });
+        let paths = Paths::sandbox(t.path());
         let st = State::new(&paths);
         st.ensure_dirs().unwrap();
         let f = st.spool.inbox().join("scp.epub");
@@ -250,8 +248,7 @@ mod tests {
     fn inbox_rejects_retired_host_convertible_exts() {
         // 2026-09-17 EPUB 线架构调整：azw3/mobi/fb2/txt 不再自动转 EPUB，母版库直接拒收。
         let t = tempfile::tempdir().unwrap();
-        let h = t.path().to_str().unwrap().to_string();
-        let paths = Paths::resolve(move |k| if k == "HOME" || k == "XDG_RUNTIME_DIR" { Some(h.clone()) } else { None });
+        let paths = Paths::sandbox(t.path());
         let mut st = State::new(&paths);
         st.inbox_settle = Duration::ZERO;
         st.ensure_dirs().unwrap();
