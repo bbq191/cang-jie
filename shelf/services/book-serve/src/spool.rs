@@ -4,7 +4,7 @@
 //! - `failed/` 失败源（封顶 50MB，`<name>.reason` sidecar 记原因；重试=人工拷回 `inbox/`，2026-09-22 起不再有 HTTP 重试/删除接口）。
 //!
 //! 处理成功的书进母版库（`staging/`，见 `staging` 模块），本队列不再另存一份。
-use rmsvc_core::fs::{move_unique, unique_path};
+use rmsvc_core::fs::{clean_dir, list_files, move_unique, unique_path, write_atomic};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -64,7 +64,7 @@ impl Spool {
     pub fn archive_failed(&self, p: &Path, reason: &str) {
         if let Some(t) = move_unique(p, &self.failed()) {
             if !reason.trim().is_empty() {
-                let _ = std::fs::write(reason_path(&t), reason.trim());
+                let _ = write_atomic(&reason_path(&t), reason.trim().as_bytes());
             }
         }
         prune(&self.failed(), FAILED_CAP);
@@ -75,22 +75,13 @@ impl Spool {
     /// 此前它们也被"移回 inbox"——但 inbox 追平按点开头名字跳过（半成品不动），于是这些垃圾永远躺在 inbox 里占盘、
     /// 每次重启还被再"恢复"一遍。
     pub fn recover_orphans(&self) -> usize {
-        let mut n = 0;
-        if let Ok(rd) = std::fs::read_dir(self.work()) {
-            for e in rd.flatten() {
-                let p = e.path();
-                if !p.is_file() {
-                    continue;
-                }
-                if e.file_name().to_string_lossy().starts_with('.') {
-                    let _ = std::fs::remove_file(&p);
-                    continue;
-                }
-                move_unique(&p, &self.inbox());
-                n += 1;
-            }
+        let work = self.work();
+        clean_dir(&work, |n| n.starts_with('.'));
+        let names = list_files(&work, |_| true);
+        for n in &names {
+            move_unique(&work.join(n), &self.inbox());
         }
-        n
+        names.len()
     }
 
     #[cfg(test)]
