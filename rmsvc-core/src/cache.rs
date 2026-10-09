@@ -64,6 +64,12 @@ impl FileStamp {
     pub fn read(path: &std::path::Path) -> Option<FileStamp> {
         std::fs::metadata(path).ok().map(|m| FileStamp::of(&m))
     }
+    /// 戳里记的文件长度（字节）：调用方要拿它跟实际读到的字节数比对时用（如"读的过程中被改写没有"）。
+    /// 戳不是容器，"空"没有意义，不配 `is_empty`。
+    #[allow(clippy::len_without_is_empty)]
+    pub fn len(&self) -> u64 {
+        self.len
+    }
 }
 
 /// 按文件戳失效的键值缓存：给"每次列表都要开文件判一遍、但文件很少变"的查询用（母版库列表的落库边车、
