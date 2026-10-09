@@ -20,7 +20,6 @@ mod ui;
 
 use rmsvc_core::http::{bind, ApiError, Method, Reply, Router, ServeOpts};
 use rmsvc_core::paths::Paths;
-use rmsvc_core::registry;
 use rmsvc_core::service::{self, ServiceSpec};
 use std::sync::Arc;
 
@@ -119,7 +118,7 @@ fn main() {
             Some(pem) => Reply::bytes("application/x-x509-ca-cert", pem).with_header("Content-Disposition", "attachment; filename=\"shelf-ca.crt\""),
             None => Reply::error(404, "HTTPS 未启用，无 CA"),
         }) })
-        .get("/api/services", bind(&paths, |p, _| Ok(Reply::ok(&serde_json::json!({"services": registry::list(p)})))))
+        .get("/api/services", bind(&paths, |p, _| Ok(manage::services(p))))
         // 语言包：`{lang}` 整段捕获（路由只支持整段 `{param}`，不支持段内混literal后缀），前端仍按
         // `/ui/locales/zh-CN.json` 这种带扩展名的 URL 请求，这里自己剥掉 `.json`。不认识的语言码
         // `ui::locale_json` 会落中文，不会 404/空白。

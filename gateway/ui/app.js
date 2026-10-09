@@ -467,8 +467,8 @@ function renderTransfer(sec){sec.innerHTML=`
   refresh();sec.refresh=refresh;sec.onEvent=ev=>refreshAt(ev.area!=='books'?3:!ev.svc&&ev.kind==='batch'?1:ev.kind==='staging'||ev.kind==='render'?2:3);subtabs(sec);}
 
 /* 服务 tab（按注册表出现）。key = 注册的服务名。service→seg（AREA）不再在这里手搓一份——
-   那正是 gateway/src/manage.rs::MODULES 表已声明的唯一事实源，这里改成初始化时从
-   GET /api/manage 现读，见下面 init() 里的 AREA 变量：手搓的映射会跟 MODULES 改名/新增
+   那正是 gateway/src/manage.rs::MODULES 表已声明的唯一事实源，网关在 GET /api/services 的每一项上带回
+   `seg`（2026-10-09 起；此前网页为它另取一次 /api/manage），见下面 init() 里的 AREA 变量：手搓的映射会跟 MODULES 改名/新增
    悄悄脱节，SSE 事件的 area 就对不上、对应 tab 的事件驱动刷新会静默失效。 */
 const TABS={
  'note-serve':{titleKey:'tab.notes',title:'笔记',render:renderNotes},
@@ -1423,10 +1423,9 @@ function renderManage(sec){sec.innerHTML=`
   langsel.onchange=()=>{LS.set('lang',langsel.value);location.reload()};
 
   const d=await j('/api/services');
-  // service→seg：跟 gateway/src/manage.rs::MODULES 保持同一份事实源，不再在前端手搓映射（拿不到就退回
-  // 用服务名本身当 area，跟下面两处 `AREA[s.name]||s.name` 的 fallback 语义一致，不阻塞页面渲染）。
-  let AREA={};
-  try{AREA=Object.fromEntries((await j('/api/manage')).modules.map(m=>[m.service,m.seg]))}catch{}
+  // service→seg：网关从 manage.rs::MODULES 派生、随服务列表带回（没有 seg 就退回用服务名本身当 area，
+  // 跟下面两处 `AREA[s.name]||s.name` 的 fallback 语义一致）。
+  const AREA=Object.fromEntries((d.services||[]).filter(s=>s.seg).map(s=>[s.name,s.seg]));
   const svcs=(d.services||[]).filter(s=>s.ui&&TABS[s.name]).sort((a,b)=>a.ui.order-b.ui.order);
   /* 首层标签顺序（2026-09-10 用户重排）：传书 / 笔记 / 其他 / 管理。笔记单独占位，xochitl(font-serve)/
      壁纸(wallpaper-serve)——目前 svcs 里除笔记外还带 ui.order 的候选——一律降一级包进「其他」（见 renderOther）。 */

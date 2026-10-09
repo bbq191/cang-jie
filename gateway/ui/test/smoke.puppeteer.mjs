@@ -31,8 +31,7 @@ const evil = '<img src=x onerror=window.__xss=1>.epub';
 const routes = {
   '/ui/locales/zh-CN.json': () => JSON.parse(zh),
   '/ui/locales/en-US.json': () => JSON.parse(zh), // 无头浏览器缺省英文界面：同样喂中文包，文案断言不必分两套
-  '/api/services': () => ({services: [{name:'note-serve', ui:{order:1}}, {name:'font-serve', ui:{order:2}}, {name:'wallpaper-serve', ui:{order:3}}]}),
-  '/api/manage': () => ({modules: [{service:'note-serve', seg:'notes'}, {service:'font-serve', seg:'fonts'}, {service:'wallpaper-serve', seg:'wallpapers'}]}),
+  '/api/services': () => ({services: [{name:'note-serve', seg:'notes', ui:{order:1}}, {name:'font-serve', seg:'fonts', ui:{order:2}}, {name:'wallpaper-serve', seg:'wallpapers', ui:{order:3}}]}),
   '/api/fonts': () => ({items:[]}), '/api/fonts/status': () => ({ok:true}),
   '/api/fonts/ui': () => ({ok:true, items:[{name:'Sarasa UI SC', bytes:135000000, extra:{names:{cn:'更纱黑体 UI SC'}, cjkPct:100, files:['a.ttf','b.ttf','c.ttf']}}, {name:evil, bytes:1, extra:{cjkPct:0}}], sans:'Sarasa UI SC', serif:'', restartNeeded:true}),
   '/api/wallpapers': () => ({items:[]}), '/api/wallpapers/status': () => ({ok:true, mode:'sequential'}),
