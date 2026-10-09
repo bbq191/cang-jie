@@ -1,0 +1,153 @@
+; ─────────────────────────────────────────────────────────────────────────
+; shelf-keep-progress.qmd —— 原地替换后找回阅读位置（固件 3.28 线，2026-10-09，未真机验证）。
+;
+; 【要解决的事】电脑上的 sheng-ren 经 book-serve `POST /import?uuid=` 原地替换一本在读的 EPUB：book-serve 删掉渲染缓存
+;   `<uuid>.pdf`/`<uuid>.epubindex`、换上新 `<uuid>.epub`，xochitl 下次打开整本重排。`lastOpenedPage` 还是旧排版的页号，
+;   xochitl 自己在 `document.onPageCountChanged` 里按"旧页 / 旧总页数"比例估一页，书改动大时偏很远。
+;
+; 【为什么必须在 xochitl 里做】外部改 `.metadata`/`.content` 会被运行中 xochitl 的内存状态盖回去；只能调它自己的
+;   `sceneView.goToPage(n)`（DocumentView 根作用域里的 DeviceSceneView，n = 文档页序，0 起；`_open_helper` 开书也用它）。
+;
+; 【做法】book-serve 替换前记下旧位置落在哪个 spine 文件、文件内比例（progress.rs）。这里在书打开（root.document 变化）、
+;   页数变化、目录到达三个时机各重启一次 2 秒的单次 Timer——排在 xochitl 自己的两次跳页（按比例估页 / chapterPositionTracker
+;   恢复）之后——到点 `GET http://127.0.0.1:8790/progress/<uuid>?pages=<当前总页数>`：
+;   - 404 = 不是替换过的书（或已应用），收工；
+;   - 202 = 新排版（新 .epubindex）还没写出来：每 5 秒再问，从开书算起最多约 60 秒；到点还没有就 `POST /progress/applied
+;     {reason:"timeout"}` 放弃并删快照（免得以后某次打开把用户已经读到的地方又拉回去）；书关了 / 换书就停（快照留着下次再试）；
+;   - 200 = `{page}`：页号还超出阅读器当前总页数（排版没完）按 202 处理；否则与当前页不同就 `sceneView.goToPage(page)`，
+;     再 `POST /progress/applied` 删快照。**每本书只跳一次**；跳完 15 秒内 xochitl 若因页数变化 / 目录到达又自己跳走，
+;     再跳回来（最多 3 次），之后用户翻页、改字号都不干预。
+;   book-serve 不在（XHR status 0）或回别的状态码：安静收工，不打日志、不重试。
+;
+; 【注意】`document.id` 是值类型，必须先 `String(...)` 再去花括号（同 shelf-comic-margins.qmd）。与 comic-margins、
+;   reader-page-turn 插在同一个锚点（ChapterPositionTracker 之后），id 都带各自前缀，互不影响。只问 EPUB（Document.Ebook）。
+; 【qmldiff 纪律】INSERT{} 块内是 QML，注释只能用 //。
+; 【日志】journalctl -u xochitl | grep CJ-KEEP-PROGRESS：只在跳页、跳回、放弃时各一行。生效需要整机重启（qmd 只在 xochitl 启动时加载）。
+; ─────────────────────────────────────────────────────────────────────────
+AFFECT /qml/device/view/documentview/DocumentView.qml
+
+    TRAVERSE ?#root
+        LOCATE AFTER ChapterPositionTracker#chapterPositionTracker
+        INSERT {
+            Item {
+                id: cjKeepProgress
+                visible: false
+                width: 0
+                height: 0
+                // 当前这本书的 uuid（去花括号）；空 = 没有在查
+                property string did: ""
+                // 这本书已经问完（跳过 / 404 / 放弃 / 服务不在）
+                property bool done: false
+                property bool busy: false
+                // 跳到的页（-1 = 没跳）、跳的时刻、跳回次数
+                property int target: -1
+                property double jumpedAt: 0
+                property int reasserts: 0
+                // 从开书算起问到这个时刻为止（毫秒）
+                property double deadline: 0
+
+                function uuidOf() {
+                    return root.document ? String(root.document.id).replace(/[{}]/g, "") : "";
+                }
+                function same() {
+                    return did !== "" && cjKeepProgress.uuidOf() === did;
+                }
+                function opened() {
+                    cjKeepTimer.stop();
+                    did = (root.document && root.document.fileType === Document.Ebook) ? cjKeepProgress.uuidOf() : "";
+                    done = did === "";
+                    busy = false;
+                    target = -1;
+                    jumpedAt = 0;
+                    reasserts = 0;
+                    deadline = Date.now() + 60000;
+                    if (!done) { cjKeepTimer.interval = 2000; cjKeepTimer.restart(); }
+                }
+                // 页数变化 / 目录到达：还没问完就 2 秒后再问；刚跳过且在 15 秒内，就 2 秒后看看要不要跳回来
+                function nudge() {
+                    if (!same()) { return; }
+                    if (!done || (target >= 0 && reasserts < 3 && Date.now() - jumpedAt < 15000)) {
+                        cjKeepTimer.interval = 2000;
+                        cjKeepTimer.restart();
+                    }
+                }
+                function post(reason) {
+                    var a = new XMLHttpRequest();
+                    a.open("POST", "http://127.0.0.1:8790/progress/applied");
+                    a.setRequestHeader("Content-Type", "application/json");
+                    a.send(JSON.stringify({ uuid: did, reason: reason }));
+                }
+                function retryOrGiveUp() {
+                    if (Date.now() < deadline) {
+                        cjKeepTimer.interval = 5000;
+                        cjKeepTimer.restart();
+                    } else {
+                        done = true;
+                        console.warn("CJ-KEEP-PROGRESS: " + did + " gave up (new layout not ready)");
+                        post("timeout");
+                    }
+                }
+                function ask() {
+                    if (!same()) { return; }
+                    if (done) {
+                        // 跳过之后 xochitl 自己又跳走了：跳回来
+                        if (target >= 0 && reasserts < 3 && Date.now() - jumpedAt < 15000 && root.currentPage !== target && target < root.pageCount) {
+                            reasserts += 1;
+                            sceneView.goToPage(target);
+                            console.warn("CJ-KEEP-PROGRESS: " + did + " -> " + target + " (again)");
+                        }
+                        return;
+                    }
+                    if (busy) { return; }
+                    busy = true;
+                    var want = did;
+                    var x = new XMLHttpRequest();
+                    var k = cjKeepProgress;
+                    x.onreadystatechange = function() {
+                        if (x.readyState !== XMLHttpRequest.DONE) { return; }
+                        k.busy = false;
+                        if (!k.same() || want !== k.did || k.done) { return; }
+                        if (x.status === 202) { k.retryOrGiveUp(); return; }
+                        if (x.status !== 200) { k.done = true; return; }
+                        try {
+                            var p = JSON.parse(x.responseText).page;
+                            if (typeof p !== "number" || p < 0) { k.done = true; return; }
+                            if (p >= root.pageCount) { k.retryOrGiveUp(); return; }
+                            k.done = true;
+                            k.target = p;
+                            k.jumpedAt = Date.now();
+                            if (root.currentPage !== p) {
+                                sceneView.goToPage(p);
+                            }
+                            console.warn("CJ-KEEP-PROGRESS: " + want + " -> " + p);
+                            k.post("applied");
+                        } catch (e) {
+                            k.done = true;
+                            console.warn("CJ-KEEP-PROGRESS: failed " + e);
+                        }
+                    };
+                    x.open("GET", "http://127.0.0.1:8790/progress/" + did + "?pages=" + root.pageCount);
+                    x.send();
+                }
+
+                Connections {
+                    target: root
+                    function onDocumentChanged() { cjKeepProgress.opened(); }
+                }
+                Connections {
+                    target: root.document
+                    ignoreUnknownSignals: true
+                    function onPageCountChanged() { cjKeepProgress.nudge(); }
+                    function onTableOfContentsUpdated() { cjKeepProgress.nudge(); }
+                }
+                Timer {
+                    id: cjKeepTimer
+                    interval: 2000
+                    repeat: false
+                    onTriggered: { cjKeepProgress.ask(); }
+                }
+            }
+        }
+    END TRAVERSE
+
+END AFFECT

@@ -33,7 +33,7 @@ shelf_select() {
 shelf_svc_qmds() {
     case "$1" in
         font) echo "font-menu-dynamic.qmd ui-font-tokens.qmd" ;;
-        book) echo "shelf-trash-agent.qmd shelf-mkdir-agent.qmd shelf-comic-margins.qmd reader-page-turn.qmd" ;;
+        book) echo "shelf-trash-agent.qmd shelf-mkdir-agent.qmd shelf-comic-margins.qmd shelf-keep-progress.qmd reader-page-turn.qmd" ;;
         *) echo "" ;;
     esac
 }

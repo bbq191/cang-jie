@@ -112,6 +112,7 @@ qmd_mark() {
         shelf-mkdir-agent.qmd) echo "SHELF-MKDIR:" ;;
         shelf-trash-agent.qmd) echo "SHELF-TRASH:" ;;
         shelf-comic-margins.qmd) echo "CJ-COMIC-MARGIN:" ;;
+        shelf-keep-progress.qmd) echo "CJ-KEEP-PROGRESS:" ;;
         *) echo "" ;;
     esac
 }

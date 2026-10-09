@@ -109,7 +109,7 @@ mk_payload() { # DIR
     done
     printf '[Unit]\nDescription=t\n[Install]\nWantedBy=multi-user.target\n' > "$P/systemd/shelf.target"
     echo '#!/bin/sh' > "$P/lo-alias/lo-alias.sh"
-    for q in font-menu-dynamic.qmd font-menu-dynamic-3.27.qmd ui-font-tokens.qmd shelf-trash-agent.qmd shelf-mkdir-agent.qmd shelf-comic-margins.qmd reader-page-turn.qmd; do echo "qmd $q v1" > "$P/xovi/$q"; done
+    for q in font-menu-dynamic.qmd font-menu-dynamic-3.27.qmd ui-font-tokens.qmd shelf-trash-agent.qmd shelf-mkdir-agent.qmd shelf-comic-margins.qmd shelf-keep-progress.qmd reader-page-turn.qmd; do echo "qmd $q v1" > "$P/xovi/$q"; done
     cp "$REPO/shelf/install.sh" "$REPO/shelf/uninstall.sh" "$REPO/shelf/manifest.sh" "$PKG/devlib.sh" "$P/"
 }
 
@@ -266,7 +266,7 @@ check "install 全量：退出 0" test "$rc" -eq 0
 check "install：8 个服务二进制都在" test -x "$B/gateway" -a -x "$B/book-serve" -a -x "$B/note-serve" -a -x "$B/wallpaper-serve"
 check "install：辅助脚本 lo-alias.sh / shelf-uninstall / 库 已装" test -x "$B/lo-alias.sh" -a -x "$B/shelf-uninstall" -a -f "$R/home/root/.local/lib/shelf/manifest.sh" -a -f "$R/home/root/.local/lib/shelf/devlib.sh"
 check "install：单元 + shelf.target + wants 链接" test -f "$CJ_SYSD/gateway.service" -a -L "$CJ_SYSD/shelf.target.wants/book-serve.service" -a -L "$CJ_SYSD/multi-user.target.wants/shelf.target"
-check "install：六个 qmd（字体/界面字体/回收站/建夹/漫画页边距/阅读器翻页）都在 qrr 目录" test -f "$Q/font-menu-dynamic.qmd" -a -f "$Q/ui-font-tokens.qmd" -a -f "$Q/shelf-trash-agent.qmd" -a -f "$Q/shelf-mkdir-agent.qmd" -a -f "$Q/shelf-comic-margins.qmd" -a -f "$Q/reader-page-turn.qmd"
+check "install：七个 qmd（字体/界面字体/回收站/建夹/漫画页边距/阅读位置/阅读器翻页）都在 qrr 目录" test -f "$Q/font-menu-dynamic.qmd" -a -f "$Q/ui-font-tokens.qmd" -a -f "$Q/shelf-trash-agent.qmd" -a -f "$Q/shelf-mkdir-agent.qmd" -a -f "$Q/shelf-comic-margins.qmd" -a -f "$Q/shelf-keep-progress.qmd" -a -f "$Q/reader-page-turn.qmd"
 check "install：rw 窗口只开一次、最后一次 mount 是 ro" test "$(count_log 'remount,rw')" = 1 -a "$(last_mount)" = "mount -o remount,ro /"
 check "install：不跑 xovi/start、不重启 xochitl（只打印提示）" test "$(count_log XOVI_START)" = 0 -a "$(count_log 'restart xochitl')" = 0
 check "install：qmd 生效提示指路整机重启（deploy-xovi-apply.sh / reboot），不教 systemctl restart xochitl" test -n "$(grep '生效需整机重启' "$R/out1.txt")" -a -z "$(grep 'systemctl restart xochitl' "$R/out1.txt")"
@@ -348,6 +348,7 @@ POST_SIG="$(tree_sig | grep -v -e 'home/root/\.config/shelf/' -e 'home/root/\.lo
 sig_eq "uninstall：装过的每个文件都被删（文件树回到安装前，仅剩用户数据）" "$PRE_SIG" "$POST_SIG"
 check "uninstall：comic-margins qmd 也删了" test ! -e "$Q/shelf-comic-margins.qmd"
 check "uninstall：reader-page-turn qmd 也删了" test ! -e "$Q/reader-page-turn.qmd"
+check "uninstall：keep-progress qmd 也删了" test ! -e "$Q/shelf-keep-progress.qmd"
 check "uninstall：mkdir-agent qmd / lo-alias.sh / shelf-uninstall / 库 / 旧命名遗留 全清" test ! -e "$Q/shelf-mkdir-agent.qmd" -a ! -e "$B/lo-alias.sh" -a ! -e "$B/shelf-uninstall" -a ! -e "$R/home/root/.local/lib/shelf" -a ! -e "$CJ_SYSD/shelf-gateway.service" -a ! -e "$B/shelf-gateway"
 check "uninstall：用户数据（含 share/shelf 里的用户文件、笔记线数据）保留" test -f "$R/home/root/.local/share/shelf/user-file.txt" -a -f "$R/home/root/.local/state/notes/entries.json"
 check "uninstall：壁纸还原调用了 wallpaper-serve disable" grep -q 'wallpaper-serve disable' "$CJ_SIM_LOG"
@@ -770,7 +771,7 @@ mk_dump() {
         echo "XMAP|/home/root/xovi/extensions.d/hl-snap.so|3|0"
         echo "HAS_XOVI|1"; echo "EXT_FILE|hl-snap.so|1999000000"
         echo "HAS_QRR|1"
-        for q in font-menu-dynamic.qmd ui-font-tokens.qmd shelf-trash-agent.qmd shelf-mkdir-agent.qmd shelf-comic-margins.qmd reader-page-turn.qmd; do echo "QRR_FILE|$q|1999000000"; done
+        for q in font-menu-dynamic.qmd ui-font-tokens.qmd shelf-trash-agent.qmd shelf-mkdir-agent.qmd shelf-comic-margins.qmd shelf-keep-progress.qmd reader-page-turn.qmd; do echo "QRR_FILE|$q|1999000000"; done
         echo "HAS_APPLOAD|0"
         for s in $VSVCS; do echo "UNIT|svc|$s.service|1|1|active|0|5000|10240|20480|7600000|-"; done
         echo "UNIT|target|shelf.target|1|1|active|-|-|-|-|-|-"
@@ -892,7 +893,7 @@ printf '  sl  local_address                         remote_address              
 for s in $VSVCS; do : > "$B/$s"; printf '[Service]\nExecStart=/home/root/.local/bin/%s\n' "$s" > "$R/usr/lib/systemd/system/$s.service"; done
 for u in shelf.target xovi-reenable.service wifi-watch.service chrony-boot-wakelock.service; do : > "$R/usr/lib/systemd/system/$u"; done
 : > "$B/wifi-watch.sh"
-for q in font-menu-dynamic.qmd ui-font-tokens.qmd shelf-trash-agent.qmd shelf-mkdir-agent.qmd shelf-comic-margins.qmd reader-page-turn.qmd; do : > "$Q/$q"; done
+for q in font-menu-dynamic.qmd ui-font-tokens.qmd shelf-trash-agent.qmd shelf-mkdir-agent.qmd shelf-comic-margins.qmd shelf-keep-progress.qmd reader-page-turn.qmd; do : > "$Q/$q"; done
 printf 'f1\nf2\nf3\nf4\tx\n' > "$R/host-flight.log"   # 飞行记录仪在宿主机上（09-25 更正）；末行带 TAB：要压成空格，不能错位
 export CJ_FLIGHT_LOG="$R/host-flight.log"
 cat > "$R/journal.txt" <<'EOF'
