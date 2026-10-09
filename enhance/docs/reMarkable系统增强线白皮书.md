@@ -7,9 +7,11 @@
 > - 只想知道"现在有哪些工具、怎么开关"：读 §00b 一节就够。
 > - 要改 xovi 扩展或 qmd 补丁：§02（扩展怎么生效）、§04（尤其「qmd 补丁怎么离线验证」「hook 安全性」）。
 > - 关心整机耗电：§03j（设备空闲时谁在叫醒 CPU）。
-> - 想知道最近改了什么、哪些还没手测：§03m、§03n 和 §05。
+> - 想知道最近改了什么、哪些还没手测：§03p（10-09 第六轮审计，含「已知风险」）、§03o、§03n 和 §05。
 >
-> **§ 编号固定不变**（代码注释和别的文档按编号引用），所以章节顺序和编号不完全对应：现状在 §00b，原理从 §02 起，踩坑 §04，待办 §05。
+> **§ 编号固定不变**（代码注释和别的文档按编号引用），所以章节顺序和编号不完全对应：现状在 §00b，原理从 §02 起，各工具与历轮改动 §03a–§03p，踩坑 §04，待办 §05。
+>
+> **验证程度的写法**：「真机」= 在设备上跑过；「已部署」= 装上了设备、部署自检通过，但功能本身没手测；「开发机」= 只有 host 测试。
 >
 > **2026-09-30 起，手写优化（hw-stroke）和电池刺客（battop）已从仓库和设备上移除**（§03n）。§03b、§03c、§03e–§03g 是它们的历史记录，已压缩成要点；其中 §03c 的逆向结论（xochitl 怎么画笔画）本身仍然成立。
 
@@ -26,7 +28,8 @@
 | 设备空闲时谁在定时把 CPU 叫醒（整套设备，不只本线） | §03j |
 | 电池刺客、手写优化为什么没了、旧设备怎么清 | §03n |
 | （历史）电池刺客与两次冻机；手写笔锋的逆向与实现 | §03b；§03c → §03e → §03f → §03g |
-| 三轮审计（09-24 / 09-25 / 09-30）给本线改了什么 | §03k / §03l / §03m |
+| 历轮审计（09-24 / 09-25 / 09-30 / 10-09）给本线改了什么 | §03k / §03l / §03m / §03p |
+| 审计发现、还没修的 C 扩展隐患 | §03p「已知风险」 |
 | 改 qmd 补丁后怎么离线验证（为什么不能用 `check-compatibility`） | §04「qmd 补丁怎么离线验证」 |
 | 改了扩展为什么要整机重启、不能只重启 xochitl | §04「hook 安全性」末条 |
 | 为什么单点工具要单独成线 | §00、§01 |
@@ -35,29 +38,30 @@
 
 ![enhance 的工具怎么接到设备上](diagrams/enhance-overview.svg)
 
-这条线是一组**互相独立的单点增强工具**，都不修改 xochitl（reMarkable 自带的阅读/笔记程序）本身。设备固件 3.28.0.172。现役的只有下面五样（另有 2026-10-07 新做的界面字体，见表后）：
+这条线是一组**互相独立的单点增强工具**，都不修改 xochitl（reMarkable 自带的阅读/笔记程序）本身。设备固件 3.28.0.172。现役的是下面六样：
 
 | 工具 | 是什么 | 状态 | 开关 |
 |---|---|---|---|
 | **hl-snap**（[README](../hl-snap/README.md)） | xovi 扩展 `hl-snap.so`：荧光笔划中文时划哪高亮哪，不再整行吸附；hook 一个函数（§03a） | ✅ 真机通，日常在用 | 「管理 → 系统增强」，写 `hlSnapCjk`，**默认开**，下一次划线即生效 |
-| **reader-page-turn**（§03i） | qmd 补丁 `reader-page-turn.qmd`（源码在 `shelf/xovi/`，随 book 服务安装）：单击屏幕左右各 7% 边缘翻页（日漫翻页规则 2026-10-07 删除，未部署） | ✅ 离线 + 真机验证（09-24）；10-07 删日漫分支只做了离线验证 | 「管理 → 系统增强」，写 `tapPageTurn`，**默认关**，重新打开书生效 |
-| **wallpaper-serve**（[README](../wallpaper-serve/README.md)） | Web 服务（8793）：上传即用的休眠壁纸，每次休眠后轮换；靠 xochitl 隐藏配置键 `SleepScreenPath` | ✅ 真机通 | 「其他 → 壁纸」 |
-| **font-serve**（`../font-serve/src/main.rs` 头注；原理在书架白皮书） | Web 服务（8792）：上传字体即装进 fontconfig，维护中文回退链 | ✅ 真机通 | 「其他 → xochitl」，重开字体菜单即可选 |
+| **reader-page-turn**（§03i） | qmd 补丁 `reader-page-turn.qmd`（源码在 `shelf/xovi/`，随 book 服务安装）：单击屏幕左右各 7% 边缘翻页 | ✅ 离线 + 真机验证（09-24）；10-07 删掉日漫翻页规则：离线验证、已部署，功能未手测 | 「管理 → 系统增强」，写 `tapPageTurn`，**默认关**，重新打开书生效 |
+| **ui-font**（[README](../ui-font/README.md)，§03o） | xovi 扩展 `ui-font.so` + qmd `ui-font-tokens.qmd` + font-serve 的界面字体仓库：把 xochitl **界面**的字体换成上传的字体，阅读器字体不变 | ✅ 真机目测通过（10-07：书库、设置、对话框、标题都换成更纱，阅读不变） | 「其他 → xochitl → 界面字体」，整机重启生效 |
+| **wallpaper-serve**（[README](../wallpaper-serve/README.md)） | Web 服务（`127.0.0.1:8793`）：上传即用的休眠壁纸，每次休眠后轮换；靠 xochitl 隐藏配置键 `SleepScreenPath` | ✅ 真机通 | 「其他 → 壁纸」 |
+| **font-serve**（路由见 [本线 README](../README.md)；原理在书架白皮书） | Web 服务（`127.0.0.1:8792`）：上传字体即装进 fontconfig，维护中文回退链；10-07 起也管界面字体 | ✅ 真机通 | 「其他 → xochitl」，重开字体菜单即可选 |
 | **lo-alias**（[README](../lo-alias/README.md)） | 小脚本：让 `10.11.99.1` 在不插 USB 时也可达（网关启动前调用） | ✅ 真机通（09-25 无 USB 冷启动核对） | 无 |
 
-**界面字体 ui-font**（[README](../ui-font/README.md)，§03o，2026-10-07，已合 master（6e915bc），10-07 17:14 已部署并整机重启，部署自检 38✓ 1⚠（刚开机）0✗，xochitl 日志确认生效；用户在设备上确认书库、设置、对话框、标题都已换成更纱）：xovi 扩展 `ui-font.so` + qmd `ui-font-tokens.qmd` + font-serve 的界面字体仓库，把 xochitl 界面的字体换成上传的字体，阅读器字体不变；「其他 → xochitl → 界面字体」，整机重启后生效。
+另有共用件 [`shared/`](../shared/PROVENANCE.md)：xovi 扩展用的特征码扫描 + trampoline 代码，编进 `hl-snap.so`，不单独部署（`ui-font.so` 不用它，改的是导入表，§03o）。
 
-另有共用件 [`shared/`](../shared/PROVENANCE.md)：xovi 扩展用的特征码扫描 + trampoline 代码，编进 `hl-snap.so`，不单独部署。
+**已移除**（§03n）：手写优化 hw-stroke（xovi 扩展，按笔尖角度和运笔速度调笔画粗细）、电池刺客 battop（按进程/唤醒源统计耗电的采样服务）。2026-09-30 用户要求移除，源码、部署脚本、网页开关和数据页一并删除，想看旧代码去 git 历史里找 2026-09-30 删除之前的版本。
 
-**已移除**（§03n）：手写优化 hw-stroke（xovi 扩展，按笔尖角度和运笔速度调笔画粗细）、电池刺客 battop（按进程/唤醒源统计耗电的采样服务）。2026-09-30 用户要求移除，源码、部署脚本、网页开关和数据页一并删除，想看旧代码去 git 历史里找删除提交（`4d0d8b6`）之前的版本。
-
-**设备现状**（2026-09-30）：
+**设备现状**（截至 2026-10-09）：
 
 - 09-29 按用户要求卸载了 appload、KOReader、第三方 WeRead 和侧栏入口，本线各工具只服务 xochitl。
-- 09-30 两次部署：14:10 第五轮审计版（§03m），15:23 移除 hw-stroke / battop 等（§03n）。第二次 `install-all.sh` 自动清掉了设备上的 `hw-stroke.so`、battop 单元和 `/home/root/battop`，整机重启一次；`verify-on-device.sh` 36✓ 1⚠（刚开机）0✗，xochitl 的 `/proc/<pid>/maps` 里已没有 `hw-stroke`，设备二进制 md5 与本地构建一致。
-- 按卸载与清理记录，`extensions.d/` 现在应只剩 `hl-snap.so` 和 `qt-resource-rebuilder.so`（没有逐个 `ls` 核对）；**没有** `cangjie-langhook.so`。`hl-snap.so` 的 md5 自 09-25 起一直是 `7ca1985b…`（09-30 重编核对过，构建可复现）。
+- 09-30 两次部署：第五轮审计版（§03m）、移除 hw-stroke / battop（§03n，`install-all.sh` 自动清掉设备残留）。
+- 10-07 两次部署：删日漫翻页规则（§03i）、界面字体 ui-font（§03o），都整机重启、部署自检通过。
+- 按部署记录，`extensions.d/` 现在应是 `hl-snap.so`、`ui-font.so` 和 `qt-resource-rebuilder.so`（没有逐个 `ls` 核对）；**没有** `cangjie-langhook.so`。`hl-snap.so` 的 md5 自 09-25 起一直是 `7ca1985b…`（10-09 重编核对过，构建可复现）。
+- **10-09 第六轮审计（§03p）的改动未部署**：壁纸、字体两个服务改了；两个 C 扩展没改。
 
-**还没做的**（详见 §05）：09-30 两次部署只做了部署自检和接口健康检查，§03m、§03n 里"部署后确认"的功能项还没逐项手测。
+**还没做的**（详见 §05）：§03m、§03n、§03i（删日漫）里"部署后确认"的功能项还没逐项手测；§03p 的改动还没部署；§03p「已知风险」里三处 C 隐患没修。
 
 ### 术语速查
 
@@ -220,17 +224,17 @@ battop 早于这条线存在（08-27 电池审计后建的长期耗电追踪工�
 
 | 组件 | 是什么 | 详细记录 |
 |---|---|---|
-| `font-serve`（8792） | 上传字体装进 fontconfig 用户目录，重写 `fonts.json` 给字体菜单 qmd 读，动态维护中文回退链（全 `weak`，所选字体永远优先）；09-25 起开机时索引与字体目录一致就直接复用、`fonts.conf` 内容不变不重写（§03l）；10-07 起另管界面字体（`fonts/shelf-ui/` + `ui-font.json`，§03o） | 书架白皮书第 F 章、§03k、§03bd |
-| `wallpaper-serve`（8793） | 写 xochitl 隐藏键 `SleepScreenPath` 指向 `current.png`；xochitl 休眠时读完它就轮换（inotify，空闲零唤醒）；旧 bind-mount 方案已退役 | [wallpaper-serve README](../wallpaper-serve/README.md)（机制与历次改动的权威描述）；书架白皮书 §03w / §03x / §03ab |
+| `font-serve`（8792） | 上传字体装进 fontconfig 用户目录，重写 `fonts.json` 给字体菜单 qmd 读，动态维护中文回退链（全 `weak`，所选字体永远优先）；09-25 起开机时索引与字体目录一致就直接复用、`fonts.conf` 内容不变不重写（§03l）；10-07 起另管界面字体（`fonts/shelf-ui/` + `ui-font.json`，§03o）；10-09 起 `fc-cache` 只扫用户字体目录、`fc-scan`/`fc-cache` 带超时（§03p，未部署） | 书架白皮书第 F 章、§03k、§03bd |
+| `wallpaper-serve`（8793） | 写 xochitl 隐藏键 `SleepScreenPath` 指向 `current.png`；xochitl 休眠时读完它就轮换（inotify，空闲零唤醒）；入池时等比放大后居中裁成 954×1696（10-09 起先裁再缩放，§03p）；旧 bind-mount 方案已退役 | [wallpaper-serve README](../wallpaper-serve/README.md)（机制与历次改动的权威描述）；书架白皮书 §03w / §03x / §03ab |
 | `lo-alias.sh` | 给 `lo` 和 `usb1` 挂 `10.11.99.1`，让不插 USB 时 xochitl 的 :80 上传口仍可达；网关 `ExecStartPre` 调用 | [lo-alias README](../lo-alias/README.md) |
 
-两个服务都依赖 [`../../rmsvc-core`](../../rmsvc-core/README.md)，由网关反向代理，随 `install-all.sh` 的 shelf 步安装。host 测试（2026-09-30 实跑）：font-serve 10 项、wallpaper-serve 11 项（font-serve 10-07 加界面字体后 13 项）。
+两个服务都依赖 [`../../rmsvc-core`](../../rmsvc-core/README.md)，由网关反向代理，随 `install-all.sh` 的 shelf 步安装。host 测试（2026-10-09 实跑）：font-serve 13 项、wallpaper-serve 12 项。
 
 ## 03i｜reader-page-turn：单击翻页（2026-09-24；日漫翻页规则 2026-10-07 删除）
 
 ![xochitl 阅读器翻页](diagrams/reader-page-turn.svg)
 
-> **现状（2026-10-07 稍后，提交 `bd531cd`，已合 master（9c2571f），10-07 15:54 已部署并整机重启，部署自检 36✓ 1⚠ 0✗，功能未手测）**：只剩**单击翻页**（`tapPageTurn`）。「日漫翻页规则」（`rtlPageTurn`）整个删掉——用户定书架只管入库、翻页方向交给书本身。xochitl 自己不看 OPF 的 `page-progression-direction`，所以**日漫在 xochitl 里一律从左往右翻**（用户已知悉）。删掉的有：qmd 里的 `cjRtl` 属性、开书查方向、`nextPageGesture`/`prevPageGesture` 的滑动对调；book-serve `GET /reading-direction/{uuid}`；shelf-conv `epub_is_rtl`/`spine_is_rtl`；网关与网页的开关（单独传 `rtlPageTurn` 回 400，`/api/enhance/status` 不再返回它）。`reading-qol.json` 里的旧 `rtlPageTurn` 键不清，无人再读。改了 qmd，部署时要整机重启一次（§04）。设备上现跑的仍是带日漫分支的旧版。
+> **现状（2026-10-07 起，已部署并整机重启，部署自检通过，功能未手测）**：只剩**单击翻页**（`tapPageTurn`）。「日漫翻页规则」（`rtlPageTurn`）整个删掉——用户定书架只管入库、翻页方向交给书本身。xochitl 自己不看 OPF 的 `page-progression-direction`，所以**日漫在 xochitl 里一律从左往右翻**（用户已知悉）。删掉的有：qmd 里的 `cjRtl` 属性、开书查方向、`nextPageGesture`/`prevPageGesture` 的滑动对调；book-serve `GET /reading-direction/{uuid}`；shelf-conv `epub_is_rtl`/`spine_is_rtl`；网关与网页的开关（单独传 `rtlPageTurn` 回 400，`/api/enhance/status` 不再返回它）。`reading-qol.json` 里的旧 `rtlPageTurn` 键不清，无人再读。改了 qmd，部署时要整机重启一次（§04）；10-07 部署后 journal 有 `CJ-PAGE-TURN: loaded`、没有 qmd 解析报错。
 
 **需求**：用户要"单击翻页"回来（08-14 做过 `tap-page-turn.qmd` 并真机验证，09-11 随 `xovi-extensions/reading-qol/` 移出仓库，设备上的 qmd 也已不在，只剩 `reading-qol.json` 里一个 `tapPageTurn`）；另外问漫画能不能"从左往右滑是下一页"——指 **xochitl**（KOReader 已于 2026-09-29 从设备卸载，现在只剩 xochitl 一个阅读器）。后一项就是 2026-09-24～10-07 的日漫翻页规则。
 
@@ -393,13 +397,40 @@ battop 早于这条线存在（08-27 电池审计后建的长期耗电追踪工�
 
 **生效**：两处都只在启动时读选择，改完要整机重启（§04）；网页改完显示"整机重启后生效"。
 
-**部署**（已合 master（6e915bc），10-07 17:14 已部署并整机重启，部署自检 38✓ 1⚠（刚开机）0✗）：`deploy.sh --only font`（网关、font-serve、两个字体 qmd）→ `DEFER_XOVI_START=1 deploy-ui-font.sh` → 经 SSH 隧道直连 font-serve 上传三个 TTF（约 135MB，14 秒）并 `PUT /ui/select` 正文与标题都选 `Sarasa UI SC`（用户定：与电脑界面一致）→ `deploy-xovi-apply.sh`。设备上核对：
+**部署**（10-07 已部署并整机重启，部署自检 38✓ 1⚠（刚开机）0✗）：`deploy.sh --only font`（网关、font-serve、两个字体 qmd）→ `DEFER_XOVI_START=1 deploy-ui-font.sh` → 经 SSH 隧道直连 font-serve 上传三个 TTF（约 135MB，14 秒）并 `PUT /ui/select` 正文与标题都选 `Sarasa UI SC`（用户定：与电脑界面一致）→ `deploy-xovi-apply.sh`。设备上核对：
 - xochitl 日志：`[ui-font] 安装完成（setFont 导入槽 0x1a60b68）`、`[ui-font] setFont(reMarkable Sans) → Sarasa UI SC`（扩展赶在 xochitl 调 setFont 之前装好了）、`SHELF-UI-FONT: sans=Sarasa UI SC serif=Sarasa UI SC`；xochitl `NRestarts=0`；没有新的 QML 报错（唯一一行 `Experimental.qml:71: ReferenceError: Values` 上次开机就有）。
-- xochitl 拉起的短命子进程也会被 xovi 加载扩展，两个扩展都在 `_xovi_shouldLoad` 拒绝（hl-snap 打"找不到 xochitl 映射"，ui-font 打"不导入 setFont"）——正常。ui-font 这句原来写成"（未知固件）"，不准确，仓库已改措辞；设备上跑的仍是 6e915bc 的 `.so`（md5 `7199073b…`），下次部署带上。
+- xochitl 拉起的短命子进程也会被 xovi 加载扩展，两个扩展都在 `_xovi_shouldLoad` 拒绝（hl-snap 打"找不到 xochitl 映射"，ui-font 打"不导入 setFont"）——正常。ui-font 这句原来写成"（未知固件）"，不准确，仓库已改措辞；设备上跑的仍是 10-07 部署的 `.so`（md5 `7199073b…`），下次部署带上。
 - 阅读侧：`fonts.json` 仍为空（菜单里没有更纱）；真实配置下 `fc-match -s "reMarkable Serif Small:lang=zh-cn"` 第一是 Noto Sans SC、更纱排第三；`fonts.conf` 末尾有保底规则。
 - xochitl 部署后 VmRSS 约 224MB（没有部署前的对照数，字体是 mmap，按用到的页计）。
 
 **真机验证**（10-07，用户目测）：书库、设置、对话框、标题都已是更纱黑体，没有报告漏掉的界面文字；阅读时书里的中文仍是原来的字体（阅读不受影响）。
+
+## 03p｜第六轮审计给本线的改动与已知风险（2026-10-09，未部署）
+
+**未部署、未在真机验证**。开发机：font-serve 13 项、wallpaper-serve 12 项 `cargo test` 通过，`shared` / `ui-font` 的 C 单测通过；两个 xovi 扩展的 C 源码没改，重编 md5 不变。
+
+| 改动 | 为什么 | 验证（开发机） |
+|---|---|---|
+| wallpaper-serve：cover 模式**先在原图上裁出落在屏幕里的那块，再一次缩放**到 954×1696；contain 改用整块贴到黑底 | 旧实现把整张图缩放到放大后的尺寸再裁掉两边，横图要白做一半以上的重采样，中间图也大一倍多。12MP 横图 1.72s → 1.01s，中间图 15MB → 6.5MB | 对拍测试：contain 与旧实现逐字节相同；cover 取景一致（平滑渐变图最大通道差 ≤3） |
+| wallpaper-serve：壁纸池只认普通文件 | 池目录里的子目录或上传半成品可能被轮换选中、读失败报错 | 单测 |
+| wallpaper-serve：找 xochitl 主进程读 `/proc`（`rmsvc_core::proc::find_process`） | 此前每次查状态都 fork 一个 `systemctl show xochitl -p MainPID`，网页刷新一次要查两三遍 | 单测 |
+| font-serve：`fc-cache` 只扫用户字体目录（`fc-cache -f ~/.local/share/fonts`，fc-cache 对目录递归，含 `shelf-ui/`） | 此前不带目录参数，每装/删一个字体都把没变过的系统字体目录也强制重扫一遍（开发机 CPU 0.7s → 0.006s） | 单测 |
+| font-serve：一次上传多个字体只跑一遍 `fc-cache` | 此前每个文件各跑一遍 | 单测 |
+| font-serve：`fc-scan` 30 秒、`fc-cache` 120 秒超时（`rmsvc_core::proc::run_timeout`） | 坏文件或 IO 挂起时不能把上传请求一直挂着；`fc-scan` 超时退回自己解析 name 表 | 单测 |
+| font-serve：跨分区装字体不留半截文件；字体目录只认普通文件（符号链接不再扫入）；家族名带 `&` 时 `fontconfigRef` 能对上 | 基座 `fs::move_into` 先复制到临时名再改名（基座白皮书 §02）；其余为扫描与转义的边界修正 | 单测 |
+| 两个服务的通用代码迁到 rmsvc-core（`Paths::sandbox` 测试沙箱、`formats::mime_of`、`run_or_exit` 等），删掉私有副本 | 去重；测试不再落到开发机真实 XDG 目录 | 测试照常通过 |
+
+**部署后确认**（待部署）：传一张横图壁纸，休眠屏取景正常、上传明显变快；一次上传两三个字体，回执很快回来、阅读字体菜单照常出现新字体；界面字体照常生效。
+
+### 已知风险（审计发现、没修）
+
+两个 xovi 扩展是改 xochitl 进程内存的高危代码，按项目纪律"先离线反汇编钉死再写"，这一轮只记录、不动。三处都**没有在真机上出过问题**，也没有复现：
+
+| # | 在哪 | 隐患 | 现在为什么没出事 / 什么时候会出事 |
+|---|---|---|---|
+| 1 | `hl-snap/src/hl_snap.c` 的 `cj_hl_glyph_is_cjk` | 拿 `subs[0]` 当下标读 glyph 数组（`scene+8` 基址，每项 0x38 字节）时只检查了 `idx < 0`，**没有上界检查**；越界会读到数组外的内存 | 正常划线时 `subs[0]` 是选区第一个字，落在数组内。要是固件改了这块内存布局、或 xochitl 传来异常的选区，可能读到无关内存甚至崩溃。修法要先从反汇编确认数组长度存在哪里 |
+| 2 | `shared/trampoline_patch.c` 的 `cj_patch_target` | 改写目标函数开头时把那一页 `mprotect` 成**可读可写可执行（RWX）**，改完**没有改回只读可执行** | 功能上没影响；但 xochitl 进程里一直留着一页可写的代码，削弱了进程的防护。`shared/scan.c` 要认 `rwxp` 续段就是因为这一点（§04）。改回 `r-x` 要先确认同一页上没有别的扩展还要改写 |
+| 3 | `ui-font/src/ui_font.c` | 原函数地址用 `dlsym(RTLD_DEFAULT, setFont)` 取。在**非 PIE** 的可执行文件里，导入函数的"规范地址"可能就是可执行文件自己的 PLT 桩，调它又经过我们改过的导入表槽回到 handler，理论上**无限递归** | 审计认为当前固件 3.28.0.172 的 xochitl 不触发这条路径（10-07 真机日志里 `setFont(reMarkable Sans) → Sarasa UI SC` 只出现一次、xochitl 正常）。换固件要先核对；host 测试里"非 PIE"那一组只覆盖了导入表改写本身 |
 
 ## 04｜踩坑
 
@@ -445,7 +476,9 @@ battop 早于这条线存在（08-27 电池审计后建的长期耗电追踪工�
 
 | 项 | 现状 | 下一步 |
 |---|---|---|
-| 删日漫翻页规则（§03i，10-07） | 已合 master（9c2571f），10-07 15:54 已部署并整机重启，部署自检 36✓ 1⚠ 0✗，功能未手测；qmd 离线验证过，部署后 journal 有 `CJ-PAGE-TURN: loaded`、无 qmd 解析报错 | 部署（整机重启）后看：「系统增强」只剩「单击翻页」开关；单击左右边缘照常翻页；日漫滑动不再对调；journal 里 `CJ-PAGE-TURN: loaded` 与 `cfg tap=…` 正常、无 qmd 报错 |
+| 第六轮审计改动（§03p，10-09） | 未部署；开发机 font-serve 13 项、wallpaper-serve 12 项通过 | 部署后按 §03p「部署后确认」手测 |
+| 三处 C 扩展隐患（§03p「已知风险」） | 审计记下、没修；`.so` 没改 | 先离线反汇编核实触发条件，再决定改不改；改了要按真机纪律单独部署、单独验证 |
+| 删日漫翻页规则（§03i，10-07） | 10-07 已部署并整机重启，部署自检通过，功能未手测；qmd 离线验证过，部署后 journal 有 `CJ-PAGE-TURN: loaded`、无 qmd 解析报错 | 看：「系统增强」只剩「单击翻页」开关；单击左右边缘照常翻页；日漫滑动不再对调；journal 里 `cfg tap=…` 正常 |
 | 第五轮审计改动（§03m） | 09-30 14:10 已部署，部署自检通过，功能待手测 | 按 §03m「部署后确认」手测 |
 | 第四轮审计改动（§03l） | 已随后续部署上设备，功能项没逐项核对 | 按 §03l「部署后确认」手测 |
 | 多扩展共存的反序加载（§04） | 修法已部署；现在只剩 hl-snap 一个扩展，没有反序场景 | 以后再加扩展时，把两个 `.so` 改名调换加载顺序验一次 |
@@ -471,6 +504,7 @@ battop 早于这条线存在（08-27 电池审计后建的长期耗电追踪工�
 | 2026-09-25 | 部署生效一律整机重启（§04）；`Makefile` 加 `-ffile-prefix-map`；lo-alias 无 USB 冷启动真机通过；第四轮审计（§03l） |
 | 2026-09-29 | 设备上卸载 KOReader、第三方 WeRead、appload 和侧栏入口（按用户要求） |
 | 2026-09-30 | 第五轮审计（§03m）；撤掉母版库按书设阅读方向，`rtl-overrides.json` 改为只读（§03i）；14:10 部署 |
-| 2026-10-07 | **删日漫翻页规则**（用户定：书架只管入库，方向交给书本身）：`reader-page-turn.qmd` 只留单击翻页，网关删 `rtlPageTurn` 开关，book-serve 删 `GET /reading-direction`（§03i；提交 `bd531cd`，已合 master（9c2571f），10-07 15:54 已部署并整机重启，部署自检 36✓ 1⚠ 0✗，功能未手测，部署要整机重启） |
-| 2026-10-07 | **界面字体 ui-font**（§03o）：新 xovi 扩展 `ui-font/` + `shelf/xovi/ui-font-tokens.qmd` + font-serve 界面字体仓库与网页卡片；`packaging` 加 `ui-font` 步（`deploy-ui-font.sh`）；已合 master（6e915bc），10-07 17:14 已部署并整机重启，部署自检 38✓ 1⚠（刚开机）0✗，正文与标题选更纱黑体 UI SC |
 | 2026-09-30 | **移除手写优化（`handwriting-stroke/`）与电池刺客（`battop/`）**：源码、部署脚本、网页开关与数据页一并删除；15:23 部署，`install-all.sh` 自动清掉设备残留（§03n） |
+| 2026-10-07 | **删日漫翻页规则**（用户定：书架只管入库，方向交给书本身）：`reader-page-turn.qmd` 只留单击翻页，网关删 `rtlPageTurn` 开关，book-serve 删 `GET /reading-direction`（§03i；已部署并整机重启，部署自检通过，功能未手测） |
+| 2026-10-07 | **界面字体 ui-font**（§03o）：新 xovi 扩展 `ui-font/` + `shelf/xovi/ui-font-tokens.qmd` + font-serve 界面字体仓库与网页卡片；`packaging` 加 `ui-font` 步（`deploy-ui-font.sh`）；已部署并整机重启，部署自检 38✓ 1⚠（刚开机）0✗，正文与标题选更纱黑体 UI SC |
+| 2026-10-09 | 第六轮审计（§03p）：壁纸先裁再缩放、`fc-cache` 只扫用户字体目录等，未部署；记下三处 C 扩展隐患未修；仓库公开 |

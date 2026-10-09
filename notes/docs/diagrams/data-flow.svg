@@ -112,8 +112,8 @@
   <text x="1092" y="320" text-anchor="middle" font-size="10" fill="#4a4a4a">+ 书索引页</text>
   <text x="1092" y="336" text-anchor="middle" font-size="10" fill="#4a4a4a">块锚 ^id · [[书名]]</text>
   <text x="1092" y="354" text-anchor="middle" font-size="10" fill="#4a4a4a">落设备 vault/</text>
-  <text x="1092" y="374" text-anchor="middle" font-size="10" fill="#6a6a6a">同时让浏览器</text>
-  <text x="1092" y="388" text-anchor="middle" font-size="10" fill="#6a6a6a">直接下载</text>
+  <text x="1092" y="374" text-anchor="middle" font-size="10" fill="#6a6a6a">提示里给链接，</text>
+  <text x="1092" y="388" text-anchor="middle" font-size="10" fill="#6a6a6a">点一下下载</text>
   <polyline points="947,216 947,260" fill="none" stroke="#3f9a55" stroke-width="1.6" marker-end="url(#d1)"/>
   <polyline points="1092,216 1092,260" fill="none" stroke="#7a4fa3" stroke-width="1.6" marker-end="url(#d1)"/>
 
