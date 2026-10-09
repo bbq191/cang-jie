@@ -1190,6 +1190,8 @@ new_sandbox
 rm -f "$CJ_SYSD/multi-user.target.wants/chrony-boot-wakelock.service"
 ( cd "$PKG" && run sh deploy-chrony-boot-wakelock.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
 check "usr 单元只缺 wants 链接：补回链接、不备份同内容的单元" test "$rc" -eq 0 -a -L "$CJ_SYSD/multi-user.target.wants/chrony-boot-wakelock.service" -a -z "$(find "$R/home/root" -path '*cangjie-backups/chrony-boot-wakelock*' 2>/dev/null)"
+: > "$CJ_SIM_LOG"; CJ_SIM_VERITY=1 bash -c "cd '$PKG' && PATH='$STUBS:'\$PATH sh deploy-chrony-boot-wakelock.sh 127.0.0.1" >"$R/out.txt" 2>&1; rc=$?
+check "usr 单元已装好且没变、之后才开了 dm-verity：如实报已是最新（不报跳过写 /usr）、不 remount、退出 0" test "$rc" -eq 0 -a "$(count_log remount)" = 0 -a -n "$(grep '已是最新' "$R/out.txt")" -a -z "$(grep 'dm-verity 激活' "$R/out.txt")"
 
 # ═══════════════════════════ 5. 静态守卫 / 清单对称 ═══════════════════════════
 section "静态守卫"

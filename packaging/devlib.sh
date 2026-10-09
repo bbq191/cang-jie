@@ -5,8 +5,8 @@
 #
 # 只被 source，不直接执行。三种进入方式（都保证库与被跑脚本同源同版）：
 #   · host 侧 packaging/lib.sh 的 dev_script：把本文件拼在 heredoc 脚本前面，经 `ssh sh -s` 送上设备；
-#   · 各 deploy 脚本把它随载荷推到设备（shelf 载荷 shelf/devlib.sh、xovi 扩展 deploy/devlib.sh、
-#     battop 目录 devlib.sh），设备端 install.sh 再 `. "$HERE/devlib.sh"`；
+#   · 各 deploy 脚本把它随载荷推到设备（shelf 载荷 shelf/devlib.sh、xovi 扩展 deploy/devlib.sh），
+#     设备端 install.sh 再 `. "$HERE/devlib.sh"`；
 #   · 设备上残留的 ~/.local/lib/shelf/devlib.sh（shelf-uninstall 用）。
 #
 # 集中解决的、原先在各脚本里各写一遍且各有缺陷的几件事（2026-09-20 脚本审计）：
@@ -277,13 +277,14 @@ cj_install_usr_unit() {
     cj_u=$1; cj_s=$2; cj_w=${3-multi-user.target.wants}
     CJ_UNIT_CHANGED=0
     [ -f "$cj_s" ] || { echo "!! 缺单元源 $cj_s"; return 1; }
-    if cj_verity_active; then
-        echo "✋ dm-verity 激活 —— 跳过写 /usr（写 /usr + 重启 → root hash 变 → A/B 回滚变砖，2026-08-16 真机踩过）。"
-        return 3
-    fi
+    # 先做只读的"已是最新"判断：dm-verity 下单元早已装好且没变时如实报"已是最新"，而不是报"跳过写 /usr"
     if [ -f "$CJ_SYSD/$cj_u" ] && cmp -s "$cj_s" "$CJ_SYSD/$cj_u" && { [ "$cj_w" = "-" ] || [ -L "$CJ_SYSD/$cj_w/$cj_u" ]; }; then
         echo "-- $cj_u 已是最新，未动 /usr"
         return 0
+    fi
+    if cj_verity_active; then
+        echo "✋ dm-verity 激活 —— 跳过写 /usr（写 /usr + 重启 → root hash 变 → A/B 回滚变砖，2026-08-16 真机踩过）。"
+        return 3
     fi
     # 只缺 wants 链接、单元内容没变时不备份（同一内容反复备份会把真正有价值的旧版挤出"保留最近 N 份"）
     cj_backup_if_differs "$cj_s" "$CJ_SYSD/$cj_u" || return 1
