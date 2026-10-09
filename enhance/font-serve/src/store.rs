@@ -109,6 +109,18 @@ fn split_families(s: &str) -> Vec<String> {
     s.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect()
 }
 
+/// 目录里的字体文件名（不含隐藏文件，按名排序）；目录读不了 → None。扫描、开机一致性检查、"有没有界面字体"共用。
+fn font_files(dir: &Path) -> Option<Vec<String>> {
+    let mut v: Vec<String> = std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .filter_map(|e| e.file_name().to_str().map(|s| s.to_string()))
+        .filter(|n| !n.starts_with('.') && formats::has_ext(n, FONT_EXTS))
+        .collect();
+    v.sort();
+    Some(v)
+}
+
 /// 一个字体文件的探测结果 + 让它失效的指纹。
 struct Probe {
     len: u64,
@@ -143,9 +155,7 @@ impl FontStore {
 
     /// 界面字体目录里有没有字体文件（阅读仓库据此决定要不要加系统中文保底）。
     fn ui_fonts_present(&self) -> bool {
-        std::fs::read_dir(self.fonts_dir.join(UI_SUBDIR))
-            .map(|rd| rd.flatten().any(|e| e.file_name().to_str().is_some_and(|n| !n.starts_with('.') && formats::has_ext(n, FONT_EXTS))))
-            .unwrap_or(false)
+        font_files(&self.fonts_dir.join(UI_SUBDIR)).is_some_and(|v| !v.is_empty())
     }
 
     pub fn embolden(&self) -> bool {
@@ -207,9 +217,7 @@ impl FontStore {
     pub fn scan(&self) -> Vec<FontEntry> {
         let refs = self.fontconfig_families();
         let mut groups: BTreeMap<String, FontEntry> = BTreeMap::new();
-        let Ok(rd) = std::fs::read_dir(&self.fonts_dir) else { return vec![] };
-        let mut files: Vec<String> = rd.flatten().filter_map(|e| e.file_name().to_str().map(|s| s.to_string())).filter(|n| !n.starts_with('.') && formats::has_ext(n, FONT_EXTS)).collect();
-        files.sort();
+        let Some(files) = font_files(&self.fonts_dir) else { return vec![] };
         // 缓存里去掉已不在目录的文件（删字体后不留脏项）
         rmsvc_core::sync::lock(&self.probes).retain(|k, _| files.binary_search(k).is_ok());
         for f in files {
@@ -271,14 +279,8 @@ impl FontStore {
         if newer(&self.fonts_dir) {
             return None;
         }
-        let mut on_disk: Vec<String> = std::fs::read_dir(&self.fonts_dir)
-            .ok()?
-            .flatten()
-            .filter_map(|e| e.file_name().to_str().map(|s| s.to_string()))
-            .filter(|n| !n.starts_with('.') && formats::has_ext(n, FONT_EXTS))
-            .collect();
+        let on_disk = font_files(&self.fonts_dir)?;
         let mut indexed: Vec<String> = fonts.iter().flat_map(|e| e.files.iter().cloned()).collect();
-        on_disk.sort();
         indexed.sort();
         if on_disk != indexed || on_disk.iter().any(|f| newer(&self.fonts_dir.join(f))) {
             return None;
@@ -291,9 +293,17 @@ impl FontStore {
         std::fs::read_to_string(&self.json_path).ok().and_then(|t| serde_json::from_str::<FontsJson>(&t).ok()).map(|j| j.fonts).unwrap_or_else(|| self.write_index().unwrap_or_default())
     }
 
-    fn fc_cache(&self) {
+    /// 只重建用户字体目录（`fonts/`，含 `shelf-ui/` 子目录，fc-cache 对目录参数递归）的缓存。此前不带目录参数，
+    /// 每装/删一个字体都把系统字体目录也强制重扫一遍，那些目录根本没变（host 实测 CPU 0.7s → 0.006s）。
+    /// 界面仓库也从 `fonts/` 起扫：首次建 `shelf-ui/` 时父目录的缓存（记着有哪些子目录）也要跟着更新。
+    /// 上传不在 [`AssetStore::install`] 里逐个文件跑（一次传几个字体就要重建几遍），由路由在整批装完后调一次。
+    pub fn fc_cache(&self) {
         if self.side_effects {
-            let _ = std::process::Command::new("fc-cache").arg("-f").status();
+            let root = match self.role {
+                Role::Reading => self.fonts_dir.as_path(),
+                Role::Ui => self.fonts_dir.parent().unwrap_or(&self.fonts_dir),
+            };
+            let _ = std::process::Command::new("fc-cache").arg("-f").arg(root).status();
         }
     }
 
@@ -385,7 +395,7 @@ impl AssetStore for FontStore {
             std::fs::copy(staged, &dest).map_err(|e| format!("写入字体目录失败: {e}"))?;
         }
         let bytes = std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
-        self.fc_cache();
+        // fc-cache 由调用方在整批上传后跑一次（见 fc_cache）；建索引用 fc-scan 直接读文件，不依赖缓存。
         let fonts = self.write_index()?;
         let entry = fonts.iter().find(|e| e.files.iter().any(|f| f == name)).cloned();
         let pct = entry.as_ref().map(|e| e.cjk_pct).unwrap_or(0);
