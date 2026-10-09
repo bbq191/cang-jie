@@ -10,18 +10,24 @@
 //! `read_events_blocking` 上、经通道把文件名递回来；限时模式结束时读线程醒不来，只能往 `/tmp` 下一个私有
 //! "踢醒"目录写文件把它踢醒，建不了踢醒目录时读线程和 inotify 描述符就一直挂到目录下次有动静。现在每个监听
 //! 只占调用方这一条线程，返回即释放 inotify，不再碰 `/tmp`。
-use inotify::{Inotify, WatchMask};
+use inotify::{EventMask, Inotify, WatchMask};
 use std::collections::HashSet;
 use std::os::fd::AsRawFd;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-const MASK: WatchMask = WatchMask::CLOSE_WRITE.union(WatchMask::MOVED_TO).union(WatchMask::CREATE).union(WatchMask::DELETE).union(WatchMask::MOVED_FROM);
+const MASK: WatchMask = WatchMask::CLOSE_WRITE.union(WatchMask::MOVED_TO).union(WatchMask::CREATE).union(WatchMask::DELETE).union(WatchMask::MOVED_FROM).union(WatchMask::MOVE_SELF);
+
+/// 常驻监听的目录被删/被挪走后，重新挂监听的退避上下限（目录没回来时最多这么久试一次）。
+const REARM_MIN: Duration = Duration::from_secs(1);
+const REARM_MAX: Duration = Duration::from_secs(300);
 
 /// [`wait_for`] 在 inotify 不可用时退化成轮询的间隔（只为稳健，设备内核一定支持 inotify）。
 const FALLBACK_POLL: Duration = Duration::from_secs(1);
 
 /// 监听 `dir` 下文件的 CLOSE_WRITE/MOVED_TO/CREATE/DELETE/MOVED_FROM，防抖后回调（删除也算：网关看注册表目录用）。**永不返回**（init 失败返回）。
+/// 目录本身被删/被挪走（监听随之失效）时按退避（1s 起翻倍到 5 分钟）重新挂上，挂上后以空集合回调一次——
+/// 这期间的变化看不到文件名，交给回调自己追平。此前监听失效后线程永远睡着，再也收不到任何变化。
 pub fn watch_debounced<F>(dir: &Path, debounce: Duration, mut on_settle: F)
 where
     F: FnMut(&HashSet<String>),
@@ -73,22 +79,33 @@ pub fn wait_for<T>(dir: &Path, debounce: Duration, timeout: Duration, mut check:
 struct Watcher {
     inotify: Inotify,
     buf: [u8; 4096],
+    /// 目录本身没了/被挪走（收到 IN_IGNORED / IN_MOVE_SELF），这个监听再也不会有事件。
+    lost: bool,
 }
 
 impl Watcher {
     fn open(dir: &Path) -> Option<Watcher> {
-        let inotify = match Inotify::init() {
-            Ok(i) => i,
-            Err(e) => {
-                eprintln!("[fswatch] inotify init 失败: {e}");
-                return None;
+        Self::try_open(dir).map_err(|e| eprintln!("[fswatch] {e}")).ok()
+    }
+
+    fn try_open(dir: &Path) -> Result<Watcher, String> {
+        let inotify = Inotify::init().map_err(|e| format!("inotify init 失败: {e}"))?;
+        inotify.watches().add(dir, MASK).map_err(|e| format!("watch {} 失败: {e}", dir.display()))?;
+        Ok(Watcher { inotify, buf: [0; 4096], lost: false })
+    }
+
+    /// 监听失效后反复重挂直到成功（退避见 [`REARM_MIN`]/[`REARM_MAX`]）。只打两行日志：失效时一行、恢复时一行。
+    fn rearm(dir: &Path) -> Watcher {
+        eprintln!("[fswatch] {} 被删除或移走，监听失效；等它回来再重新监听", dir.display());
+        let mut backoff = REARM_MIN;
+        loop {
+            std::thread::sleep(backoff);
+            if let Ok(w) = Self::try_open(dir) {
+                eprintln!("[fswatch] {} 已重新监听", dir.display());
+                return w;
             }
-        };
-        if let Err(e) = inotify.watches().add(dir, MASK) {
-            eprintln!("[fswatch] watch {} 失败: {e}", dir.display());
-            return None;
+            backoff = (backoff * 2).min(REARM_MAX);
         }
-        Some(Watcher { inotify, buf: [0; 4096] })
     }
 
     /// 最多等 `timeout`（`None`＝无限等）；把这期间到的带文件名的事件并进 `dirty`，返回是否并进了新名字。
@@ -101,6 +118,9 @@ impl Watcher {
             match self.inotify.read_events(&mut self.buf) {
                 Ok(events) => {
                     for ev in events {
+                        if ev.mask.intersects(EventMask::IGNORED | EventMask::MOVE_SELF) {
+                            self.lost = true;
+                        }
                         if let Some(name) = ev.name.and_then(|n| n.to_str()) {
                             dirty.insert(name.to_string());
                             got = true;
@@ -154,6 +174,20 @@ where
         if w.wait(wait, &mut dirty) {
             last = Instant::now();
         }
+        if w.lost {
+            // 限时形态：交回调用方（`wait_for` 退化成轮询，`watch_until` 返回 false）；常驻形态：等目录回来重挂。
+            if deadline.is_some() {
+                return None;
+            }
+            if !dirty.is_empty() && on_settle(&dirty) {
+                return Some(true);
+            }
+            w = Watcher::rearm(dir);
+            dirty.clear();
+            if on_settle(&dirty) {
+                return Some(true);
+            }
+        }
     }
 }
 
@@ -181,6 +215,33 @@ mod tests {
         let got = seen.lock().unwrap();
         assert_eq!(got.len(), 1, "应合并成一次回调: {:?}", *got);
         assert_eq!(got[0], ["a.epub", "b.epub"].into_iter().map(String::from).collect::<HashSet<_>>());
+    }
+
+    /// 常驻监听的目录被删掉再建回来：重新挂上（先以空集合回调一次让调用方追平），之后的变化照常收到。
+    #[test]
+    fn debounced_watch_rearms_after_dir_removed_and_recreated() {
+        let t = tempfile::tempdir().unwrap();
+        let dir = t.path().join("watched");
+        std::fs::create_dir(&dir).unwrap();
+        let seen: Arc<Mutex<Vec<HashSet<String>>>> = Arc::new(Mutex::new(vec![]));
+        let (seen2, d2) = (seen.clone(), dir.clone());
+        std::thread::spawn(move || watch_debounced(&d2, Duration::from_millis(50), move |s| seen2.lock().unwrap().push(s.clone())));
+        std::thread::sleep(Duration::from_millis(150));
+        std::fs::remove_dir(&dir).unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        std::fs::create_dir(&dir).unwrap();
+        // 重挂退避 1 秒起：等到"空集合回调"出现再写文件
+        let t0 = Instant::now();
+        while !seen.lock().unwrap().iter().any(|s| s.is_empty()) {
+            assert!(t0.elapsed() < Duration::from_secs(5), "目录回来后应重新挂上监听: {:?}", seen.lock().unwrap());
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        std::fs::write(dir.join("after.txt"), b"x").unwrap();
+        let t0 = Instant::now();
+        while !seen.lock().unwrap().iter().any(|s| s.contains("after.txt")) {
+            assert!(t0.elapsed() < Duration::from_secs(3), "重挂后的变化应收到: {:?}", seen.lock().unwrap());
+            std::thread::sleep(Duration::from_millis(50));
+        }
     }
 
     #[test]
