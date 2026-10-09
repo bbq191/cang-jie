@@ -59,7 +59,7 @@
 - 09-30 两次部署：第五轮审计版（§03m）、移除 hw-stroke / battop（§03n，`install-all.sh` 自动清掉设备残留）。
 - 10-07 两次部署：删日漫翻页规则（§03i）、界面字体 ui-font（§03o），都整机重启、部署自检通过。
 - 10-09 13:48 部署第六轮审计（§03p）：壁纸、字体两个服务，以及修了三处隐患的两个扩展；整机重启，部署自检 38✓ 1⚠（刚开机）0✗。真机 `/proc/<pid>/maps` 里 hl-snap 改过的那页已恢复成 `r-xp`（§04「多扩展共存」）；荧光笔吸附、壁纸、字体这些功能本身**没有手测**。
-- 按部署记录，`extensions.d/` 现在应是 `hl-snap.so`、`ui-font.so` 和 `qt-resource-rebuilder.so`（没有逐个 `ls` 核对）；**没有** `cangjie-langhook.so`。仓库里现在的 `hl-snap.so` md5 是 `0e1fe44b…`、`ui-font.so` 是 `21cda291…`（10-09 修隐患后重编；部署脚本推送时逐个核对 md5）。09-25～10-07 的 `hl-snap.so` 是 `7ca1985b…`。
+- 按部署记录，`extensions.d/` 现在应是 `hl-snap.so`、`ui-font.so` 和 `qt-resource-rebuilder.so`（没有逐个 `ls` 核对）；**没有** `cangjie-langhook.so`。10-09 部署上去的 `hl-snap.so` md5 是 `0e1fe44b…`、`ui-font.so` 是 `21cda291…`（修隐患后重编；部署脚本推送时逐个核对 md5）；同日又补了调用桩分配失败时恢复页权限，仓库里的 `hl-snap.so` 变成 `f7261e7f…`，**还没部署**。09-25～10-07 的 `hl-snap.so` 是 `7ca1985b…`。
 
 **还没做的**（详见 §05）：§03m、§03p、§03i（删日漫）里"部署后确认"的功能项还没逐项手测；§03p 三处 C 隐患的修复里，只有"代码页恢复 r-x"在真机上看到了，另两处只做过离线反汇编和 host 单测。
 
@@ -432,7 +432,7 @@ battop 早于这条线存在（08-27 电池审计后建的长期耗电追踪工�
 | # | 在哪 | 隐患 | 怎么修的 |
 |---|---|---|---|
 | 1 | `hl-snap/src/hl_snap.c` 的 `cj_hl_glyph_is_cjk` | 拿 `subs[0]` 当下标读 glyph 数组时只检查了 `idx < 0`，**没有上界检查**；越界会读到数组外的内存 | 从 3.28.0.172 的反汇编确认 glyph 数组是 Qt 6 的 QList：`scene+8` 是元素基址、`scene+0x10` 是元素个数（兄弟函数 `0xf03750` 开头 `ldp x5, x3, [x21, #8]` 一次取两者，`sub x8, x3, #1` 做上界）。下标 ≥ 个数时按"不是汉字"处理、交回原生扩张，不再读数组外的内存。xochitl 自己的 `0xf02e90` 也不查上界，所以这只是多一层保险 |
-| 2 | `shared/trampoline_patch.c` 的 `cj_patch_target` | 改写目标函数开头时把那一页改成**可读可写可执行（RWX）**，改完一直留着 | 改之前从 `/proc/self/maps` 记下原权限，写完跳转后恢复：原本 `r-x` 的代码页恢复成 `r-x`；原本就可写（例如别的扩展先改过）、横跨的两页权限不一致或查不到时保持 RWX（旧行为）；恢复失败只打日志、保持 RWX。别的扩展以后要改同一页，照样会自己先 `mprotect`。host 单测覆盖页内、跨页、原本 RWX 三种情形。按代码看还剩一个口子：页已改成 RWX 之后如果调用桩分配失败，函数直接放弃 hook 返回，不恢复权限（罕见路径，没改） |
+| 2 | `shared/trampoline_patch.c` 的 `cj_patch_target` | 改写目标函数开头时把那一页改成**可读可写可执行（RWX）**，改完一直留着 | 改之前从 `/proc/self/maps` 记下原权限，写完跳转后恢复：原本 `r-x` 的代码页恢复成 `r-x`；原本就可写（例如别的扩展先改过）、横跨的两页权限不一致或查不到时保持 RWX（旧行为）；恢复失败只打日志、保持 RWX。别的扩展以后要改同一页，照样会自己先 `mprotect`。调用桩分配失败、放弃 hook 时同样恢复（同日补的口子：以前这条罕见路径会把页留在 RWX）。host 单测覆盖页内、跨页、原本 RWX、调用桩分配失败（测试链接时包一层 `mmap` 让它故意失败）四种情形；真机上这条失败路径不会走到，只靠单测 |
 | 3 | `ui-font/src/ui_font.c` | 原函数地址用 `dlsym(RTLD_DEFAULT, setFont)` 取。**非 PIE** 的主程序如果取过 setFont 的地址，dlsym 拿到的是主程序自己的"规范 PLT 桩"，调它又经改过的导入槽回到 handler，**无限递归** | 3.28.0.172 的 xochitl 确实是非 PIE（`ELF Type: EXEC`），但 `.dynsym` 里 setFont 的 `st_value` 是 0（没取过地址），dlsym 拿到的是 Qt 里的真函数，当前不会触发。现在 `_xovi_shouldLoad` / `_xovi_construct` 检查 dlsym 结果是否落在主程序的加载段里，落在就拒绝加载。host 测试的非 PIE 两组改成真正非 PIE 编译（加 `-fno-pie`），并复现了"取地址后 dlsym 落在主程序"这一情形 |
 
 ## 04｜踩坑

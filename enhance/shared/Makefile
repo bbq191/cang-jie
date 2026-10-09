@@ -7,6 +7,8 @@ CC ?= gcc
 # 这里不重复。
 SRC = scan.c pattern.c trampoline_aarch64.c trampoline_patch.c
 CFLAGS_TEST = -std=gnu17 -Wall -Wextra -g -I.
+# 包一层 mmap，测试里能让"建调用桩"那次分配故意失败（见 test_patch_target_stub_alloc_fail_restores_rx）。
+LDFLAGS_TEST = -Wl,--wrap=mmap
 
 .PHONY: test clean
 
@@ -14,7 +16,7 @@ test: tests/test_shared
 	./tests/test_shared
 
 tests/test_shared: $(SRC) tests/test_shared.c
-	$(CC) $(CFLAGS_TEST) $(SRC) tests/test_shared.c -o tests/test_shared
+	$(CC) $(CFLAGS_TEST) $(SRC) tests/test_shared.c $(LDFLAGS_TEST) -o tests/test_shared
 
 clean:
 	rm -f tests/test_shared
