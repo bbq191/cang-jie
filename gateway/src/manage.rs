@@ -114,12 +114,9 @@ pub fn status(paths: &Paths) -> Reply {
             let inst = installed(paths, m);
             serde_json::json!({
                 "seg": m.seg, "service": m.service, "only": m.only, "label": m.label,
-                // 原来的"门控未上线"开关（`installable`）所有模块都是 true，2026-10-07 删掉；这个键先照旧回 true，
-                // 网页不再判断它之后可以一起删。
-                "installable": true,
+                // 原来还有恒为 true 的 `installable` 与跟 `installed` 恒等的 `hasWeb`：网页、脚本都不读，2026-10-09 删掉。
                 "installed": inst,
                 "running": running(&reg, m),
-                "hasWeb": inst,
             })
         })
         .collect();
@@ -218,9 +215,8 @@ mod tests {
         let find = |svc: &str| mods.iter().find(|m| m["service"] == svc).unwrap();
         assert_eq!(find("book-serve")["installed"], true);
         assert_eq!(find("book-serve")["running"], false);
-        assert_eq!(find("book-serve")["hasWeb"], true);
         assert_eq!(find("font-serve")["installed"], false);
-        assert_eq!(find("font-serve")["hasWeb"], false, "未装则网页无该功能");
+        assert!(mods.iter().all(|m| m.get("installable").is_none() && m.get("hasWeb").is_none()), "不再回没人读的冗余键");
         assert!(mods.iter().all(|m| m["service"] != "weread-serve"));
     }
     #[test]

@@ -16,7 +16,7 @@ ExecStartPre=-/bin/sh /home/root/.local/bin/lo-alias.sh
 ExecStart=/home/root/.local/bin/gateway serve --bind 0.0.0.0:443
 Restart=on-failure
 RestartSec=5
-# 与 wr-serve 同款软限：只降权不硬顶（交互式重活需要突发），MemoryMax 兜内存（上传走流式落盘）。
+# 与 shelf 各服务同款软限：只降权不硬顶（交互式重活需要突发），MemoryMax 兜内存（上传走流式落盘）。
 CPUWeight=20
 MemoryMax=192M
 Nice=5
