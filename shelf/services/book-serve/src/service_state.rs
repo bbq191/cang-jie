@@ -200,8 +200,7 @@ mod tests {
 
     /// 造一个 xochitl 指向本机关闭端口（连接秒拒，不会真等 3 秒超时）的 State。
     fn state_with_dead_xochitl(home: &std::path::Path) -> State {
-        let h = home.to_str().unwrap().to_string();
-        let paths = Paths::resolve(move |k| if k == "HOME" || k == "XDG_RUNTIME_DIR" { Some(h.clone()) } else { None });
+        let paths = Paths::sandbox(home);
         let cfg = paths.service_config("book");
         std::fs::create_dir_all(cfg.parent().unwrap()).unwrap();
         std::fs::write(&cfg, r#"{"xochitlHost":"127.0.0.1:9"}"#).unwrap();
