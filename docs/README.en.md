@@ -10,9 +10,8 @@ note organizing, and some small system-level improvements.
 > **This page covers**: what it does, how to install and uninstall it, where to find the details.
 > For a 10-minute tour read [`OVERVIEW.md`](OVERVIEW.md) (Chinese); for recent changes read [`CHANGELOG.md`](CHANGELOG.md) (Chinese).
 >
-> This is the **private** repository with the full development history. What is shared publicly is the trimmed release
-> [`rm-tweak`](https://github.com/bbq191/rm-tweak) (no dev history, Apache-2.0). It was last synced on 2026-09-30 (tag `v2026.09.30`):
-> it has shelf / notes / enhance / gateway / rmsvc-core / packaging (including `install-all.sh` and `verify-on-device.sh`), and no `defw/`.
+> This repository is public since 2026-10-09 (Apache-2.0). The earlier public release [`rm-tweak`](https://github.com/bbq191/rm-tweak) was a
+> history-less snapshot exported from here, last synced on 2026-09-30; it is now archived and all updates happen here.
 
 ## What it does
 
@@ -39,8 +38,8 @@ Only the **reMarkable Paper Pro Move on firmware 3.28.0.172** is supported. It i
 2. Your computer needs a Rust cross-compilation setup and passwordless ssh to the device's root (list in [INSTALL.en.md "Before you install"](INSTALL.en.md#before-you-install)). Connect the device over USB, then:
 
    ```sh
-   git clone https://github.com/bbq191/rm-tweak.git
-   cd rm-tweak/packaging
+   git clone https://github.com/bbq191/cang-jie.git
+   cd cang-jie/packaging
    sh install-all.sh --dry-run        # rehearse first: prints the plan, never touches the device
    sh install-all.sh 10.11.99.1
    ```
@@ -81,6 +80,10 @@ If this project has been useful to you, feel free to buy the author a coffee. It
 
 ## License / disclaimer
 
-A personal-use project; no prebuilt binaries are distributed. Where third-party licensing is relevant (dictionary data, fonts, etc.),
-the in-code comments record what was actually verified. This is not legal advice. Not affiliated with reMarkable,
+The code in this repository is open source under the **[Apache License 2.0](../LICENSE)**: you may use, modify and distribute it
+(including commercially) as long as you keep the copyright notice; the license also includes a patent grant. It started as a
+personal tool and is provided as-is, without any warranty.
+
+Where third-party licensing is relevant (dictionary data, fonts, etc.), the in-code comments record what was actually verified.
+This is not legal advice. Not affiliated with reMarkable,
 [xovi](https://github.com/asivery/xovi), vellum, KOReader, or any other third-party project or trademark mentioned here.
