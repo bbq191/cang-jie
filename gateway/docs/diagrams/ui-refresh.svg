@@ -5,10 +5,10 @@
 <text x="620.0" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">原则：不轮询；只在“第一次看到”“切回来”“收到事件”三种时刻取数，而且只取受影响的那一块</text>
 <rect x="40" y="80" width="360" height="125" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
 <text x="52" y="100" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">① 打开页面</text>
-<text x="52" y="122" text-anchor="start" font-size="10.5" fill="#3a3a3a">取语言包 → /api/services → /api/manage</text>
-<text x="52" y="137" text-anchor="start" font-size="10.5" fill="#3a3a3a">（seg↔服务名映射，与 MODULES 同源）</text>
+<text x="52" y="122" text-anchor="start" font-size="10.5" fill="#3a3a3a">取语言包 → /api/services（每项带 seg）</text>
+<text x="52" y="137" text-anchor="start" font-size="10.5" fill="#3a3a3a">（10-09 起不再为映射另取 /api/manage）</text>
 <text x="52" y="152" text-anchor="start" font-size="10.5" fill="#3a3a3a">只渲染第一个 tab「传书」，其余 tab 只建按钮</text>
-<text x="52" y="167" text-anchor="start" font-size="10.5" fill="#3a3a3a">打开页面共约 7 个请求（09-24 前 33 个：</text>
+<text x="52" y="167" text-anchor="start" font-size="10.5" fill="#3a3a3a">打开页面 09-24 实测 7 个请求（此前 33 个：</text>
 <text x="52" y="182" text-anchor="start" font-size="10.5" fill="#3a3a3a">后台 tab 全部渲染取数，首个 tab 还重复取一遍）</text>
 <rect x="440" y="80" width="360" height="125" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
 <text x="452" y="100" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">② 点某个 tab</text>
@@ -34,6 +34,8 @@
 <text x="52" y="337" text-anchor="start" font-size="10.5" fill="#3a3a3a">重取 /api/services：</text>
 <text x="52" y="352" text-anchor="start" font-size="10.5" fill="#3a3a3a">tab 集合变了 → 整页重载</text>
 <text x="52" y="367" text-anchor="start" font-size="10.5" fill="#3a3a3a">没变 → 只刷管理台</text>
+<text x="52" y="390" text-anchor="start" font-size="10.5" fill="#3a3a3a">页面隐藏时只记一笔，</text>
+<text x="52" y="405" text-anchor="start" font-size="10.5" fill="#3a3a3a">可见或重连后补查（10-09）</text>
 <rect x="274" y="280" width="224" height="170" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
 <text x="286" y="300" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">目标 tab 不在前台</text>
 <text x="286" y="322" text-anchor="start" font-size="10.5" fill="#3a3a3a">只记“待刷”（dirty）</text>

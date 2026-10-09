@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1183" height="618" viewBox="0 0 1183 618" font-family="Noto Sans CJK SC, sans-serif">
 <rect width="1183" height="618" fill="#ffffff"/>
 <text x="591.5" y="32" text-anchor="middle" font-size="20" font-weight="bold" fill="#1f2937">书架服务的并发控制：哪条路径进哪把锁</text>
-<text x="591.5" y="56" text-anchor="middle" font-size="13" fill="#6b7280">按 2026-10-07 稍后清理后的代码（未部署）。各把锁 09-24/09-25 已部署过，但并发场景没在真机专门触发。锁只包住真正会撞的那一小段</text>
+<text x="591.5" y="56" text-anchor="middle" font-size="13" fill="#6b7280">按 2026-10-09 的代码。各把锁 09-24/09-25 已部署过，但并发场景没在真机专门触发。锁只包住真正会撞的那一小段</text>
 <text x="591.5" y="76" text-anchor="middle" font-size="12.5" fill="#6b7280">第一列是网关批量队列的"一次一本"（不是锁；原并发闸门 budget.rs 2026-10-07 删除），其余都是单个进程内的锁；book-serve 与网关是两个独立进程</text>
 <rect x="273" y="96" width="121" height="70" rx="8" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.5"/>
 <text x="333.5" y="118" text-anchor="middle" font-size="13" font-weight="bold" fill="#4a6fa5">批量队列</text>

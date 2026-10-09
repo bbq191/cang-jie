@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 700" font-family="Noto Sans CJK SC, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 700" font-family="Noto Sans SC, Noto Sans CJK SC, sans-serif">
 <defs><marker id="mk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker><marker id="mr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b0451f"/></marker><marker id="mg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2f7d45"/></marker></defs>
 <rect x="0" y="0" width="1240" height="700" fill="#fbfbfa"/>
 <text x="620.0" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">网关：一个入口，怎么把请求送到各个服务</text>
@@ -36,12 +36,13 @@
 <text x="268" y="465" text-anchor="start" font-size="10" fill="#3a3a3a">     只回传 Content-Type / Content-Disposition，200 时加 Cache-Control</text>
 <text x="268" y="480" text-anchor="start" font-size="10" fill="#3a3a3a">4  seg 不在表里 → 404“未知服务”；服务没起 → 404“未安装或未运行”</text>
 <text x="268" y="495" text-anchor="start" font-size="10" fill="#3a3a3a">     后端连不上 → 502</text>
-<rect x="256" y="540" width="460" height="108" rx="10" fill="#f3f3f1" stroke="#9a9a9a" stroke-width="1.4" stroke-dasharray="6 4"/>
-<text x="268" y="560" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">已删除：「加入 xochitl」先过闸门（2026-10-07）</text>
-<text x="268" y="583" text-anchor="start" font-size="10" fill="#3a3a3a">原来 POST /staging/deliver 要先读小 JSON 拿书名、过 budget::admit()</text>
-<text x="268" y="598" text-anchor="start" font-size="10" fill="#3a3a3a">（按体积分档排队）再转发；/api/budget/* 可看、可取消排队</text>
-<text x="268" y="618" text-anchor="start" font-size="10" fill="#8a8a8a">书架不再优化书后加入只占几 MB，批量队列本来一本一本来，</text>
-<text x="268" y="633" text-anchor="start" font-size="10" fill="#8a8a8a">闸门拦不到东西，删掉；现在所有请求都按 ③ 原样转发</text>
+<rect x="256" y="540" width="460" height="118" rx="10" fill="#fff8ee" stroke="#c98a2f" stroke-width="1.4"/>
+<text x="268" y="560" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">网页怎么知道有哪些服务（打开页面时）</text>
+<text x="268" y="583" text-anchor="start" font-size="10" fill="#3a3a3a">GET /api/services → 注册表里在跑的服务，每项带 URL 段 seg</text>
+<text x="268" y="598" text-anchor="start" font-size="10" fill="#3a3a3a">（seg 取自 MODULES 表；网关自己 seg=null）。网页据此出 tab、</text>
+<text x="268" y="613" text-anchor="start" font-size="10" fill="#3a3a3a">拼 /api/&lt;seg&gt;/… 地址，不用再多取一次 /api/manage（2026-10-09）</text>
+<text x="268" y="633" text-anchor="start" font-size="10" fill="#8a8a8a">服务上下线 → manage 事件 → 网页重取 /api/services；</text>
+<text x="268" y="648" text-anchor="start" font-size="10" fill="#8a8a8a">页面隐藏时只记一笔，重新可见或事件流重连后补查一次</text>
 <polyline points="486,178 486,196" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
 <polyline points="486,314 486,332" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
 <text x="770" y="100" text-anchor="start" font-size="12" font-weight="bold" fill="#1a1a1a">领域服务（各自独立进程，只听 127.0.0.1，启动时自注册）</text>
@@ -76,7 +77,7 @@
 <polyline points="716,427 743,427" fill="none" stroke="#555" stroke-width="1.6"/>
 <polyline points="743,137 743,485" fill="none" stroke="#555" stroke-width="1.6"/>
 <text x="993" y="534" text-anchor="middle" font-size="10.5" fill="#6a6a6a">端口是各服务的缺省值，实际以注册表里写的为准</text>
-<text x="993" y="552" text-anchor="middle" font-size="10.5" fill="#6a6a6a">（原 /api/koreader/* → koreader-serve 随 2026-09-29 卸载 KOReader 撤掉）</text>
+<text x="993" y="552" text-anchor="middle" font-size="10.5" fill="#6a6a6a">只有 mind 没有 /events（纯被动），其余 6 个的事件都汇进 /api/events</text>
 <rect x="770" y="610" width="446" height="66" rx="10" fill="#f1f1ef" stroke="#8a8a8a" stroke-width="1.6"/>
 <text x="993.0" y="630" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">为什么这样拆</text>
 <text x="993.0" y="653" text-anchor="middle" font-size="10" fill="#3a3a3a">前端只认一个地址、一次登录；服务缺席时网页自动隐藏对应 tab</text>
