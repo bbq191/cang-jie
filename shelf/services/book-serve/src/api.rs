@@ -1,6 +1,6 @@
 //! HTTP 适配层（唯一碰 http 类型的地方，只做取参 + 调领域方法 + 回执）。路由（经网关时前缀 `/api/books`）：
 //! `GET /status`
-//! 母版库：`GET /staging` → `{items, freeBytes, lowSpace}`（`lowSpace`：剩余空间低于 [`crate::staging::LOW_SPACE_BYTES`]，查不到空间为 false）· `POST /staging`（multipart，原样入库）
+//! 母版库：`GET /staging` → `{items, freeBytes, lowSpace}`（`lowSpace`：剩余空间低于 300 MiB，判据见 `staging::low_space`，查不到空间为 false）· `POST /staging`（multipart，原样入库）
 //! · `POST /staging/deliver {name, folder?}`（2026-09-19 起投完永远保留母版，不再有 `keep` 参数；`POST /staging/mark` 2026-10-07 删，
 //!   原调用方是已删的网关批量「加入 KOReader」）
 //! · `POST /staging/delete {name}` · `POST /staging/rename {name, newName}` · `GET /staging/file?name=`（原件下载，流式）

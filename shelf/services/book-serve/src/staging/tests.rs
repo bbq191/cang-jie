@@ -795,6 +795,7 @@ fn comic_margins_follow_sheng_ren_marker() {
 /// `lowSpace` 的判据：严格小于 300 MiB 才算不足，查不到空间不算（与网页此前写死的判断一致）。
 #[test]
 fn low_space_threshold_is_strict_and_unknown_is_not_low() {
+    use super::library::LOW_SPACE_BYTES;
     assert_eq!(LOW_SPACE_BYTES, 300 * 1024 * 1024);
     assert!(low_space(Some(LOW_SPACE_BYTES - 1)));
     assert!(!low_space(Some(LOW_SPACE_BYTES)));
