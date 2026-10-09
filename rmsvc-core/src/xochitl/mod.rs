@@ -182,7 +182,11 @@ impl Xochitl {
         // 跨进程（note-serve 也会投笔记本）仍可能交错，这把锁管不到（2026-09-24 审计）。
         static UPLOAD: std::sync::Mutex<()> = std::sync::Mutex::new(());
         let _serial = crate::sync::lock(&UPLOAD);
-        self.set_folder(folder_uuid);
+        // 设文件夹失败（文件夹刚被删、xochitl 回错）时退回书库根：不退的话"当前文件夹"还是上一次投递设的那个，
+        // 这本书会落进别人的文件夹，而文档承诺的是"找不到→书库根"（2026-10-09 第六轮审计）。
+        if !self.set_folder(folder_uuid) && !folder_uuid.is_empty() {
+            self.set_folder("");
+        }
         match send_multipart(&self.agent, &self.host, body, body_len, filename, content_type) {
             Ok(resp) => Ok(Delivery::Delivered(resp)),
             Err(e) if upload_likely_delivered(&e) => Ok(Delivery::LikelyDelivered(e)),
@@ -369,12 +373,14 @@ mod tests {
         let s2 = seen.clone();
         std::thread::spawn(move || {
             for mut req in server.incoming_requests() {
-                if req.method() == &tiny_http::Method::Get {
+                let status = if req.method() == &tiny_http::Method::Get {
                     s2.lock().unwrap().push(req.url().to_string());
+                    if req.url().ends_with("/gone") { 404 } else { 200 }
                 } else {
                     std::io::Read::read_to_end(req.as_reader(), &mut Vec::new()).unwrap();
-                }
-                let _ = req.respond(tiny_http::Response::from_string("{}"));
+                    200
+                };
+                let _ = req.respond(tiny_http::Response::from_string("{}").with_status_code(status));
             }
         });
         let x = Xochitl::new(&addr, lib.path(), 10);
@@ -384,6 +390,10 @@ mod tests {
         x.upload_file_into(&f, "a.epub", "application/epub+zip", "").unwrap();
         x.upload_file(&f, "a.epub", "application/epub+zip", "小说").unwrap();
         assert_eq!(*seen.lock().unwrap(), ["/documents/c2", "/documents/", "/documents/p2"]);
+        // 设文件夹失败（假服务对 /documents/gone 回 404）→ 退回根，而不是沿用上一次设的文件夹
+        seen.lock().unwrap().clear();
+        x.upload_file_into(&f, "a.epub", "application/epub+zip", "gone").unwrap();
+        assert_eq!(*seen.lock().unwrap(), ["/documents/gone", "/documents/"]);
         assert_eq!(x.find_child_folder("p1", "卷01").as_deref(), Some("c1"));
         assert_eq!(x.folder_path("c2"), "", "uuid 形状不对的不往上找");
     }
