@@ -29,6 +29,17 @@
 #include <unistd.h>
 
 static int failures = 0;
+
+/* 链接时 --wrap=mmap（见 Makefile）：置位后下一次匿名映射返回失败，用来模拟建调用桩分配不到内存。 */
+static int fail_next_anon_mmap = 0;
+void *__real_mmap(void *addr, size_t len, int prot, int flags, int fd, off_t off);
+void *__wrap_mmap(void *addr, size_t len, int prot, int flags, int fd, off_t off) {
+    if (fail_next_anon_mmap && (flags & MAP_ANONYMOUS)) {
+        fail_next_anon_mmap = 0;
+        return MAP_FAILED;
+    }
+    return __real_mmap(addr, len, prot, flags, fd, off);
+}
 #define CHECK(cond) do { \
     if (!(cond)) { \
         fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond); \
@@ -406,6 +417,26 @@ static void test_patch_target_invalid_address_fails_safely(void) {
     CHECK(ok == 0);
 }
 
+static void test_patch_target_stub_alloc_fail_restores_rx(void) {
+    /* 已经打开写权限后建调用桩失败：返回 0、字节不动、页恢复 r-x（以前会一直留着 rwx）。 */
+    long page = sysconf(_SC_PAGESIZE);
+    uint8_t *m = mmap(NULL, (size_t)page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    CHECK(m != MAP_FAILED);
+    if (m == MAP_FAILED) return;
+    memset(m, 0xA5, (size_t)page);
+    CHECK(mprotect(m, (size_t)page, PROT_READ | PROT_EXEC) == 0);
+    void *stub = NULL;
+    fail_next_anon_mmap = 1;
+    CHECK(cj_patch_target(m + 64, (void *)(uintptr_t)0x00005555deadbeefULL, CJ_FAR_JUMP_LEN, "test-nostub", &stub) == 0);
+    CHECK(fail_next_anon_mmap == 0);   /* 确认真的走到了建桩那一步 */
+    CHECK(stub == NULL);
+    CHECK(m[64] == 0xA5 && m[64 + CJ_FAR_JUMP_LEN - 1] == 0xA5);
+    char p[5];
+    perms_of(m, p);
+    CHECK(strncmp(p, "r-x", 3) == 0);
+    munmap(m, (size_t)page);
+}
+
 int main(void) {
     test_pattern_unique_hit();
     test_pattern_zero_hits_fails();
@@ -431,6 +462,7 @@ int main(void) {
     test_patch_target_invalid_address_fails_safely();
     test_patch_target_restores_rx();
     test_patch_target_keeps_existing_rwx();
+    test_patch_target_stub_alloc_fail_restores_rx();
 
     if (failures == 0) {
         printf("OK: 全部通过\n");

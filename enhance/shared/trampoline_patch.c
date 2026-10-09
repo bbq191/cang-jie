@@ -46,6 +46,14 @@ static int page_prot_of(uintptr_t addr) {
     return prot;
 }
 
+/* 只在原本是 r-x（可执行、不可写）时把页恢复回去；查不到或原本就可写则不动。 */
+static void restore_prot(uintptr_t page_base, size_t region_len, int orig_prot, const char *tag) {
+    if (orig_prot < 0 || (orig_prot & PROT_WRITE) || !(orig_prot & PROT_EXEC)) return;
+    if (mprotect((void *)page_base, region_len, orig_prot) != 0) {
+        fprintf(stderr, "[%s] 恢复代码页原权限失败，保持 rwx：%s\n", tag, strerror(errno));
+    }
+}
+
 int cj_patch_target(void *target_addr, void *handler, size_t patch_len, const char *tag, void **out_stub) {
     long pagesize = sysconf(_SC_PAGESIZE);
     if (pagesize <= 0) pagesize = 4096;
@@ -70,6 +78,7 @@ int cj_patch_target(void *target_addr, void *handler, size_t patch_len, const ch
     void *stub = make_call_through_stub((const uint8_t *)target_addr, patch_len, jump_back_target);
     if (!stub) {
         fprintf(stderr, "[%s] 调用桩分配失败，放弃 hook（safe mode）\n", tag);
+        restore_prot(page_base, region_len, orig_prot, tag);  /* 没改字节，也别把 rwx 留下 */
         return 0;
     }
     *out_stub = stub;
@@ -79,11 +88,6 @@ int cj_patch_target(void *target_addr, void *handler, size_t patch_len, const ch
     memcpy(target_addr, jump_to_handler, CJ_FAR_JUMP_LEN);
     __builtin___clear_cache((char *)target_addr, (char *)target_addr + CJ_FAR_JUMP_LEN);
 
-    if (orig_prot >= 0 && !(orig_prot & PROT_WRITE) && (orig_prot & PROT_EXEC)) {
-        if (mprotect((void *)page_base, region_len, orig_prot) != 0) {
-            fprintf(stderr, "[%s] 恢复代码页原权限失败，保持 rwx：%s\n", tag, strerror(errno));
-        }
-    }
-
+    restore_prot(page_base, region_len, orig_prot, tag);
     return 1;
 }
