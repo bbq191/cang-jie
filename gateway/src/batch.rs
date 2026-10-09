@@ -179,8 +179,9 @@ pub fn enqueue(paths: &Paths, action: Action, names: Option<Vec<String>>, folder
 /// `POST /api/batch {action, names?, all?, folder?}`：`names` 缺省且 `all:true` 表示"母版库里所有适用的"。
 pub fn submit(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
     let j = req.json()?;
-    let action = j.0.get("action").and_then(|a| a.as_str()).and_then(Action::parse).ok_or_else(|| ApiError::bad("action 只能是 deliver"))?;
-    let names = j.0.get("names").and_then(|n| n.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect::<Vec<_>>());
+    let action = j.opt_str("action").and_then(Action::parse).ok_or_else(|| ApiError::bad("action 只能是 deliver"))?;
+    // 区分"没给 names"（看 all）与"给了数组"：只有是数组才算给了。
+    let names = j.0.get("names").is_some_and(|n| n.is_array()).then(|| j.str_list("names"));
     if names.is_none() && !j.bool_or("all", false) {
         return Err(ApiError::bad("要么给 names，要么 all:true"));
     }

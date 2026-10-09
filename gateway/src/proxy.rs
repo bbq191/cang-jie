@@ -5,7 +5,6 @@
 //! 其余（JSON 等小应答、没有长度的应答）读完再回——没有长度的流只能走 SSE 那条"读到连接关闭"的通道，
 //! 不适合普通下载（见 [`stream_len`]）。
 use rmsvc_core::http::{ApiError, ApiResult, Method, Reply, Request};
-use rmsvc_core::multipart::percent_encode as enc;
 use rmsvc_core::paths::Paths;
 use rmsvc_core::registry;
 use std::io::Read;
@@ -46,17 +45,11 @@ pub fn forward(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
     let rest = req.param("*").to_string();
     let mut url = format!("{}/{}", info.base_url(), rest);
     if !req.query.is_empty() {
-        let q: Vec<String> = req.query.iter().map(|(k, v)| format!("{}={}", enc(k), enc(v))).collect();
         url.push('?');
-        url.push_str(&q.join("&"));
+        url.push_str(&rmsvc_core::http::encode_query(&req.query));
     }
-    let method = match req.method {
-        Method::Get => "GET",
-        Method::Post => "POST",
-        Method::Put => "PUT",
-        Method::Delete => "DELETE",
-        _ => return Err(ApiError::bad("unsupported method")),
-    };
+    // 路由只把 GET/POST/PUT/DELETE 交到这里（main.rs 的 PROXIED），`Other` 兜底拒掉。
+    let Some(method) = req.method.as_str() else { return Err(ApiError::bad("unsupported method")) };
     let mut r = agent().request(method, &url);
     if !req.content_type.is_empty() {
         r = r.set("Content-Type", &req.content_type);
