@@ -120,7 +120,7 @@ dm-verity 激活、但单元早已装好且内容没变时，如实报"已是最
 | 设备状态 | 做法 |
 |---|---|
 | xovi 已在运行的 xochitl 里生效，**或**装了 `xovi-reenable.service` | 提示"将打断阅读"并等 `CJ_APPLY_GRACE`（5）秒 → 把待换入区的 `.so` 换进 `extensions.d` → 清待生效标记（含 `/home` 下的退路目录，否则设备回来又判"待生效"→ 重启循环）→ `sync` → 打印 `CJ-APPLY-REBOOTING` → `systemctl reboot --no-block`。开机后 `xovi-reenable` 恢复 xovi、载入新版。**`systemctl reboot` 本身失败**时：补回待生效标记 `apply-reboot-failed`（下次 `xovi-apply` 还会判"需要生效"），打印 `CJ-APPLY-REBOOT-FAILED` 并按失败返回 |
-| 两者都没有（没装 xovi-persist，重启后 xovi 不会自己回来），但有 `xovi/start` | 走 `xovi/start`：此时 xochitl 不带 xovi、没映射任何扩展，`.so` 可直接换入 |
+| 两者都没有（没装 xovi-persist，重启后 xovi 不会自己回来），但有 `xovi/start` | 走 `xovi/start`：此时 xochitl 不带 xovi、没映射任何扩展，`.so` 可直接换入。整机重启在这种情形下救不回 xovi，所以保留这条路（10-09 复核后定为有意例外，不违反"xovi 已生效时不跑 `xovi/start`"的红线） |
 | xovi 没生效、设备上**也没有** `xovi/start`（没装 xovi 或被 vellum 删了） | 报错并提示 `vellum add xovi`，**不重启**、什么都不换（10-09 起；以前会白白整机重启一次，重启后改动照样不生效） |
 
 "换入 → 清标记 → 排重启"是关键区，忽略 HUP/PIPE/INT/TERM：ssh 中途断了也要把重启排上。**红线不变：绝不在 xovi 已生效时跑 `xovi/start`**（它会 umount 再重挂 drop-in 目录，2026-09-20 让运行中的 xochitl SEGV 过）。不想被打断就 `--skip xovi-apply`，之后自己找时间 `sh deploy-xovi-apply.sh <host>`。

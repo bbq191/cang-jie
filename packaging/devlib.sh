@@ -400,7 +400,8 @@ cj_count_maps() {
 # 有相当概率 SEGV → OnFailure → rm-emergency → 整机重启，跟扩展文件动没动过无关（09-25 早先"只有映射的扩展被
 # 删/换才崩"的归因被同日 10:37 那次推翻）。与其走一趟崩溃 + 应急路径，不如直接干净地重启：
 #   xovi 已生效，或装了 xovi-reenable（开机自动恢复 xovi）→ 换入待换入区 → `systemctl reboot`（约 20–60 秒回来）；
-#   都没有（没装 xovi-persist，重启后 xovi 不会自己回来）→ 仍走 $CJ_XOVI/start（xochitl 此时不带 xovi）。
+#   都没有（没装 xovi-persist，重启后 xovi 不会自己回来）→ 仍走 $CJ_XOVI/start（xochitl 此时不带 xovi；整机重启救不回
+#   xovi，10-09 复核后保留为有意例外）。
 # 打印 CJ-APPLY-REBOOTING 让 host 侧（lib.sh 的 run_apply）认出"连接断开是因为设备在重启"；置 CJ_APPLY_REBOOTED=1
 # 让同一段设备端脚本跳过重启后的健康检查（交给设备回来后的 verify-on-device.sh）。
 # ⚠ 绝不在 xovi 已生效时跑 xovi/start（它 umount 再重挂 drop-in 目录，xochitl SEGV，2026-09-20 真机事故）。
