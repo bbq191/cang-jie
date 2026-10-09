@@ -23,6 +23,15 @@ int main(void) {
     assert(ui_font_patch_import("cos", (void *)fake_cos, &slot) && slot);
     assert(cos(x) == 42.0);
     assert(!ui_font_patch_import("no_such_import_xyz", (void *)fake_cos, NULL));
+    /* 主程序判定：main 在主程序里；libc 的 fopen 不在（本测试没取它的地址，没有规范 PLT） */
+    assert(ui_font_addr_in_main((const void *)main));
+    assert(!ui_font_addr_in_main(dlsym(RTLD_DEFAULT, "fopen")));
+    /* 危险情形复现：取 sin 的地址（另用一个函数，免得影响上面 cos 的导入槽测试）。非 PIE 下链接器给 sin 一个主程序里的规范 PLT，dlsym 也拿到它 → 判"在主程序"；
+     * PIE 下取地址走 GOT、dlsym 拿到 libm 里的真函数 → 判"不在"。两边结论必须一致。 */
+    void *volatile taken = (void *)&sin;
+    int plt = ui_font_addr_in_main(dlsym(RTLD_DEFAULT, "sin"));
+    assert(plt == ui_font_addr_in_main(taken));
+    printf("   sin 取地址后 dlsym 落在%s\n", plt ? "主程序（规范 PLT，会被拒绝加载）" : "libm");
     puts("ui-font tests OK");
     return 0;
 }
