@@ -23,10 +23,11 @@
 //! 电脑上没记录、下次重复传。
 use crate::mkdir::MkdirQueue;
 use crate::ops::OpRegistry;
-use rmsvc_core::fs::ScratchFile;
 use crate::staging::{Staging, MAX_DIRECT_BYTES};
-use rmsvc_core::fs::{plain_name, same_content, Content};
-use rmsvc_core::xochitl::{find_documents_since, is_uuid_shape, read_metadata, Delivery, Xochitl};
+use rmsvc_core::formats::{mime_of, sniff};
+use rmsvc_core::fs::{clean_dir, plain_name, same_content, Content, ScratchFile};
+use rmsvc_core::xochitl::{find_documents_since, is_uuid_shape, read_meta, Delivery, Metadata, Xochitl};
+use serde::Deserialize;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -121,13 +122,7 @@ impl Importer {
     /// 建临时目录，并清掉上次进程留下的半成品（被杀时 Drop 来不及删）。返回清掉几个。
     pub fn ensure(&self) -> std::io::Result<usize> {
         std::fs::create_dir_all(&self.tmp_dir)?;
-        let mut n = 0;
-        for e in std::fs::read_dir(&self.tmp_dir)?.flatten() {
-            if e.file_type().is_ok_and(|t| t.is_file()) && std::fs::remove_file(e.path()).is_ok() {
-                n += 1;
-            }
-        }
-        Ok(n)
+        Ok(clean_dir(&self.tmp_dir, |_| true))
     }
 
     fn lib(&self) -> Result<&Path, ImportError> {
@@ -226,7 +221,7 @@ impl Importer {
     fn same_in_folder(&self, lib: &Path, folder: &str, part: &Path, size: u64) -> Option<String> {
         rmsvc_core::xochitl::live_entries(lib)
             .into_iter()
-            .filter(|(_, v)| v.get("type").and_then(|t| t.as_str()) == Some("DocumentType") && v.get("parent").and_then(|p| p.as_str()).unwrap_or("") == folder)
+            .filter(|(_, v)| Metadata::deserialize(v).is_ok_and(|m| m.is_document() && m.parent == folder))
             .map(|(uuid, _)| uuid)
             .find(|uuid| {
                 let epub = lib.join(format!("{uuid}.epub"));
@@ -244,7 +239,7 @@ impl Importer {
         stage("上传给 xochitl");
         let since = rmsvc_core::clock::now_ms().saturating_sub(2_000);
         let before: std::collections::HashSet<String> = find_documents_since(lib, since).into_iter().map(|d| d.uuid).collect();
-        let wait = match self.xochitl.upload_file_into(part, name, "application/epub+zip", folder) {
+        let wait = match self.xochitl.upload_file_into(part, name, mime_of(name), folder) {
             Ok(Delivery::Delivered(_)) => self.claim_wait,
             Ok(Delivery::LikelyDelivered(_)) => self.claim_wait_slow,
             Err(e) => return Err(ImportError::Failed(format!("上传给 xochitl 失败: {e}"))),
@@ -257,14 +252,7 @@ impl Importer {
                 .find(|d| !before.contains(&d.uuid) && same_content(&lib.join(format!("{}.epub", d.uuid)), Content::File(part)))
                 .map(|d| d.uuid)
         };
-        let mut found = claim();
-        if found.is_none() {
-            rmsvc_core::fswatch::watch_until(lib, CLAIM_DEBOUNCE, wait, |_| {
-                found = claim();
-                found.is_some()
-            });
-        }
-        found.or_else(claim).ok_or_else(|| {
+        rmsvc_core::fswatch::wait_for(lib, CLAIM_DEBOUNCE, wait, claim).ok_or_else(|| {
             ImportError::Failed(format!("已上传给 xochitl，但 {} 秒内没在书库里认出《{name}》（可能稍后才出现；先在设备上看一眼，别马上重试，免得重复）", wait.as_secs()))
         })
     }
@@ -302,16 +290,10 @@ impl Importer {
         if !is_uuid_shape(uuid) {
             return None;
         }
-        let lib = self.xochitl.library_dir();
-        let v = read_metadata(lib, uuid)?;
-        let s = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
-        if s("type") != "DocumentType" {
-            return None;
-        }
-        let parent = s("parent");
-        let deleted = parent == "trash" || v.get("deleted").and_then(|x| x.as_bool()) == Some(true);
-        let folder = if deleted { String::new() } else { self.xochitl.folder_path(&parent) };
-        Some(DocState { uuid: uuid.to_string(), name: s("visibleName"), folder, deleted })
+        let m = read_meta(self.xochitl.library_dir(), uuid).ok().flatten().filter(Metadata::is_document)?;
+        let deleted = !m.is_live();
+        let folder = if deleted { String::new() } else { self.xochitl.folder_path(&m.parent) };
+        Some(DocState { uuid: uuid.to_string(), name: m.visible_name, folder, deleted })
     }
 }
 
@@ -361,7 +343,7 @@ fn receive(body: &mut dyn Read, declared_len: Option<usize>, dest: &Path) -> Res
         return Err(ImportError::Bad(format!("请求体不完整（收到 {n} 字节，Content-Length 是 {d}）")));
     }
     let mut magic = [0u8; 4];
-    let head_ok = std::fs::File::open(dest).and_then(|mut f| f.read_exact(&mut magic)).is_ok() && magic == *b"PK\x03\x04";
+    let head_ok = std::fs::File::open(dest).and_then(|mut f| f.read_exact(&mut magic)).is_ok() && sniff(&magic) == Some("zip");
     if !head_ok {
         return Err(ImportError::Bad("不是 EPUB（不是 zip 文件）".into()));
     }
