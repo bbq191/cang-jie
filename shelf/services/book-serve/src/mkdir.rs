@@ -8,7 +8,7 @@
 //! 2026-09-09 note-serve 改成复用书本自己的设备文件夹后没了消费方，2026-09-15 被当死代码物理删除。
 //! 这次真正的消费方是网页母版库「加入 xochitl → 文件夹」自由输入框（2026-09-19 用户反馈"填个文件夹
 //! 名依然不会创建文件夹"）——`staging::Staging::deliver` 落库前调用，folder 不存在就入队，同步等
-//! （`fswatch::watch_until`）agent 真的建出来再继续投递，见 `staging.rs::ensure_folder`。代码本身
+//! （`fswatch::watch_until`）agent 真的建出来再继续投递，见 `staging/deliver.rs` 的 `ensure_folder`。代码本身
 //! `git show <删除前的 commit>^:...` 原样捞回，逻辑没变——当年写的时候就已经想清楚了，只是一直没等到
 //! 真消费方。**`Library.createCollection` 这条调用链当年只做到"反编译 + 静态调用链一致"，从没有真机
 //! 点过新建文件夹按钮做交叉验证**（见 `shelf-mkdir-agent.qmd` 头注原样保留的踩坑记录），这次借着
@@ -96,7 +96,7 @@ impl MkdirQueue {
     /// "路径分隔符防误传"拦掉，2026-09-19 真机反馈坐实是误伤：这个名字全程只当 JSON `visibleName`
     /// 字符串走（`Library.createCollection(parentId, name)` 收的是普通 JS 字符串，不是文件系统路径，
     /// 本模块不把名字当路径拆——多级文件夹由直接导入逐级调 `add_in` 建，见 `staging::Staging::ensure_folder_path`），真实书名/文件夹名带斜杠很常见（如《乱马1/2》），
-    /// 拦它没有技术依据、只会挡合法输入——见 `find_folder_by_name`/`Xochitl::upload` 全程都是按
+    /// 拦它没有技术依据、只会挡合法输入——见 `Xochitl::find_folder`/`find_child_folder`/`Xochitl::upload_file` 全程都是按
     /// `visibleName` 字符串整体比较，folder 的文件系统路径只走 uuid，从不落到名字里。
     ///
     /// 建在书库根（`POST /mkdir/add`、网页落库用），等于 `add_in("", name)`。
@@ -135,7 +135,7 @@ impl MkdirQueue {
     /// [`Self::pending`] 的本体，项用 [`key_of`] 的字符串键表示（[`Handout`] 只认字符串）。
     fn pending_keys(&self) -> Result<(Vec<String>, usize), String> {
         // 书库文件夹只扫一遍、且只在队列非空时扫（`prune` 对空队列不调谓词）：此前每条待办各调一次
-        // `find_folder_by_name`，每次都把书库里全部 `.metadata` 读一遍解析一遍，k 条待办＝k 遍全库扫描，
+        // 按名字找文件夹，每次都把书库里全部 `.metadata` 读一遍解析一遍，k 条待办＝k 遍全库扫描，
         // 长轮询每次唤醒都来一轮（2026-09-24 审计）。判据与 `find_child_folder` 相同（那个父文件夹下有活的同名 CollectionType）。
         let folders = std::cell::OnceCell::new();
         let (kept, pruned) = self.q.prune(|p| !folders.get_or_init(|| folder_keys(&self.lib_dir)).contains(&(p.parent.clone(), p.name.clone())))?;

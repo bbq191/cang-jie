@@ -57,7 +57,7 @@ pub struct StagingEntry {
     pub busy: bool,
 }
 
-/// 投原生成功后交给自检线程的计划：投书时刻（毫秒，圈"之后进库"的候选）+ 书名 + 期望页数。
+/// 投原生成功后交给自检线程的计划：投书时刻（毫秒，圈"之后进库"的候选）+ 文件名 / dc:title（认书用）+ 漫画页边距。
 #[derive(Clone, Debug, PartialEq)]
 pub struct RenderPlan {
     pub name: String,
@@ -219,16 +219,5 @@ impl Staging {
     /// 改这本书的落库边车（读—改—原子写）；书已不在母版库 → Err（不给已删的书复活一份边车）。
     fn update_sidecar(&self, name: &str, f: impl FnOnce(&mut Delivered)) -> Result<(), String> {
         sidecar::update(&self.existing(name)?, f)
-    }
-
-    /// [`Self::spawn_deliver`] 的"起后台线程"外壳：忙锁 `busy` 随线程走，跑完（含 panic）解锁再发 `books`/`staging` 事件。`body`
-    /// 里对落库本身另有一层 `catch_unwind`（把 panic 转成带原因的 `Err` 写进边车）；这一层只兜底 `body` 自身（比如边车写入）意外 panic。
-    fn spawn_bg(&self, name: &str, busy: OpGuard, bus: Arc<rmsvc_core::events::EventBus>, body: impl FnOnce(&Staging, &str, &Arc<rmsvc_core::events::EventBus>) + Send + 'static) {
-        let (this, name) = (self.clone(), name.to_string());
-        std::thread::spawn(move || {
-            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| body(&this, &name, &bus)));
-            drop(busy);
-            bus.publish("books", "staging");
-        });
     }
 }

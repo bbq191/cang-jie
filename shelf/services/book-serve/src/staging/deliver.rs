@@ -172,22 +172,25 @@ impl Staging {
         let busy = self.busy_guard(name, "")?;
         let now = rmsvc_core::clock::now_secs();
         let _ = self.set_deliver_check(name, sidecar::DeliverCheck { status: "pending".into(), message: String::new(), at: now });
-        let folder = folder.to_string();
-        self.spawn_bg(name, busy, bus, move |this, name, bus| {
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| this.deliver(name, &folder, &mkdir)))
-                .unwrap_or_else(|_| Err("落库过程内部异常（已捕获，不影响其他操作）".to_string()));
-            let at = rmsvc_core::clock::now_secs();
-            let (status, message) = match &result {
-                Ok(o) => ("ok".to_string(), o.message.clone()),
-                Err(e) => ("failed".to_string(), e.clone()),
-            };
-            let _ = this.set_deliver_check(name, sidecar::DeliverCheck { status, message, at });
-            if let Ok(outcome) = &result {
-                if let Some(plan) = outcome.render.clone() {
+        let (this, name, folder) = (self.clone(), name.to_string(), folder.to_string());
+        std::thread::spawn(move || {
+            // 落库本身的 panic 转成带原因的失败记录；外层再兜一次，保证无论如何都解锁、发事件。
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| this.deliver(&name, &folder, &mkdir)))
+                    .unwrap_or_else(|_| Err("落库过程内部异常（已捕获，不影响其他操作）".to_string()));
+                let at = rmsvc_core::clock::now_secs();
+                let (status, message) = match &result {
+                    Ok(o) => ("ok".to_string(), o.message.clone()),
+                    Err(e) => ("failed".to_string(), e.clone()),
+                };
+                let _ = this.set_deliver_check(&name, sidecar::DeliverCheck { status, message, at });
+                if let Ok(DeliverOutcome { render: Some(plan), .. }) = result {
                     let (staging2, bus2, lib2) = (this.clone(), bus.clone(), this.xochitl.library_dir().to_path_buf());
                     std::thread::spawn(move || crate::render_check::run(&staging2, &bus2, &lib2, &plan));
                 }
-            }
+            }));
+            drop(busy); // 先解锁再推事件：网页据事件重拉列表时这条已不是"处理中"
+            bus.publish("books", "staging");
         });
         Ok(())
     }

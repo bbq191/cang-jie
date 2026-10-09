@@ -25,7 +25,7 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 
-# 与 reading/device-rs、knowledge/pkm 同款：设备端体积优先、全静态 musl。
+# 设备端体积优先、全静态 musl（与 ../gateway、../notes 同款）。
 [profile.release]
 opt-level = "z"
 lto = true

@@ -3,7 +3,7 @@
 //! - `.work/`  已认领、处理中（rename 原子独占，防并发重复处理）；上传流程的暂存也在这（与母版库同分区，入库 rename 零拷贝）；
 //! - `failed/` 失败源（封顶 50MB，`<name>.reason` sidecar 记原因；重试=人工拷回 `inbox/`，2026-09-22 起不再有 HTTP 重试/删除接口）。
 //!
-//! 处理成功的书进母版库（`staging/`，见 `staging.rs`），本队列不再另存一份。
+//! 处理成功的书进母版库（`staging/`，见 `staging` 模块），本队列不再另存一份。
 use rmsvc_core::fs::{move_unique, unique_path};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;

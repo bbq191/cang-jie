@@ -273,8 +273,9 @@ if [ -d "$QRR" ] && [ -d "$SRC/xovi" ]; then
         done
     fi
     if sel_has book; then
-        # 原生回收站代理（note-serve 旧版本回收走 book-serve /trash/*，Sidebar 注入）
-        # 与原生建文件夹代理（网页母版库「加入 xochitl → 文件夹」不存在时靠 /mkdir/* 真建出来，MainView 注入；2026-09-19 复活）
+        # 原生回收站代理（网页「设备健康 → 清理」、电脑上的 sheng-ren 删书走 book-serve /trash/*，MainView 注入）、
+        # 建文件夹代理（「加入 xochitl → 文件夹」/ 直接导入的目标文件夹不存在时靠 /mkdir/* 真建出来，MainView 注入）、
+        # 漫画页边距代理（DocumentView 注入）、阅读器单击翻页（DocumentView/DeviceSceneView 注入）
         for q in $(shelf_svc_qmds book); do
             if [ -f "$SRC/xovi/$q" ]; then
                 bk_keep_if_differs "$SRC/xovi/$q" "$QRR/$q"
