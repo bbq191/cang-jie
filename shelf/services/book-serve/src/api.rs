@@ -18,10 +18,12 @@
 //! · `POST /import?name=<文件名.epub>&folder=<文件夹路径，`/` 分多级，可空＝书库根>`（请求体＝EPUB 原始字节）→ `202 {job}`
 //!   （文件夹逐级找、没有就建；目标文件夹里已有逐字节相同的书就认回它、不重复加入）
 //! · `POST /import?uuid=<uuid>&name=<文件名.epub>`：原地替换已有文档内容、uuid 不变 → `202 {job}`；文档不在 / 已删 / 在回收站 / 不是 EPUB → 404
-//!   （文件名 / zip 头 / 大小不对、同一 uuid 正在替换 → 400，都在回 202 之前）
+//!   （文件名 / zip 头 / 大小不对 → 400；同一 uuid 正在替换 → 409，等 `GET /import/{uuid}` 的 `replacing` 变假再交；都在回 202 之前）
 //! · `GET /import/jobs/{id}` → `{job, state: running|done|failed, stage, uuid?, name?, folder?, message?}`（done 带 uuid/name/folder，
 //!   `folder`＝实际落进的完整路径；failed 带 message；排队中 running + stage「排队」）；不存在（含 book-serve 重启丢了、做完超过 1 小时清掉）→ 404
-//! · `GET /import/{uuid}` → `{uuid, name, folder, deleted}`（不存在 → 404）。删除用 `POST /trash/add {uuid, name}`。
+//! · `GET /import/{uuid}` → `{uuid, name, folder, deleted, replacing}`（不存在 → 404；`replacing`＝正在原地替换）。删除用 `POST /trash/add {uuid, name}`。
+//! · `POST /import/states {uuids: [...]}` → `{docs: {<uuid>: {name, folder, deleted, replacing}}}`：一次查一批（不存在的不出现在 `docs` 里）；
+//!   sheng-ren 每轮 sync 开头查一次，免得每本书各开一次请求（2026-10-09）。一次最多 [`STATES_MAX`] 个，多了 400。
 use crate::service_state::State;
 use crate::staging::StagingStore;
 use rmsvc_core::asset::{self, AssetUploadFlow};
@@ -122,8 +124,9 @@ pub fn router(st: Arc<State>) -> Router {
         // ── 直接导入 xochitl（不进母版库，见 import.rs）：异步，回 202 + 任务 id，结果查 /import/jobs/{id} ──
         .post("/import", bind(&st, import_book))
         .get("/import/jobs/{id}", bind(&st, |s, r| s.import_jobs.get(r.param("id")).map(|v| Reply::ok(&v)).ok_or_else(|| ApiError::not_found("没有这个导入任务（可能 book-serve 重启过，或做完超过 1 小时已清掉）"))))
+        .post("/import/states", bind(&st, import_states))
         .get("/import/{uuid}", bind(&st, |s, r| match s.import.describe(r.param("uuid")) {
-            Some(d) => Ok(Reply::ok(&serde_json::json!({"uuid": d.uuid, "name": d.name, "folder": d.folder, "deleted": d.deleted}))),
+            Some(d) => Ok(Reply::ok(&serde_json::json!({"uuid": d.uuid, "name": d.name, "folder": d.folder, "deleted": d.deleted, "replacing": d.replacing}))),
             None => Err(ApiError::not_found("xochitl 书库里没有这份文档")),
         }))
         .post("/staging/delete", bind(&st, |s, r| {
@@ -156,6 +159,23 @@ fn staging_upload(st: &State, r: &mut Request<'_>) -> ApiResult {
     Ok(Reply::ok(&asset::receipt(&items, serde_json::Value::Null)))
 }
 
+/// `POST /import/states` 一次最多查这么多个（sheng-ren 的书库一台 Move 几百本；读的只是 `.metadata`）。
+const STATES_MAX: usize = 10_000;
+
+/// `POST /import/states {uuids}`：一批文档的状态，口径同 `GET /import/{uuid}`（不存在的不回）。
+fn import_states(st: &State, r: &mut Request<'_>) -> ApiResult {
+    let uuids = r.json()?.str_list("uuids");
+    if uuids.len() > STATES_MAX {
+        return Err(ApiError::bad(format!("一次最多查 {STATES_MAX} 个")));
+    }
+    let docs: serde_json::Map<String, serde_json::Value> = uuids
+        .iter()
+        .filter_map(|u| st.import.describe(u))
+        .map(|d| (d.uuid, serde_json::json!({"name": d.name, "folder": d.folder, "deleted": d.deleted, "replacing": d.replacing})))
+        .collect();
+    Ok(Reply::ok(&serde_json::json!({"docs": docs})))
+}
+
 /// `POST /import`：有 `uuid` → 原地替换，没有 → 新导入。请求体是 EPUB 原始字节（流式落盘，不进内存）。
 /// 这里只收体、做快速校验（出错照旧 400 / 404），然后把剩下的交给后台任务队列，立即回 `202 {job}`。
 fn import_book(st: &State, r: &mut Request<'_>) -> ApiResult {
@@ -174,6 +194,7 @@ fn import_book(st: &State, r: &mut Request<'_>) -> ApiResult {
         eprintln!("[book-serve] 直接导入《{name}》失败：{e:?}");
         match e {
             ImportError::Bad(m) => ApiError::bad(m),
+            ImportError::Busy(m) => ApiError { status: 409, message: m },
             ImportError::NotFound(m) => ApiError::not_found(m),
             ImportError::Failed(m) => ApiError::internal(m),
         }
@@ -431,11 +452,15 @@ mod tests {
         assert_eq!(std::fs::read(lib.join(format!("{U}.epub"))).unwrap(), epub);
         assert!(!lib.join(format!("{U}.pdf")).exists());
         let (code, v) = call(&router, Method::Get, &format!("/import/{U}"), "");
-        assert_eq!((code, v), (200, serde_json::json!({"uuid": U, "name": "书", "folder": "", "deleted": false})));
+        assert_eq!((code, v), (200, serde_json::json!({"uuid": U, "name": "书", "folder": "", "deleted": false, "replacing": false})));
         std::fs::write(lib.join(format!("{U}.metadata")), r#"{"type":"DocumentType","visibleName":"书","parent":"trash"}"#).unwrap();
         assert_eq!(call(&router, Method::Get, &format!("/import/{U}"), "").1["deleted"], true, "进了回收站算 deleted");
         assert_eq!(post_raw(&router, &format!("uuid={U}&name=a.epub"), epub).0, 404, "回收站里的不替换");
         assert_eq!(call(&router, Method::Get, "/import/jobs/nope", "").0, 404, "未知任务 404");
+        // 一次查一批：在的（含回收站里的）回状态，不在的、不像 uuid 的不回
+        const V: &str = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+        let (code, v) = call(&router, Method::Post, "/import/states", &serde_json::json!({"uuids": [U, V, "../x"]}).to_string());
+        assert_eq!((code, v), (200, serde_json::json!({"docs": {U: {"name": "书", "folder": "", "deleted": true, "replacing": false}}})));
         assert!(st.staging.list().is_empty(), "不进母版库");
     }
 
@@ -493,7 +518,7 @@ mod tests {
         std::fs::write(lib.join(format!("{IN}.metadata")), format!(r#"{{"type":"CollectionType","visibleName":"死亡筆記(愛藏版)","parent":"{TOP}"}}"#)).unwrap();
         std::fs::write(lib.join(format!("{U}.metadata")), format!(r#"{{"type":"DocumentType","visibleName":"书","parent":"{IN}"}}"#)).unwrap();
         let (code, v) = call(&router, Method::Get, &format!("/import/{U}"), "");
-        assert_eq!((code, v), (200, serde_json::json!({"uuid": U, "name": "书", "folder": "漫画/死亡筆記(愛藏版)", "deleted": false})));
+        assert_eq!((code, v), (200, serde_json::json!({"uuid": U, "name": "书", "folder": "漫画/死亡筆記(愛藏版)", "deleted": false, "replacing": false})));
     }
 
     /// `GET /mkdir/pending`：`items` 带上级，`names` 只放建在根的（旧代理一律建在根，不能把子文件夹交给它）。

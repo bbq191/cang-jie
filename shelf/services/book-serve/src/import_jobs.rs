@@ -136,7 +136,7 @@ pub(crate) mod tests {
     use super::*;
 
     fn doc(uuid: &str) -> DocState {
-        DocState { uuid: uuid.into(), name: "书".into(), folder: "小说".into(), deleted: false }
+        DocState { uuid: uuid.into(), name: "书".into(), folder: "小说".into(), deleted: false, replacing: false }
     }
 
     /// 等任务做完（最多 5 秒），回最后一次查询的结果。
