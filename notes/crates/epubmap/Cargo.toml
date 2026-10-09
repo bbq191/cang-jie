@@ -9,4 +9,5 @@ description = "设备 EPUB 的页号 → 章/小节映射：xochitl `.epubindex`
 # EPUB 容器/OPF 只读解析（container.xml → OPF、manifest、href 解码），与书架 shelf-conv 共用；不依赖 rmsvc-core 本体
 epubpkg = { path = "../../../rmsvc-core/epubpkg" }
 regex = "1"
-zip = { version = "2", default-features = false, features = ["deflate"] }
+# 只用 flate2 的 deflate（zip 的 "deflate" 特性还会带上用不到的 zopfli）
+zip = { version = "2", default-features = false, features = ["deflate-flate2", "flate2"] }
