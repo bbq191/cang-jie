@@ -1,6 +1,6 @@
 #!/bin/sh
 # 假 ssh（packaging/tests 用）：把"远端命令"直接在本机沙箱里执行。"设备" = $CJ_SIM_ROOT。
-# 远端绝对路径（/home/root /usr/lib/systemd/system /usr/bin/xochitl /tmp/shelf-0）按 sed 规则改写进沙箱；
+# 远端绝对路径（/home/root /usr/lib/systemd/system /usr/bin/xochitl /tmp/shelf-0 /sys/power）按 sed 规则改写进沙箱；
 # HOME/CJ_SYSD/CJ_PROC 环境指向沙箱，故设备端脚本（及 devlib.sh）无需改写。
 R="${CJ_SIM_ROOT:?}"
 # CJ_SIM_SSH_FAIL=1：模拟设备连不上（休眠/没插 USB）
@@ -20,7 +20,7 @@ while [ $# -gt 0 ]; do
 done
 shift   # root@host
 cmd="$*"
-subst() { sed -e "s#/home/root#$R/home/root#g" -e "s#/usr/lib/systemd/system#$R/usr/lib/systemd/system#g" -e "s#/usr/bin/xochitl#$R/usr/bin/xochitl#g" -e "s#/tmp/shelf-0#$R/tmp/shelf-0#g"; }
+subst() { sed -e "s#/home/root#$R/home/root#g" -e "s#/usr/lib/systemd/system#$R/usr/lib/systemd/system#g" -e "s#/usr/bin/xochitl#$R/usr/bin/xochitl#g" -e "s#/tmp/shelf-0#$R/tmp/shelf-0#g" -e "s#/sys/power#$R/sys/power#g"; }
 cmd="$(printf '%s' "$cmd" | subst)"
 [ "$nflag" = 1 ] && exec </dev/null
 echo "ssh $cmd" >> "$CJ_SIM_LOG"

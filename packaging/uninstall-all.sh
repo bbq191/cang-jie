@@ -66,6 +66,9 @@ if [ "$DRY" = "1" ]; then
     echo "═══ dry-run：只打印计划，不连设备（目标 root@$HOST，purge=$PURGE）═══"
 else
     require_device
+    trap 'device_awake_release' EXIT
+    trap 'exit 130' INT TERM HUP
+    device_awake_hold   # 卸载期间别让设备自动休眠（带超时的唤醒锁，见 lib.sh）
 fi
 
 # 卸一个 /usr 单元 + 清它的推送载荷目录。$1=单元名 $2=载荷目录名（$HOME 下）其余=载荷目录里的已知文件（先文件后子目录）
@@ -179,15 +182,7 @@ done
 
 echo
 echo "═══════════════════════════════════════════════════════════"
-if [ "$DRY" = "1" ]; then
-    echo "dry-run 计划（未连接设备、未执行）：${DONE:-（无）}"
-else
-    echo "已卸载：${DONE:-（无）}"
-fi
-[ -z "$SKIPPED" ] || echo "已跳过（--skip）：$SKIPPED"
-if [ -n "$FAILED" ]; then
-    echo "❌ 失败：$FAILED —— 看对应步骤上面的原始报错，不会自动重试"
-fi
+print_step_summary 已卸载
 echo "─── 不在本脚本范围内 ───"
 echo "· chrony-cn.sh / timezone-cn.sh：配置覆写，没有卸载语义，不动（改前备份在设备 /home/root/cangjie-backups/，要还原自己取）"
 echo "· vellum/xovi/qt-resource-rebuilder/appload 本体、KOReader 侧载：不代卸"

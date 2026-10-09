@@ -10,7 +10,9 @@
 #   ssh 封装（M11）  rssh（stdin=/dev/null）· rssh_in（透传 stdin）· rscp —— 统一
 #                    BatchMode + ConnectTimeout，休眠/断线时快速失败而不是卡死
 #   shquote          把任意字符串安全地拼进远端命令行（M9/M10）
-#   dev_script       `dev_script ARG… <<'EOF' … EOF`：devlib.sh + 脚本体经 `ssh sh -s` 在设备上执行
+#   dev_pipe         完整脚本（stdin）整组包成 `{ …; } </dev/null` 经 `ssh sh -s` 在设备上执行（断在半截不会执行半截）
+#   dev_script       `dev_script ARG… <<'EOF' … EOF`：devlib.sh + 脚本体经 dev_pipe 在设备上执行
+#   device_awake_hold / device_awake_release   顶层编排期间持一把带超时的设备唤醒锁，别让设备在两次 ssh 之间睡过去
 #   push_verified    一批文件 scp 到"暂存路径"→ 逐个 md5 对拍；不对就删暂存并失败，绝不落到最终位置（H3）；
 #                    一次 ssh 建目录并取现有 md5 + 只 scp 有变化的文件 + 有上传才再一次 ssh 复核 md5
 #   步骤表           STEP_ORDER / step_script / STEP_DEFER / STEP_CONFIG_ONLY（install-all 与 uninstall-all 共用，
@@ -18,6 +20,7 @@
 #   parse_step_args  install-all / uninstall-all 共用的 [host] --force --purge --force-apply --dry-run --skip -h 解析
 #                    （调用方先定义 usage()）
 #   run_step / skip_has   （DRY=1 时 run_step 只打印将执行的命令，不连设备；SKIPPED/NOTAPPL/DONE/FAILED 记账）
+#   print_step_summary    install-all / uninstall-all 收尾汇总
 #   step_skipped     步骤因前置条件不满足而跳过（非失败）：打印原因；在 run_step 编排下另记入汇总的"前置条件不满足"栏
 #   host_arg         薄 deploy-*.sh 共用的 [host] 参数解析（-h、多余/未知参数 exit 2）
 #   require_device   动手前确认 ssh 通；不通给下一步排查提示并 exit 1
@@ -34,19 +37,28 @@ rssh()    { ssh -n $CJ_SSH_OPTS "root@$HOST" "$@"; }
 rssh_in() { ssh $CJ_SSH_OPTS "root@$HOST" "$@"; }
 # shellcheck disable=SC2086
 rscp()    { scp -q $CJ_SSH_OPTS "$@"; }
-CJ_SSH_OPTS="-o BatchMode=yes -o ConnectTimeout=$CJ_SSH_TIMEOUT"
+# ServerAlive*（2026-10-09）：ConnectTimeout 只管"连上之前"。连上之后设备休眠/拔线/WiFi 掉了，TCP 收不到 FIN，
+# 没有保活的 ssh/scp 会一直挂着（推 20MB 书架载荷时最容易撞上）；5 秒一探、连续 3 次没回应（约 15 秒）就断开报错。
+# 只是协议层心跳，设备端命令长时间不输出（shelf 安装、等重启）不受影响。
+CJ_SSH_OPTS="-o BatchMode=yes -o ConnectTimeout=$CJ_SSH_TIMEOUT -o ServerAliveInterval=5 -o ServerAliveCountMax=3"
 
 # 单引号转义，可安全拼进远端 shell 命令行
 shquote() {
     printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
 }
 
-# dev_script [ARG…]  ← stdin 是脚本体。devlib.sh + 脚本体经 ssh 在设备上 `sh -s -- ARG…` 执行。
-dev_script() {
+# dev_pipe [ARG…]  ← stdin 是一段完整的设备端脚本，经 ssh 在设备上 `sh -s -- ARG…` 执行。
+# 整段包成 `{ …; } </dev/null` 再送（2026-10-09）：
+#   · shell 要读到配对的 `}` 才开始执行整组——传输中途断了（ssh 掉线、设备休眠）只会是语法错误、一条都不执行，
+#     不会出现"前半截已执行、后半截没到"（卸载/写 /usr 的脚本跑一半最难收拾）；
+#   · 组内命令的标准输入是 /dev/null：`sh -s` 边读边执行，任何读 stdin 的子命令都会把后面还没执行的脚本当输入吃掉。
+dev_pipe() {
     ds_args=""
     for ds_a in "$@"; do ds_args="$ds_args $(shquote "$ds_a")"; done
-    { cat "$CJ_PKG_DIR/devlib.sh"; cat; } | rssh_in "sh -s --$ds_args"
+    { echo '{'; cat; printf '\n} </dev/null\n'; } | rssh_in "sh -s --$ds_args"
 }
+# dev_script [ARG…]  ← stdin 是脚本体。devlib.sh + 脚本体经 dev_pipe 在设备上执行。
+dev_script() { { cat "$CJ_PKG_DIR/devlib.sh"; cat; } | dev_pipe "$@"; }
 
 # run_apply CMD…：跑一段可能让设备主动整机重启的设备端命令（内部调了 devlib.sh 的 cj_xochitl_apply）。输出照常
 # 打到终端并留一份；见到设备端打印的 CJ-APPLY-REBOOTING 就按成功处理——ssh 随重启断开（退出码 255）不算失败——
@@ -64,6 +76,8 @@ run_apply() {
     fi
     if grep -q '^CJ-APPLY-REBOOTING$' "$ra_log"; then
         rm -f "$ra_log" "$ra_rcf"
+        # 告诉顶层编排者（device_awake_release）设备重启过了：唤醒锁已随重启消失，不必再连一次去放
+        if [ -n "${CJ_AWAKE_REBOOTED_FILE:-}" ]; then echo rebooted > "$CJ_AWAKE_REBOOTED_FILE" 2>/dev/null || true; fi
         wait_reboot_and_verify
         return $?
     fi
@@ -121,6 +135,32 @@ require_device() {
 }
 
 md5_local() { md5sum "$1" | awk '{print $1}'; }
+
+# ── 部署期间不让设备自动休眠（2026-10-09）──────────────────────────────────
+# 设备离开 USB 后几秒就会自动休眠（见 chrony-boot-wakelock.service 头注）：走 WiFi 部署时，两次 ssh 之间（交叉编译、
+# 打包、推送 20MB 载荷）设备可能睡过去，下一条 ssh/scp 就卡住或失败，留下一个装了一半的步骤。
+# device_awake_hold 在设备上持一把带超时的内核唤醒锁（/sys/power/wake_lock 写 "名字 超时纳秒"，到点内核自动释放——
+# host 被 Ctrl-C、断网、崩掉都不会让设备永远不睡，最坏多醒 CJ_AWAKE_SECS 秒）；device_awake_release 提前放掉。
+# 只由顶层编排者（install-all / uninstall-all / 单独跑的 deploy.sh）调用；它导出 CJ_AWAKE_HELD，被它编排的子脚本
+# 不再各拿各放（否则子脚本收尾时会把整轮的锁提前放掉）。没有该接口（[ -w ] 不成立）时什么都不做。CJ_AWAKE=0 关掉。
+CJ_AWAKE_SECS="${CJ_AWAKE_SECS:-1200}"
+CJ_AWAKE_MINE=0
+device_awake_hold() {
+    [ -z "${CJ_AWAKE_HELD:-}" ] && [ "${CJ_AWAKE:-1}" != 0 ] || return 0
+    rssh "[ -w /sys/power/wake_lock ] && echo cangjie-deploy ${CJ_AWAKE_SECS}000000000 > /sys/power/wake_lock 2>/dev/null; exit 0" >/dev/null 2>&1 || return 0
+    CJ_AWAKE_MINE=1
+    CJ_AWAKE_REBOOTED_FILE="$(mktemp)"
+    export CJ_AWAKE_HELD=1 CJ_AWAKE_REBOOTED_FILE
+}
+device_awake_release() {
+    [ "$CJ_AWAKE_MINE" = 1 ] || return 0
+    CJ_AWAKE_MINE=0
+    if [ ! -s "$CJ_AWAKE_REBOOTED_FILE" ]; then
+        rssh "[ -w /sys/power/wake_unlock ] && echo cangjie-deploy > /sys/power/wake_unlock 2>/dev/null; exit 0" >/dev/null 2>&1 || true
+    fi
+    rm -f "$CJ_AWAKE_REBOOTED_FILE"
+    unset CJ_AWAKE_HELD CJ_AWAKE_REBOOTED_FILE
+}
 
 # push_verified LOCAL REMOTE [LOCAL REMOTE …]：把一批文件 scp 到各自的"暂存路径"（调用方保证不在 extensions.d
 # 之类的自动加载目录里）并核对 md5。md5 对不上的那个文件从设备上删掉、整体返回 1；最终位置从未被碰过。
@@ -385,4 +425,13 @@ run_step() {
     fi
     unset CJ_STEP_SKIP_FILE
     rm -f "$rs_skipf"
+}
+
+# print_step_summary 动词：install-all / uninstall-all 收尾汇总的公共部分（动词=已安装/已卸载；DRY=1 时打印计划）
+print_step_summary() {
+    if [ "${DRY:-0}" = "1" ]; then echo "dry-run 计划（未连接设备、未执行）：${DONE:-（无）}"
+    else echo "$1：${DONE:-（无）}"; fi
+    [ -z "$SKIPPED" ] || echo "已跳过（--skip）：$SKIPPED"
+    [ -z "$NOTAPPL" ] || echo "已跳过（前置条件不满足，非失败）：$NOTAPPL"
+    [ -z "$FAILED" ] || echo "❌ 失败：$FAILED —— 看对应步骤上面的原始报错，不会自动重试"
 }

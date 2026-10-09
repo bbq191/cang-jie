@@ -12,4 +12,4 @@ cd "$(dirname "$0")"
 host_arg "用法：./deploy-timezone-cn.sh [host]      host 默认 10.11.99.1" "$@"
 require_device
 
-rssh_in sh -s < timezone-cn.sh
+dev_pipe < timezone-cn.sh   # 整组传输：断在半截不会执行半截（见 lib.sh 的 dev_pipe）
