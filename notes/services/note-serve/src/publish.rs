@@ -23,8 +23,8 @@ use serde::Serialize;
 /// 传书 + 认领 + 查文件夹/去重三件事的抽象；生产实现包一层 `rmsvc_core::xochitl::Xochitl`，测试用
 /// 内存桩——不真的碰网络。
 pub trait Uploader: Send + Sync {
-    /// 上传一份 `.rmdoc`，进 `folder_name`（找不到该文件夹 → best-effort 落书库根）。
-    fn upload(&self, bytes: &[u8], filename: &str, folder_name: &str) -> Result<(), String>;
+    /// 上传一份 `.rmdoc`，进 `folder`（**文件夹 uuid**，空串＝书库根；即 [`Self::parent_folder`] 给的值）。
+    fn upload(&self, bytes: &[u8], filename: &str, folder: &str) -> Result<(), String>;
     /// 找 `createdTime >= since_ms` 且 `visibleName == visible_name` 的文档，返回设备分配的新 uuid。
     /// 生产实现内部短暂重试（`XochitlUploader::claim`）——`upload()` 和这一步不是一个事务，设备
     /// 处理跟不上时重试比让调用方手动重试更安全（手动重试对首次生成的去重不友好，见该实现的注释）。
@@ -174,8 +174,16 @@ impl XochitlUploader {
 }
 
 impl Uploader for XochitlUploader {
-    fn upload(&self, bytes: &[u8], filename: &str, folder_name: &str) -> Result<(), String> {
-        self.xochitl.upload(bytes, filename, "application/zip", folder_name).map(|_| ())
+    /// `folder` 是文件夹 **uuid**：此前直接交给 `Xochitl::upload`，那个接口的参数是文件夹**名字**、内部按 visibleName
+    /// 找文件夹，拿 uuid 去找必然落空、best-effort 落到书库根——书放在文件夹里时，笔记本一直生成到根目录，而去重
+    /// （`unique_name`）查的却是书所在的文件夹（2026-09-09 改"复用书本文件夹"时起）。共享底座目前只有"磁盘文件 +
+    /// uuid"的上传口（`upload_file_into`），笔记本只有几 KB，先落一份临时文件再传，传完就删。
+    fn upload(&self, bytes: &[u8], filename: &str, folder: &str) -> Result<(), String> {
+        let tmp = std::env::temp_dir().join(format!("note-serve-{}-{}", std::process::id(), rmsvc_core::fs::plain_name(filename)?));
+        std::fs::write(&tmp, bytes).map_err(|e| format!("写临时文件 {} 失败: {e}", tmp.display()))?;
+        let r = self.xochitl.upload_file_into(&tmp, filename, "application/zip", folder).map(|_| ());
+        let _ = std::fs::remove_file(&tmp);
+        r
     }
     fn claim(&self, visible_name: &str, since_ms: u64) -> Result<String, String> {
         // 2026-09-09 审计发现：`upload()` 成功那一刻设备已经真实建好文档，`claim()` 只是"回查"，
@@ -230,11 +238,11 @@ mod tests {
         fail_claim: Mutex<bool>,
     }
     impl Uploader for FakeUploader {
-        fn upload(&self, _bytes: &[u8], filename: &str, folder_name: &str) -> Result<(), String> {
+        fn upload(&self, _bytes: &[u8], filename: &str, folder: &str) -> Result<(), String> {
             if *self.fail_upload.lock().unwrap() {
                 return Err("模拟上传失败".into());
             }
-            self.uploads.lock().unwrap().push((filename.to_string(), folder_name.to_string()));
+            self.uploads.lock().unwrap().push((filename.to_string(), folder.to_string()));
             Ok(())
         }
         fn claim(&self, visible_name: &str, since_ms: u64) -> Result<String, String> {
@@ -254,8 +262,8 @@ mod tests {
         unique_name_calls: Mutex<u32>,
     }
     impl Uploader for FolderAwareUploader {
-        fn upload(&self, _bytes: &[u8], filename: &str, folder_name: &str) -> Result<(), String> {
-            self.uploads.lock().unwrap().push((filename.to_string(), folder_name.to_string()));
+        fn upload(&self, _bytes: &[u8], filename: &str, folder: &str) -> Result<(), String> {
+            self.uploads.lock().unwrap().push((filename.to_string(), folder.to_string()));
             Ok(())
         }
         fn claim(&self, visible_name: &str, since_ms: u64) -> Result<String, String> {
@@ -296,6 +304,32 @@ mod tests {
 
     fn ctx<'a>(store: &'a FakeStore, uploader: &'a dyn Uploader, trash: &'a FakeTrash, state: &'a NotebookState, now_ms: u64) -> Ctx<'a> {
         Ctx { store, uploader, trash, state, now_ms }
+    }
+
+    /// 回归：生产上传按文件夹 **uuid** 设当前文件夹（`GET /documents/<uuid>`）再 `/upload`。此前把 uuid 当文件夹名字
+    /// 去书库里找，必然落空，`GET /documents/`（根）——书在文件夹里时笔记本一直生成到根目录。临时文件传完就删。
+    #[test]
+    fn xochitl_uploader_targets_folder_by_uuid() {
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let port = server.server_addr().to_ip().unwrap().port();
+        let h = std::thread::spawn(move || {
+            let mut seen = vec![];
+            for mut req in server.incoming_requests().take(2) {
+                let mut body = Vec::new();
+                let _ = std::io::Read::read_to_end(req.as_reader(), &mut body);
+                seen.push((req.method().to_string(), req.url().to_string(), body.windows(5).any(|w| w == b"RMDOC")));
+                let _ = req.respond(tiny_http::Response::from_string("{}"));
+            }
+            seen
+        });
+        let lib = tempfile::tempdir().unwrap();
+        let up = XochitlUploader::new(&format!("127.0.0.1:{port}"), lib.path(), 5);
+        up.upload(b"RMDOC-bytes", "d1.rmdoc", "folder-uuid-1").unwrap();
+        let seen = h.join().unwrap();
+        assert_eq!((seen[0].0.as_str(), seen[0].1.as_str()), ("GET", "/documents/folder-uuid-1"), "按 uuid 设当前文件夹，不落根");
+        assert_eq!((seen[1].0.as_str(), seen[1].1.as_str(), seen[1].2), ("POST", "/upload", true));
+        let leftovers = std::fs::read_dir(std::env::temp_dir()).unwrap().flatten().filter(|e| e.file_name().to_string_lossy() == format!("note-serve-{}-d1.rmdoc", std::process::id())).count();
+        assert_eq!(leftovers, 0, "临时文件传完就删");
     }
 
     #[test]
