@@ -122,7 +122,7 @@ fn main() {
             s.bus.publish("fonts", "config");
             Ok(Reply::ok(&serde_json::json!({"ok": true, "emboldenCjkFallback": on, "note": "已更新，翻书即见（fontconfig 实时生效，无需重启）"})))
         }))
-        .get("/status", bind(&st, |s, _| Ok(Reply::ok(&serde_json::json!({"ok": true, "count": s.store.list().len(), "target": "native", "cjkFallback": s.store.cjk_fallback_keys(), "emboldenCjkFallback": s.store.embolden()})))));
+        .get("/status", bind(&st, |s, _| Ok(Reply::ok(&serde_json::json!({"ok": true, "count": s.store.entries().len(), "target": "native", "cjkFallback": s.store.cjk_fallback_keys(), "emboldenCjkFallback": s.store.embolden()})))));
     println!("[font-serve] 字体目录 {}，清单 {}", st.store.fonts_dir().display(), st.store.json_path().display());
     if let Err(e) = service::run(&SPEC, &bind_addr, &paths, router) {
         eprintln!("[font-serve] {e}");
