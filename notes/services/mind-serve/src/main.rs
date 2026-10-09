@@ -56,8 +56,8 @@ fn main() {
     let st = Arc::new(State { cfg, ledger: Ledger::open(&paths.app_state_dir(APP).join("mind.json")), store: InkHttp::new(paths.clone()), clients: Default::default() });
     let router = Router::new()
         .get("/status", bind(&st, |s, _| {
-            let cfg = s.cfg();
-            Ok(Reply::ok(&serde_json::json!({"config": cfg.public(), "usage": s.ledger.snapshot(), "usageByModel": vendorcfg::usage::usage_profile(&cfg, config::PRESETS, &s.ledger.snapshot())})))
+            let (cfg, usage) = (s.cfg(), s.ledger.snapshot());
+            Ok(Reply::ok(&serde_json::json!({"config": cfg.public(), "usageByModel": vendorcfg::usage::usage_profile(&cfg, config::PRESETS, &usage), "usage": usage})))
         }))
         .get("/config", bind(&st, |s, _| Ok(Reply::ok(&s.cfg().public()))))
         .put("/config", bind(&st, |s, r| {

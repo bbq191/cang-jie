@@ -1,13 +1,13 @@
 //! 打包一份 xochitl 认的原生文档 zip（reMarkable 官方叫 `.rmdoc`）：`<uuid>.metadata` +
-//! `<uuid>.content` + `<uuid>/<page-uuid>.rm`。**格式不是自己猜的**：`reading/protocol/inject.py`
-//! （2026-08-16 真机验证）+ `device-core/src/inject.rs` + `knowledge/pkm/src/cardnote.rs` 都验证过
-//! `POST /upload`（`rmsvc_core::xochitl::Xochitl::upload`，本模块直接复用这个共享底座，不是"旧代码"）
+//! `<uuid>.content` + `<uuid>/<page-uuid>.rm`。**格式不是自己猜的**：早期阅读/知识管理线的注入工具（Python 原型
+//! 2026-08-16 真机验证，及其后的 Rust 注入与卡片笔记本生成；那些代码已不在本仓库）都验证过
+//! `POST /upload`（`rmsvc_core::xochitl::Xochitl` 的上传口，本模块直接复用这个共享底座，不是"旧代码"）
 //! 除 EPUB/PDF 外也吃 `.rmdoc`：multipart 字段名 `file`、`.rmdoc` 用 `application/zip`；导入端**会
 //! 重新分配设备 UUID**（不是包里写的那个），落库后免重启出现，调用方按 `visibleName` 事后认领。
 //! 按"不引入任何旧代码到 notes/"的红线，本模块是照这些事实全新写的，不是搬运（笔记线白皮书 §03h）。
 //!
 //! 首期只做"一章一页"：一份文档正好一页，`.content` 走当前固件（3.28）的 `cPages`/`formatVersion 2`
-//! 结构，字段集合参照真机样本 `testdata/seven_styles/book.content` 与上面三处旧代码的最小可用集
+//! 结构，字段集合参照真机样本 `testdata/seven_styles/book.content` 与上面那些早期工具的最小可用集
 //! （`extraMetadata` 可以是空对象——不用把所有画笔工具状态字段都填一遍）。
 //!
 //! ✅ 打包器本身已经 host 双实现（zipfile+rmscene）交叉验证过，且 **2026-09-07 真机验证通过**（笔记线
