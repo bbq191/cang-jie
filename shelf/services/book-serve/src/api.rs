@@ -79,6 +79,23 @@ pub fn router(st: Arc<State>) -> Router {
             let n = s.comic_margins.applied(r.json()?.str("uuid")?).map_err(ApiError::bad)?;
             Ok(Reply::ok(&serde_json::json!({"ok": true, "pending": n})))
         }))
+        // ── 原地替换后找回阅读位置（QML 代理 shelf-keep-progress.qmd 在书打开时查；见 progress.rs）──
+        // `?pages=` 是阅读器当前总页数（新 .content 还没写时定最后一个文件的页数用），可省
+        .get("/progress/{uuid}", bind(&st, |s, r| match s.progress.lookup(r.param("uuid"), r.q_parse::<u32>("pages")) {
+            crate::progress::Lookup::None => Err(ApiError::not_found("没有待恢复的阅读位置")),
+            crate::progress::Lookup::Pending => Ok(Reply::json(202, &serde_json::json!({"pending": true}))),
+            crate::progress::Lookup::Page(p) => Ok(Reply::ok(&serde_json::json!({"page": p}))),
+        }))
+        .post("/progress/applied", bind(&st, |s, r| {
+            let j = r.json()?;
+            let uuid = j.str("uuid")?;
+            let removed = s.progress.applied(uuid).map_err(ApiError::bad)?;
+            // 代理等了约一分钟新排版还没出来就放弃（reason=timeout）：删掉快照，免得之后某次打开把用户已经读到的地方又拉回去
+            if j.str_or("reason", "") == "timeout" && removed {
+                println!("[book-serve] {uuid} 新排版迟迟没出来，放弃恢复阅读位置");
+            }
+            Ok(Reply::ok(&serde_json::json!({"ok": true, "removed": removed})))
+        }))
         // ── 原生书库回收站队列（真正的软删由 xochitl 自己的 selectionMoveToTrash 执行，见 trash.rs / shelf-trash-agent.qmd）──
         .post("/trash/add", bind(&st, |s, r| {
             let j = r.json()?;
@@ -270,6 +287,34 @@ mod tests {
         assert_eq!(call(&router, Method::Post, "/margins/applied", &format!(r#"{{"uuid":"{U}"}}"#)).0, 200);
         assert_eq!(call(&router, Method::Get, &path, "").0, 404, "销账后不再返回");
         assert_eq!(call(&router, Method::Get, "/margins/not-a-uuid", "").0, 404, "非法 uuid 一律 404");
+    }
+
+    /// 阅读位置快照：没有 → 404；新排版没出来 → 202 pending；出来了 → 200 page；应用后 → 404。
+    #[test]
+    fn progress_endpoint_404_pending_page_then_404_after_applied() {
+        use crate::progress::tests as pt;
+        let t = tempfile::tempdir().unwrap();
+        let st = state(&t);
+        let router = router(st.clone());
+        let lib = paths(&t).xochitl_dir();
+        std::fs::create_dir_all(&lib).unwrap();
+        std::fs::write(lib.join(format!("{}.metadata", pt::U)), r#"{"type":"DocumentType","lastOpenedPage":120}"#).unwrap();
+        std::fs::write(lib.join(format!("{}.epubindex", pt::U)), pt::REAL_INDEX).unwrap();
+        let path = format!("/progress/{}", pt::U);
+        assert_eq!(call(&router, Method::Get, &path, "").0, 404, "没快照 → 404，代理静默不动");
+        st.progress.before_replace(pt::U).unwrap();
+        std::fs::remove_file(lib.join(format!("{}.epubindex", pt::U))).unwrap();
+        let (code, v) = call(&router, Method::Get, &path, "");
+        assert_eq!((code, v["pending"].as_bool()), (202, Some(true)));
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        std::fs::write(lib.join(format!("{}.epubindex", pt::U)), pt::REAL_INDEX).unwrap();
+        let (code, v) = call(&router, Method::Get, &path, "");
+        assert_eq!((code, v["page"].as_u64()), (200, Some(120)));
+        let (code, v) = call(&router, Method::Post, "/progress/applied", &format!(r#"{{"uuid":"{}"}}"#, pt::U));
+        assert_eq!((code, v["removed"].as_bool()), (200, Some(true)));
+        assert_eq!(call(&router, Method::Get, &path, "").0, 404, "应用后不再返回");
+        assert_eq!(call(&router, Method::Get, "/progress/not-a-uuid", "").0, 404);
+        assert_eq!(call(&router, Method::Post, "/progress/applied", r#"{"uuid":"../x"}"#).0, 400);
     }
 
     /// `GET /staging` 带 `lowSpace`（布尔，与 `freeBytes` 同一次取样算出）。

@@ -14,6 +14,8 @@ rmsvc-core = { path = "../../../rmsvc-core" }
 # 投进 xochitl 时读书用的工具（读 EPUB 书名/封面/翻页方向/漫画页边距标记、占位文档、PDF 页数、书名规范化）；
 # 书本身的优化在电脑上用 sheng-ren 做（2026-10-07）
 shelf-conv = { path = "../../crates/shelf-conv" }
+# xochitl `.epubindex`（各 spine 文件起始页）解析：原地替换后找回阅读位置（progress.rs）；与笔记线 epubmap 共用同一份
+epubpkg = { path = "../../../rmsvc-core/epubpkg" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # 书名太长时边车改用"截断书名 + sha256 前 16 位"的短名（`sidecar::file_name_for`）；跟 rmsvc-core 同一版本，不新增依赖树
