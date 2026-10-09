@@ -66,6 +66,9 @@ fn main() {
         .post("/", bind(&st, |s, r| {
             let b = r.multipart_boundary()?;
             let items = AssetUploadFlow::new(&s.paths).run(&s.store, &mut *r.body, &b).map_err(ApiError::bad)?;
+            if items.iter().any(|i| i.ok) {
+                s.store.fc_cache(); // 整批装完重建一次（不在 install 里逐个跑）
+            }
             // 真机 2026-09-03（3.27.3.0）：上传后不重启，菜单出现新项、选中即渲染。菜单 onVisibleChanged 差量刷新（S-B）。
             // fontconfig 回退由 write_index 随每次上传重写（weak 绑定：选的字体优先、缺字才回退）。
             let fallback = s.store.cjk_fallback_keys();
@@ -87,6 +90,7 @@ fn main() {
             let b = r.multipart_boundary()?;
             let items = AssetUploadFlow::new(&s.paths).run(&s.ui_store, &mut *r.body, &b).map_err(ApiError::bad)?;
             if items.iter().any(|i| i.ok) {
+                s.ui_store.fc_cache();
                 s.store.refresh_fontconfig();
                 s.bus.publish("fonts", "ui");
             }

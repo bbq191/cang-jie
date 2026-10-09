@@ -296,7 +296,8 @@ impl FontStore {
     /// 只重建用户字体目录（`fonts/`，含 `shelf-ui/` 子目录，fc-cache 对目录参数递归）的缓存。此前不带目录参数，
     /// 每装/删一个字体都把系统字体目录也强制重扫一遍，那些目录根本没变（host 实测 CPU 0.7s → 0.006s）。
     /// 界面仓库也从 `fonts/` 起扫：首次建 `shelf-ui/` 时父目录的缓存（记着有哪些子目录）也要跟着更新。
-    fn fc_cache(&self) {
+    /// 上传不在 [`AssetStore::install`] 里逐个文件跑（一次传几个字体就要重建几遍），由路由在整批装完后调一次。
+    pub fn fc_cache(&self) {
         if self.side_effects {
             let root = match self.role {
                 Role::Reading => self.fonts_dir.as_path(),
@@ -394,7 +395,7 @@ impl AssetStore for FontStore {
             std::fs::copy(staged, &dest).map_err(|e| format!("写入字体目录失败: {e}"))?;
         }
         let bytes = std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
-        self.fc_cache();
+        // fc-cache 由调用方在整批上传后跑一次（见 fc_cache）；建索引用 fc-scan 直接读文件，不依赖缓存。
         let fonts = self.write_index()?;
         let entry = fonts.iter().find(|e| e.files.iter().any(|f| f == name)).cloned();
         let pct = entry.as_ref().map(|e| e.cjk_pct).unwrap_or(0);
