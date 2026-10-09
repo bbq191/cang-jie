@@ -71,7 +71,7 @@ reMarkable Paper Pro Move 的**书籍搬运层**。它是跑在设备上的一�
 ```
 shelf/
 ├── Cargo.toml · build.sh · .cargo/   内部 workspace；aarch64 musl 全静态交叉编译
-├── crates/shelf-conv/                只读不改书的读书工具：读 EPUB（书名、封面、漫画页边距标记）、第三方 PDF 页数、大文件通道占位文档、文件名规范化
+├── crates/shelf-conv/                只读不改书的读书工具：读 EPUB（书名、封面、漫画页边距标记；OPF 解析用 ../rmsvc-core/epubpkg）、第三方 PDF 页数、大文件通道占位文档、文件名规范化
 ├── services/book-serve/              母版库服务
 ├── systemd/                          shelf.target + book-serve 单元
 ├── xovi/                             注入 xochitl 的 qmd：字体菜单（3.28 / 3.27 两版）、界面字体令牌（随 font 装，只在 3.28）、回收站/建文件夹/漫画页边距代理、阅读器单击翻页
@@ -79,8 +79,8 @@ shelf/
 └── docs/                             书架白皮书、传书线架构 + diagrams/
 ```
 
-依赖单向无环：`services/* → ../rmsvc-core`；`book-serve → shelf-conv`。
-2026-10-07 稍后起**不再依赖 sheng-ren 的 `bookconv`**（此前 git 依赖它读 EPUB），读 EPUB 用 `shelf-conv` 自己的 `epub` 模块。
+依赖单向无环：`services/* → ../rmsvc-core`；`book-serve → shelf-conv → ../rmsvc-core/epubpkg`（与笔记线共用的 EPUB 容器/OPF 解析小 crate，不依赖 rmsvc-core 本体）。
+2026-10-07 稍后起**不再依赖 sheng-ren 的 `bookconv`**（此前 git 依赖它读 EPUB），读 EPUB 用 `shelf-conv` 自己的 `epub` 模块（2026-10-09 起 container.xml → OPF、manifest/spine/Dublin Core、href 解码与有上限地读条目改用与笔记线 epubmap 共用的 `rmsvc-core/epubpkg`）。
 有两处是从 sheng-ren 抄来的、**sheng-ren 改了这边要手动跟着改**：漫画页边距标记名 `READER_MARGINS_MARKER`（`META-INF/eink-reader-margins`），
 书名规范化 `canonical_book_name`（`shelf-conv/src/naming.rs`）。没有自动检查，见书架白皮书 §03bx。
 设备上的路径（XDG，HOME=/home/root）：母版库 `~/.local/state/shelf/books/staging/`；配置 `~/.config/shelf/<服务>.json`；
@@ -92,7 +92,7 @@ shelf/
 
 ```sh
 cd shelf && sh build.sh                        # host 测试 + aarch64 构建（gateway / enhance / notes 在的话一起编）
-cargo test --workspace                         # 只跑测试：2026-10-09 实跑 book-serve 98 + shelf-conv 27 个通过
+cargo test --workspace                         # 只跑测试：2026-10-09 实跑 book-serve 99 + shelf-conv 25 个通过
 cd ../packaging && sh deploy.sh 10.11.99.1     # 打包 → 传到设备 → install.sh（先备份旧文件）；只有 WiFi 时给 WiFi IP
 sh deploy.sh 10.11.99.1 --only font,wallpaper  # 只装部分服务；SHELF_NO_BUILD=1 跳过编译
 sh deploy.sh 10.11.99.1 --password '新密码'     # 顺便设网关密码（经 ssh 标准输入传，不上命令行）

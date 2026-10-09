@@ -48,6 +48,8 @@ service::run_or_exit(&SPEC, &bind_addr, &paths, router, ServeOpts::default());
 
 另有 crate 内部的 `sys`（`poll` 小工具，`fswatch` 与 `mdns` 共用），不对外。
 
+同目录下还有一个**独立小 crate** [`epubpkg/`](epubpkg/src/lib.rs)（2026-10-09）：EPUB 容器 / OPF 的只读解析（container.xml → OPF、manifest/spine/Dublin Core、href 解 XML 实体与百分号、有上限地读 zip 条目），笔记线 `notes/crates/epubmap` 和书架 `shelf/crates/shelf-conv` 共用。它**不依赖 rmsvc-core**、也不是它的模块——只依赖 regex/zip，免得纯解析库连带编进 HTTP/TLS 那一整套。
+
 ## 常用 Rust 入口
 
 | 入口 | 用途 |
@@ -65,7 +67,8 @@ service::run_or_exit(&SPEC, &bind_addr, &paths, router, ServeOpts::default());
 
 - `cargo build --manifest-path rmsvc-core/Cargo.toml`；独立 crate，各消费方编译时一起编。
 - `cargo test --manifest-path rmsvc-core/Cargo.toml`：2026-10-09 实跑 131 个单测通过、1 个默认忽略（需要网络命名空间的 mDNS 端到端测试），另有 1 个文档示例默认忽略。
-- CI（GitHub Actions）的 `rust` job 单列一步跑它；仓库 2026-10-09 公开后 CI 恢复执行。
+- `cargo test --manifest-path rmsvc-core/epubpkg/Cargo.toml`：同目录的 `epubpkg`，10 个单测。
+- CI（GitHub Actions）的 `rust` job 单列一步跑它（`epubpkg` 同一步）；仓库 2026-10-09 公开后 CI 恢复执行。
 
 ## 注意
 
