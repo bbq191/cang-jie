@@ -682,7 +682,7 @@ printf 'driftfile /x\nmakestep 1 3\n' > "$CONF"
 ( cd "$PKG" && CJ_CHRONY_CONF="$CONF" CJ_MOUNTS="$R/mounts" CJ_BACKUP_DIR="$R/cbk" CJ_TMPDIR="$R" run sh deploy-chrony-cn.sh 127.0.0.1 ) >/dev/null 2>&1
 check "chrony-cn：原配置里一条 server 都没有（用 pool）→ 追加 4 条，而不是每次都\"改不动\"" test "$(grep -c '^server ' "$CONF")" -eq 4
 ( cd "$PKG" && CJ_SIM_UNSYNCED=1 CJ_CHRONY_CONF="$CONF" CJ_MOUNTS="$R/mounts" CJ_BACKUP_DIR="$R/cbk" CJ_TMPDIR="$R" bash -c "PATH='$STUBS:'\$PATH sh deploy-chrony-cn.sh 127.0.0.1" ) >"$R/out.txt" 2>&1; rc=$?
-check "chrony-cn：时钟没同步 → 退出 2 并提示看 journalctl" test "$rc" -eq 2 -a -n "$(grep journalctl "$R/out.txt")"
+check "chrony-cn：时钟没同步但配置已写好 → 退出 0、打 ⚠ 并提示 journalctl" test "$rc" -eq 0 -a -n "$(grep "配置已写好" "$R/out.txt")" -a -n "$(grep journalctl "$R/out.txt")"
 printf 'overlay /etc overlay rw 0 0\n' > "$R/mounts-ov"; printf 'driftfile /x\nserver a.google.com iburst\n' > "$CONF"; : > "$CJ_SIM_LOG"
 ( cd "$PKG" && CJ_SIM_VERITY=1 CJ_CHRONY_CONF="$CONF" CJ_MOUNTS="$R/mounts-ov" CJ_BACKUP_DIR="$R/cbk" CJ_TMPDIR="$R" bash -c "PATH='$STUBS:'\$PATH sh deploy-chrony-cn.sh 127.0.0.1" ) >"$R/out.txt" 2>&1; rc=$?
 check "chrony-cn：overlay + dm-verity → 只改 /etc 视图（重启会丢）、不 remount、退出 0" test "$rc" -eq 0 -a "$(count_log remount)" = 0 -a "$(grep -c '^server ntp' "$CONF")" -ge 1 -a -n "$(grep 'dm-verity' "$R/out.txt")"
