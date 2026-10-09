@@ -26,6 +26,7 @@ pub(crate) use self::deliver::MAX_DIRECT_BYTES;
 pub(crate) use self::deliver::FOLDER_WAIT_TIMEOUT;
 mod intake;
 mod library;
+pub use self::library::{low_space, LOW_SPACE_BYTES};
 
 use self::library::ListCaches;
 

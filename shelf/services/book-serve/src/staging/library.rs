@@ -7,6 +7,15 @@ pub(super) fn free_bytes_of(path: &Path) -> Option<u64> {
     rmsvc_core::fs::fs_space(path).map(|(free, _)| free)
 }
 
+/// 母版库所在分区"空间不足"的阈值：剩余低于 300 MiB 时网页标红提醒（`GET /staging` 的 `lowSpace`）。
+/// 判断放在服务端当单一事实源，此前阈值只写死在网页里。
+pub const LOW_SPACE_BYTES: u64 = 300 << 20;
+
+/// 剩余空间是否低于 [`LOW_SPACE_BYTES`]（严格小于）；查不到空间（`None`）不算不足。
+pub fn low_space(free: Option<u64>) -> bool {
+    free.is_some_and(|f| f < LOW_SPACE_BYTES)
+}
+
 /// `list()` 的两份按文件戳失效的缓存（见 [`StampCache`]）。网页每收到一条母版库事件就重拉一次列表，每本书每次都读边车、
 /// 读 xochitl 的 `.content`，书一多就是持续的读盘和 CPU（电池）；文件没变时这些结论都不会变。
 pub(super) struct ListCaches {
@@ -55,19 +64,14 @@ impl Staging {
     ///
     /// 只在启动时调用（此时不可能有操作在跑）。返回 (修正的记录数, 清掉的半成品数)。
     pub fn recover_interrupted(&self) -> (usize, usize) {
-        let Ok(rd) = std::fs::read_dir(&self.dir) else { return (0, 0) };
+        // 入库中转是 `.<pid>.<序号>.landing.tmp`（`ScratchFile`）；2026-10-07 前的优化半成品（`.<书名>.optimizing.tmp`）也按后缀认。
+        let tmps = rmsvc_core::fs::clean_dir(&self.dir, |n| n.starts_with('.') && n.ends_with(".tmp"));
+        let Ok(rd) = std::fs::read_dir(&self.dir) else { return (0, tmps) };
         let owners = sidecar::owners(&self.dir);
         let now = rmsvc_core::clock::now_secs();
-        let (mut fixed, mut tmps) = (0, 0);
+        let mut fixed = 0;
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().to_string();
-            // 入库中转是 `.<pid>.<序号>.landing.tmp`（`ScratchFile`）；2026-10-07 前的优化半成品（`.<书名>.optimizing.tmp`）也按后缀认。
-            if name.starts_with('.') && name.ends_with(".tmp") && e.file_type().is_ok_and(|t| t.is_file()) {
-                if std::fs::remove_file(e.path()).is_ok() {
-                    tmps += 1;
-                }
-                continue;
-            }
             // 边车 → 书按反查表认（短名形式没法从文件名反推书名）；没有书的孤儿边车不修，留给 `gc_orphan_sidecars` 清。
             let Some(book_path) = sidecar::is_sidecar_name(&name).then(|| owners.get(&name)).flatten() else { continue };
             let stale = |st: &str| st == "pending";
