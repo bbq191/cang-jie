@@ -19,7 +19,7 @@ note organizing, and some small system-level improvements.
 |---|---|---|
 | Get books into the stock reader, xochitl | Optimize books on your computer with [sheng-ren](https://github.com/bbq191/sheng-ren) (booklib, `xochitl` reading mode) first, then upload them on the web page (or scp into the inbox) into the "master library" and tick "Add to xochitl". The shelf delivers books as-is and no longer modifies them (since 2026-10-07). Books over xochitl's ~100MB upload limit work too (whole book, up to 1GB); comics optimized by sheng-ren can get their page margin set to the minimum automatically; books in the master library can be downloaded as the original file or renamed | [`shelf/`](../shelf/README.md) |
 | Turn highlighter marks and handwritten notes beside them into organizable notes | Collected automatically when you close the book. On your phone: review the handwriting transcription, full-text search, ask an AI model; then send back into a device notebook (headings, lists and checkboxes use the device's own styles) or export as Obsidian markdown | [`notes/`](../notes/README.md) |
-| Small system-level improvements | Precise CJK highlighter snapping, tap-to-turn and a manga (right-to-left) page-turn rule in the xochitl reader, upload-and-use fonts and wallpapers (handwriting stroke-width tuning and the battery drain diagnostics "battop" were removed on 2026-09-30) | [`enhance/`](../enhance/README.md) |
+| Small system-level improvements | Precise CJK highlighter snapping; tap-to-turn in the xochitl reader; a custom xochitl UI font (library, settings and dialogs use a font you pick, reading fonts unchanged); upload-and-use reading fonts and sleep-screen wallpapers. Removed: handwriting stroke tuning and the battery drain diagnostics "battop" (2026-09-30), the manga page-turn rule (2026-10-07) | [`enhance/`](../enhance/README.md) |
 | One place on your phone/computer to operate all of the above | A single HTTPS web entry with a login password that forwards requests to each service; plus a "Device health" page and a reinstall hint after firmware updates | [`gateway/`](../gateway/README.md) |
 | Install everything on a new device with one command | With a firmware-compatibility check; reboots the device once at the end and runs a read-only check; one-command uninstall too | [`packaging/`](../packaging/README.md) |
 
@@ -49,6 +49,8 @@ Only the **reMarkable Paper Pro Move on firmware 3.28.0.172** is supported. It i
 Installed before and want to update: just re-run `sh install-all.sh 10.11.99.1`; it doesn't reboot when nothing changed, and removed components (the battery sampler, handwriting stroke tuning) are cleaned up along the way.
 
 To uninstall: `sh uninstall-all.sh 10.11.99.1`. Prerequisites, risks and how to recover after a firmware update (OTA) are all in **[INSTALL.en.md](INSTALL.en.md)**.
+
+**For contributors**: on every push / PR, GitHub Actions runs shellcheck, the installer's sandboxed simulation tests, `cargo test` for each Rust crate and an aarch64 cross-compile (configured in `.github/workflows/ci.yml`). It only proves the code behaves correctly on a computer; **changes to device behavior still have to be verified on real hardware**.
 
 ## Documentation map
 

@@ -4,6 +4,8 @@
 > 这套东西解决什么问题、由哪几块组成、一本书怎么从手机走到 reMarkable 上、各服务跑在哪个端口、东西装在设备的哪里、去哪里找细节。
 > 只想装：直接看 [`INSTALL.md`](INSTALL.md)；最近改了什么：[`CHANGELOG.md`](CHANGELOG.md)。
 
+**30 秒版**：设备上常驻 8 个网页服务（网关、书架、字体、壁纸、笔记线四个），网关 `https://10.11.99.1/` 是唯一入口；另有 2 个 xovi 扩展（`hl-snap`、`ui-font`）和 6 个界面补丁在 xochitl 启动时载入，改了要整机重启才生效；电脑只在安装、卸载、更新时用到（`packaging/install-all.sh`）。下面第 3 节的架构图把这些画在一张图上。
+
 ## 1. 它解决什么问题
 
 reMarkable Paper Pro Move 是一台彩色墨水屏平板，官方阅读/笔记应用叫 **xochitl**（读作"沙特尔"，设备上的官方主程序）。日常用起来有几处不顺手：
@@ -22,7 +24,7 @@ reMarkable Paper Pro Move 是一台彩色墨水屏平板，官方阅读/笔记�
 |---|---|---|
 | [`shelf/`](../shelf/README.md) 书架 | 电脑上用 sheng-ren 优化好的书（EPUB/PDF）上传 → 母版库 → 原样加入 xochitl | 1 个 Web 服务（book-serve）+ 4 个 qmd 界面补丁（回收站代理、建文件夹代理、漫画页边距代理、阅读器翻页）。旧的 `koreader-serve` 已退役（2026-09-29 设备卸了 KOReader） |
 | [`notes/`](../notes/README.md) 笔记线 | 荧光笔勾画 + 旁边手写批注 → 手机整理/转写/问 AI → 投回设备笔记本或 Obsidian | 4 个 Web 服务（ink / transcribe / mind / note） |
-| [`enhance/`](../enhance/README.md) 系统增强 | 荧光笔 CJK 精确吸附、阅读器单击翻页（日漫翻页规则 2026-10-07 删除）、字体/壁纸上传即用（手写笔锋渲染、电池诊断 2026-09-30 已移除） | 1 个 xovi 扩展（hl-snap）+ 2 个 Web 服务（font / wallpaper）+ 字体菜单 qmd；翻页补丁随 shelf 一起装 |
+| [`enhance/`](../enhance/README.md) 系统增强 | 荧光笔 CJK 精确吸附、xochitl 界面字体、阅读器单击翻页、阅读字体/壁纸上传即用（手写笔锋渲染、电池诊断 2026-09-30 已移除；日漫翻页规则 2026-10-07 删除） | 2 个 xovi 扩展（hl-snap、ui-font）+ 2 个 Web 服务（font / wallpaper）+ 2 个 qmd（字体菜单、界面字体令牌，随 font 服务装）；翻页补丁随 shelf 一起装 |
 | [`gateway/`](../gateway/README.md) 网关 | 上面三条线共用的唯一对外入口：HTTPS + 登录密码 + 反向代理 + 批量队列 | Web 服务（`0.0.0.0:443`） |
 | [`rmsvc-core/`](../rmsvc-core/README.md) 服务基座 | 各 Web 服务共用的基础库，不含业务逻辑 | Rust 库（编进各服务，不单独运行） |
 | [`defw/`](../defw/README.md) 固件逆向 | xochitl 3.28.0.172 的 Ghidra 逆向产物，给扩展定位 hook 用 | 逆向资料（不上设备） |
@@ -37,9 +39,10 @@ reMarkable Paper Pro Move 是一台彩色墨水屏平板，官方阅读/笔记�
 - **所有服务都跑在设备上**，用浏览器访问 `https://10.11.99.1/`（USB 连接时）或 `https://shelf.local/`（同一 WiFi 下，安卓不解析 `.local`）。
 - **只有网关对外**（`0.0.0.0:443`）。它用设备自己生成的私有 CA 签 HTTPS 证书，再加登录密码（默认 `shelf`，首次登录强制改）。领域服务只听 `127.0.0.1`，由网关按"服务注册表"转发。装/卸一个服务 = 一个二进制 + 一个 systemd 单元。
 - **安全上的两条限制**（2026-09-24 起）：私有 CA 只能给局域网名字和内网 IP 签证书，即使设备上的 CA 私钥泄露，也伪造不了别的网站；登录输错按来源 IP 分别限速（每个 IP 60 秒内错 5 次就锁这个 IP），同一 WiFi 下别人乱试不会把你锁在外面。从旧版升级时网关会自动换一张新 CA，**手机和电脑要重装一次证书**，见 [`INSTALL.md`](INSTALL.md#装完之后)。
-- **xochitl 阅读器单击翻页**（2026-09-24，「管理 → 系统增强」开关，默认关，真机验证过）：点屏幕左右边缘翻页，每次打开书读一次开关。原来还有「日漫翻页规则」（按书里的从右往左标记对调滑动方向），2026-10-07 用户定书架只管入库、方向交给书本身，整个删掉：xochitl 自己不看这个标记，所以日漫在 xochitl 里一律从左往右翻（已合 master（9c2571f），10-07 15:54 已部署并整机重启，部署自检 36✓ 1⚠ 0✗，功能未手测）。
+- **xochitl 阅读器单击翻页**（2026-09-24，「管理 → 系统增强」开关，默认关，真机验证过）：点屏幕左右边缘翻页，每次打开书读一次开关。原来的「日漫翻页规则」2026-10-07 删除（书架只管入库，方向交给书本身）；xochitl 自己不看书里的从右往左标记，所以日漫在 xochitl 里一律从左往右翻。
+- **xochitl 界面字体**（2026-10-07，「其他 → xochitl → 界面字体」卡片）：上传字体后选正文、标题用哪个，只换书库、设置、对话框这些界面，阅读器字体不变；整机重启后生效。由 xovi 扩展 `ui-font` 和界面补丁 `ui-font-tokens.qmd` 一起完成（真机用眼睛确认过）。
 - **扩展和界面补丁怎么生效**：改动先落盘，再**整机重启一次**（约 20–60 秒）。不单独重启 xochitl：它退出时有概率崩溃（xochitl 自身的问题，2026-09-25 查清）。安装脚本会自动做这件事，重启回来后自动核对；细节见 [`INSTALL.md`「重复运行」](INSTALL.md#重复运行什么时候才重启)。
-- **开关开了不等于生效**：网页「管理」页在每个扩展开关旁显示"已加载 / 未加载"，（实验室的漫画页边距开关 2026-10-07 删除。）数据直接读运行中 xochitl 进程加载了哪些文件。
+- **开关开了不等于生效**：网页「管理」页在每个扩展开关旁显示"已加载 / 未加载"，数据直接读运行中 xochitl 进程加载了哪些文件。
 - **设备健康与 OTA 提示**（2026-09-25，已部署并用真实登录看过页面；清理按钮还没在真机点过）：「管理 → 设备健康」分五个小标签（概览 / 服务 / 扩展 / 日志 / 清理），按需显示各服务状态、内存、启动耗时、xovi 是否生效、换了文件还没重启的扩展、上次开机最后 20 行日志。固件升级冲掉服务单元或 xovi 没生效时，网页顶部提示并给出恢复命令。「清理」可以删早期遗留文件；xochitl 书库里的重复副本勾选后移进 xochitl 自己的回收站。
 - **移进回收站、新建文件夹由 xochitl 里的小代理执行**：这两件事不直接改书库文件，而是由 book-serve 排进队列；xochitl 里常驻的界面补丁（`shelf-trash-agent.qmd`、`shelf-mkdir-agent.qmd`）长轮询取任务，调用 xochitl 自己的接口去做，几秒内生效，跟你正在看哪个文件夹无关。
 - **服务与端口一览**（设备上 `/usr/lib/systemd/system/` 里共 **12 个**本项目的 systemd 单元）：
@@ -68,9 +71,9 @@ reMarkable Paper Pro Move 是一台彩色墨水屏平板，官方阅读/笔记�
 | 各服务的二进制（`gateway`、`book-serve` …） | `/home/root/.local/bin/` | 保留 |
 | 各服务的数据 / 配置 / 状态（母版库、证书、密码、字体壁纸池…） | `~/.local/share/shelf`、`~/.config/shelf`、`~/.local/state/shelf`；笔记线同理放在 `~/.config/notes`、`~/.local/share/notes`、`~/.local/state/notes` | 保留 |
 | 上传途中的暂存文件 | 字体、壁纸在 `~/.local/state/shelf/upload/`（2026-09-25 起放在 `/home`、装好时直接改名；以前在内存里的 `/tmp`，会计入服务的内存上限）。服务启动时清掉上次中断留下的半成品 | 保留 |
-| xovi 扩展 `.so`（`hl-snap`） | `/home/root/xovi/extensions.d/`（**只放扩展，备份绝不能放这里**：xovi 会把目录里每个文件都当扩展加载） | 文件保留，重跑安装后生效 |
+| xovi 扩展 `.so`（`hl-snap`、`ui-font`） | `/home/root/xovi/extensions.d/`（**只放扩展，备份绝不能放这里**：xovi 会把目录里每个文件都当扩展加载） | 文件保留，重跑安装后生效 |
 | 等着换入的新版扩展 `.so`（xochitl 正在用旧版时先放这里；整机重启前由部署脚本、或开机时由 `xovi-reenable` 换进 `extensions.d/`） | `/home/root/.cangjie-stage/so-pending/` | 保留 |
-| 界面补丁 qmd（字体菜单、回收站/建夹代理、漫画边距代理、阅读器翻页） | `/home/root/xovi/exthome/qt-resource-rebuilder/` | 文件保留，要先在设备上重建 hashtable 再重跑安装 |
+| 界面补丁 qmd（字体菜单、界面字体令牌、回收站/建夹代理、漫画边距代理、阅读器翻页） | `/home/root/xovi/exthome/qt-resource-rebuilder/` | 文件保留，要先在设备上重建 hashtable 再重跑安装 |
 | systemd 单元（共 12 个，见上面服务一览） | `/usr/lib/systemd/system/` | **被冲掉**，重跑安装 |
 | 国内 NTP、默认时区 | `/etc` | **被冲掉**，重跑安装 |
 | 安装前的旧文件备份（每类保留最近 5 份） | `/home/root/cangjie-backups/` | 保留 |
@@ -112,13 +115,13 @@ reMarkable Paper Pro Move 是一台彩色墨水屏平板，官方阅读/笔记�
 | 术语 | 一句话解释 |
 |---|---|
 | xochitl | reMarkable 官方主程序（阅读器 + 笔记 + UI）；本项目不改它 |
-| xovi / 扩展 | 第三方的扩展加载框架；我们的 `hl-snap` 是它加载的 `.so` 插件（`handwriting-stroke` 2026-09-30 已移除） |
-| qmd / qmldiff | 对 xochitl 界面 QML 的补丁语言/文件；用来往界面里加字体菜单、回收站/建文件夹代理、单击翻页等 |
+| xovi / 扩展 | 第三方的扩展加载框架；我们的 `hl-snap`、`ui-font` 是它加载的 `.so` 插件（`handwriting-stroke` 2026-09-30 已移除） |
+| qmd / qmldiff | 对 xochitl 界面 QML 的补丁语言/文件；用来往界面里加字体菜单、界面字体令牌、回收站/建文件夹代理、单击翻页等 |
 | vellum | 设备上的包管理器，用来装 xovi、qt-resource-rebuilder 等生态组件 |
 | 母版库 | shelf 里的暂存池：入库的书原样保存在这里，加入 xochitl 都从它出发 |
 | 边车（sidecar） | 母版库里每本书旁边的 `.<书名>.delivered` 小文件，记录"什么时候加入过 xochitl、加入结果、渲染自检结果" |
 | 占位文档 | 为绕开上传上限先传的几 KB 替身，之后被替换成真文件 |
-| hook | 在 xochitl 某个函数入口"插一脚"：先跑我们的代码，再决定是否调用原函数；`hl-snap` 就是这样改行为的（已移除的 `hw-stroke` 也是） |
+| hook | 在 xochitl 某个函数入口"插一脚"：先跑我们的代码，再决定是否调用原函数；`hl-snap` 就是这样改行为的（`ui-font` 换的是 xochitl 导入表里 `setFont` 那一格，效果类似） |
 | 私有 CA | 设备自己生成的证书颁发机构，给网关签 HTTPS 证书；手机/电脑装一次它的证书，浏览器就不再报"不安全" |
 | OTA | 固件在线升级；会整体替换 `/usr`、`/etc`，不动 `/home` |
 | 注册表 | 服务启动时写的一份 JSON，网关据此出 tab 和转发 |
@@ -135,3 +138,4 @@ reMarkable Paper Pro Move 是一台彩色墨水屏平板，官方阅读/笔记�
 | 笔记线 | [`../notes/README.md`](../notes/README.md) |
 | 系统增强 | [`../enhance/README.md`](../enhance/README.md) |
 | 最近改了什么 | [`CHANGELOG.md`](CHANGELOG.md) |
+| 自动检查（CI） | `.github/workflows/ci.yml`：每次 push / PR 跑 shellcheck、安装脚本沙箱模拟、Rust `cargo test`、aarch64 交叉编译；只证明代码在电脑上行为正确，不代替真机 |
