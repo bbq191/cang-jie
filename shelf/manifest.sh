@@ -15,6 +15,20 @@
 SHELF_ALL="gateway book font wallpaper ink transcribe mind note"
 shelf_svc_of() { case "$1" in gateway) echo gateway ;; *) echo "$1-serve" ;; esac; }
 
+# 服务令牌 → 它的源码在仓库里的哪个顶层目录（相对仓库根；那里是一个 Cargo 项目，交叉编译产物在 <目录>/target/…，
+# systemd 单元在 <目录>/systemd/ 或目录根）。host 侧 shelf/build.sh（编哪些项目、列哪些产物）与 packaging/deploy.sh
+# （从哪取二进制与单元）都从这里推导，新增服务只改这里（2026-10-10 前三处各写一份，审计 PK-2）。设备上用不到，只是随清单一起装。
+# 未知令牌：报错到 stderr、返回 1。
+shelf_svc_home() {
+    case "$1" in
+        gateway) echo gateway ;;
+        book) echo shelf ;;
+        wallpaper|font) echo "enhance/$(shelf_svc_of "$1")" ;;
+        ink|transcribe|mind|note) echo notes ;;
+        *) echo "!! 不知道服务 $1 的源码在哪（新增服务要在 shelf/manifest.sh 的 shelf_svc_home 加一行）" >&2; return 1 ;;
+    esac
+}
+
 # shelf_select ONLY：安装时 --only 的值（逗号分隔的服务令牌）→ 要装的服务清单（去重；网关总会装、排最前）；
 # 空 = 全部。未知令牌：报错到 stderr、返回 2。host 侧 deploy.sh 与设备端 install.sh 共用（两边算出的清单必须一致）。
 shelf_select() {

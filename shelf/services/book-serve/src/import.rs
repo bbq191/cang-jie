@@ -15,7 +15,7 @@
 //!
 //! 删除不另设接口：客户端用已有的 `POST /trash/add {uuid, name}`（走 xochitl 自己的回收站代理，见 `trash.rs`）。
 //!
-//! **内存**：book-serve 的 systemd `MemoryMax=192M`，整本书绝不读进内存——请求体按块直接写盘，上传也是流式（`upload_file`）。
+//! **内存**：book-serve 的 systemd `MemoryMax=192M`，整本书绝不读进内存——请求体按块直接写盘，上传也是流式（基座 `UploadBody::File`）。
 //! **异步处理**（2026-10-07 起，同网页「加入 xochitl」的 `spawn_deliver`）：HTTP 请求只做收体和快速校验（[`Importer::accept_new`] /
 //! [`Importer::accept_replace`]），就把耗时部分（[`Importer::run`]：建文件夹、上传、等 xochitl 排版、认领、登记页边距 / 替换）
 //! 交给后台作业队列（`jobs.rs`，一次一个、按提交顺序，与网页落库共用），立即回 202 + 任务 id，结果由客户端事后查。此前同步挂着等：
@@ -25,7 +25,7 @@ use crate::delivery::{XochitlDelivery, MAX_DIRECT_BYTES};
 use crate::ops::OpRegistry;
 use rmsvc_core::formats::sniff;
 use rmsvc_core::fs::{clean_dir, plain_name, same_content, Content, ScratchFile};
-use rmsvc_core::xochitl::{is_uuid_shape, read_meta, Metadata};
+use rmsvc_core::xochitl::{is_uuid_shape, read_meta, ClaimError, Folder, Metadata};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -170,20 +170,28 @@ impl Importer {
         let (part, size) = (body.part.path(), body.size);
         stage("建文件夹");
         let segments = folder_segments(folder);
-        let (folder_uuid, _) = self.delivery.ensure_folder_path(&segments);
-        let folder = folder_uuid.as_str();
+        let (folder, _) = self.delivery.ensure_folder_path(&segments);
         // 目标文件夹里已经有一份内容逐字节相同的活文档（上一次导入其实成功了、只是客户端没等到回执，再来一次）：认它，不再传一份重复的
-        if let Some(uuid) = self.same_in_folder(lib, folder, part, size) {
+        if let Some(uuid) = self.same_in_folder(lib, &folder, part, size) {
             println!("[book-serve] 直接导入《{name}》：文件夹里已有内容相同的 {uuid}，不再重复加入");
             return self.describe(&uuid).ok_or_else(|| ImportError::Failed(format!("读不到 {uuid} 的 .metadata")));
         }
         let uuid = if self.delivery.over_limit(size) {
             // 大文件通道自己登记漫画页边距（同母版库落库那条路）。
             stage("上传给 xochitl（大文件通道）");
-            let up = self.delivery.upload_large(part, name, folder).map_err(ImportError::Failed)?;
+            let up = self.delivery.upload_large(part, name, &folder).map_err(ImportError::Failed)?;
             up.ok_or_else(|| ImportError::Bad("读不了这本 EPUB，造不出大文件通道的占位文档".into()))?.uuid
         } else {
-            let uuid = self.delivery.upload_and_claim(part, name, folder, stage).map_err(ImportError::Failed)?;
+            // xochitl 收 `/upload` 时当场排版，回 2xx 前大书能挂好几分钟（2026-10-07《阿加莎全集》8 分多钟），所以"上传"这一阶段
+            // 就包含了等它排版；认领在基座里一口气做完，中间不再单报「等 xochitl 排版」。
+            stage("上传给 xochitl、等它排版");
+            let uuid = match self.delivery.upload_and_claim(part, name, &folder) {
+                Ok(c) => c.uuid,
+                Err(ClaimError::Upload(e)) => return Err(ImportError::Failed(format!("上传给 xochitl 失败: {e}"))),
+                Err(ClaimError::NotFound { waited, .. }) => {
+                    return Err(ImportError::Failed(format!("已上传给 xochitl，但 {} 秒内没在书库里认出《{name}》（可能稍后才出现；先在设备上看一眼，别马上重试，免得重复）", waited.as_secs())))
+                }
+            };
             if let Some(m) = shelf_conv::epub::Book::open(part).ok().and_then(|mut b| b.reader_margins()) {
                 stage("登记页边距");
                 self.delivery.register_comic_margins(&uuid, name, m);
@@ -208,12 +216,13 @@ impl Importer {
         self.run(a, &|_| {})
     }
 
-    /// 文件夹 `folder`（uuid，空串＝根）里内容和 `part` 逐字节相同的活文档。
+    /// 文件夹 `folder` 里内容和 `part` 逐字节相同的活文档。
     ///
     /// 先按 `<uuid>.epub` 的大小筛（目录项 stat，不打开文件），大小相同的才读 `.metadata` 看在不在这个文件夹、再逐字节比
     /// （2026-10-10）：此前每次导入先把全书库 `.metadata` 逐个读出来解析一遍（`live_entries`）再筛文件夹，sheng-ren 每轮同步
     /// 导入 N 本就是 N 遍全库解析。开发机 3000 本书、300 个文件夹的书库（release）：每次 10.8ms → 2.0ms。
-    fn same_in_folder(&self, lib: &Path, folder: &str, part: &Path, size: u64) -> Option<String> {
+    fn same_in_folder(&self, lib: &Path, folder: &Folder, part: &Path, size: u64) -> Option<String> {
+        let folder = folder.as_parent_str();
         let rd = std::fs::read_dir(lib).ok()?;
         rd.flatten()
             .filter_map(|e| {
@@ -654,9 +663,10 @@ mod tests {
         doc("aaaaaaaa-0000-4000-8000-000000000001", "", b"PK\x03\x04same");
         doc("aaaaaaaa-0000-4000-8000-000000000002", "trash", b"PK\x03\x04same");
         doc("aaaaaaaa-0000-4000-8000-000000000003", F, b"PK\x03\x04diff");
-        assert_eq!(im.same_in_folder(&lib, F, &part, 8), None, "别的文件夹 / 回收站 / 同大小不同字节都不认");
+        let f = Folder::from_parent_str(F).unwrap();
+        assert_eq!(im.same_in_folder(&lib, &f, &part, 8), None, "别的文件夹 / 回收站 / 同大小不同字节都不认");
         doc("aaaaaaaa-0000-4000-8000-000000000004", F, b"PK\x03\x04same");
-        assert_eq!(im.same_in_folder(&lib, F, &part, 8).as_deref(), Some("aaaaaaaa-0000-4000-8000-000000000004"));
-        assert_eq!(im.same_in_folder(&lib, "", &part, 8).as_deref(), Some("aaaaaaaa-0000-4000-8000-000000000001"));
+        assert_eq!(im.same_in_folder(&lib, &f, &part, 8).as_deref(), Some("aaaaaaaa-0000-4000-8000-000000000004"));
+        assert_eq!(im.same_in_folder(&lib, &Folder::Root, &part, 8).as_deref(), Some("aaaaaaaa-0000-4000-8000-000000000001"));
     }
 }

@@ -8,7 +8,7 @@
 //! 直接改 `.metadata`/`.content` 没用（运行中的 xochitl 会用内存状态盖回去，同漫画页边距那次的结论），只能让 xochitl 自己跳页：
 //!
 //! 1. **快照**（[`Progress::before_replace`]，`finish_replace` 删旧 `.epubindex` **之前**调）：读 `.metadata` 的 `lastOpenedPage`
-//!    （文档页序，0 起）→ 按旧 `.content` 的页表换成 PDF 页（[`PageMap`]）→ 用旧 `.epubindex` 找它落在哪个 spine 文件、
+//!    （文档页序，0 起）→ 按旧 `.content` 的页表换成 PDF 页（[`PageTable`]，`.content` 页表的解析 2026-10-10 起在基座，与笔记线共用）→ 用旧 `.epubindex` 找它落在哪个 spine 文件、
 //!    文件内比例 `(页 − 起始页) / 该文件页数`，另存全书比例兜底。写 `<状态目录>/books/progress/<uuid>.json`（原子写）。
 //!    任何一步失败只记日志，绝不影响替换本身。
 //! 2. **换算**（[`Progress::lookup`]，`GET /progress/{uuid}`）：新 `.epubindex` 还没出现（不在，或修改时间早于快照时刻）→
@@ -25,6 +25,7 @@
 //! 重排后 xochitl 怎么安置这些笔记页没核实过；新排版的总页数只在最后一个文件用得到，取不到可靠值时按最后一个文件 1 页算。
 //! 快照超过 [`MAX_AGE`] 或书已不在库里，启动时清掉。2026-10-09 真机验证过一次（排版没变的替换）；内容变动、插过笔记页的情形未测，见书架白皮书 §03ca。
 use epubpkg::epubindex::{parse_epubindex, Section};
+use rmsvc_core::xochitl::{read_meta, PageTable};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, UNIX_EPOCH};
@@ -122,7 +123,8 @@ impl Progress {
 
     /// 按当前 `.metadata`/`.content`/`.epubindex` 算快照；不用存 → `None`。
     fn capture(&self, uuid: &str, at_ms: u64) -> Option<Snapshot> {
-        let last = last_opened_page(&self.lib_file(uuid, "metadata"))?;
+        // `.metadata` 的 `lastOpenedPage`（数字或数字字符串）；读不了 / 没有 → 不用存。
+        let last = read_meta(&self.lib_dir, uuid).ok().flatten()?.last_opened_page?;
         if last <= 0 {
             return None;
         }
@@ -130,7 +132,7 @@ impl Progress {
         if secs.is_empty() {
             return None;
         }
-        let pm = PageMap::read(&self.lib_file(uuid, "content"));
+        let pm = PageTable::read(&self.lib_dir, uuid).unwrap_or_default();
         let page = pm.pdf_of(last.min(u32::MAX as i64) as u32);
         let total = pm.pdf_total().filter(|&n| n > last_start(&secs)).unwrap_or(page.max(last_start(&secs)) + 1);
         let book_ratio = if total > 1 { (page as f64 / (total - 1) as f64).clamp(0.0, 1.0) } else { 0.0 };
@@ -157,7 +159,7 @@ impl Progress {
         let Some(secs) = self.new_index(&s) else { return Lookup::Pending };
         // 新 `.content` 不早于快照才算新排版的页表；否则还是旧的，页序按恒等
         let content = self.lib_file(uuid, "content");
-        let pm = if mtime_ms(&content).is_some_and(|m| m >= s.at_ms) { PageMap::read(&content) } else { PageMap::default() };
+        let pm = if mtime_ms(&content).is_some_and(|m| m >= s.at_ms) { PageTable::read(&self.lib_dir, uuid).unwrap_or_default() } else { PageTable::default() };
         let last = last_start(&secs);
         let total = pm.pdf_total().filter(|&n| n > last).or(pages_hint.filter(|&n| n > last));
         Lookup::Page(pm.doc_of(target_page(&s, &secs, total)))
@@ -230,13 +232,6 @@ fn locate(secs: &[Section], page: u32, total: Option<u32>) -> Option<(usize, u32
     Some((i, start, len.max(page - start + 1)))
 }
 
-/// `.metadata` 的 `lastOpenedPage`（数字或数字字符串）；读不了 / 没有 → `None`。
-fn last_opened_page(meta: &Path) -> Option<i64> {
-    let v: serde_json::Value = serde_json::from_slice(&std::fs::read(meta).ok()?).ok()?;
-    let x = v.get("lastOpenedPage")?;
-    x.as_i64().or_else(|| x.as_str().and_then(|s| s.trim().parse().ok()))
-}
-
 fn now_ms() -> u64 {
     rmsvc_core::clock::now_ms()
 }
@@ -244,61 +239,6 @@ fn now_ms() -> u64 {
 fn mtime_ms(p: &Path) -> Option<u64> {
     let t = std::fs::metadata(p).ok()?.modified().ok()?;
     Some(t.duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0))
-}
-
-/// `.content` 里的页表：文档页序 ↔ PDF 页。EPUB 里插了笔记页时两者不同（笔记页没有 PDF 页）。
-///
-/// - formatVersion 1：`redirectionPageMap[i]` = 文档第 i 页的 PDF 页，笔记页是 -1；
-/// - formatVersion 2：`cPages.pages` 按 `idx.value` 字典序排、去掉 `deleted.value` ≠ 0 的页；页对象带 `redir.value` 时那就是
-///   PDF 页（EPUB 的 v2 页对象带不带 `redir` 没在真机上确认过），一页都不带就按恒等。
-///
-/// 认不出 / 读不了 → 恒等（`map` 为空）。
-#[derive(Debug, Default, Clone, PartialEq)]
-pub struct PageMap {
-    map: Option<Vec<Option<u32>>>,
-    page_count: Option<u32>,
-}
-
-impl PageMap {
-    pub fn read(content: &Path) -> PageMap {
-        std::fs::read(content).ok().and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok()).map(|v| PageMap::parse(&v)).unwrap_or_default()
-    }
-
-    pub fn parse(v: &serde_json::Value) -> PageMap {
-        let page_count = v.get("pageCount").and_then(|x| x.as_u64()).filter(|&n| n > 0).map(|n| n.min(u32::MAX as u64) as u32);
-        let as_page = |x: &serde_json::Value| x.as_i64().filter(|&n| n >= 0 && n <= u32::MAX as i64).map(|n| n as u32);
-        let map = if let Some(pages) = v.pointer("/cPages/pages").and_then(|p| p.as_array()) {
-            let val = |p: &serde_json::Value, k: &str| p.get(k).and_then(|o| o.get("value")).cloned();
-            let mut live: Vec<(String, Option<u32>)> = pages
-                .iter()
-                .filter(|p| val(p, "deleted").and_then(|d| d.as_i64()).unwrap_or(0) == 0)
-                .map(|p| (val(p, "idx").and_then(|i| i.as_str().map(str::to_string)).unwrap_or_default(), val(p, "redir").as_ref().and_then(as_page)))
-                .collect();
-            live.sort_by(|a, b| a.0.cmp(&b.0));
-            live.iter().any(|(_, r)| r.is_some()).then(|| live.into_iter().map(|(_, r)| r).collect())
-        } else {
-            v.get("redirectionPageMap").and_then(|m| m.as_array()).filter(|m| !m.is_empty()).map(|m| m.iter().map(as_page).collect())
-        };
-        PageMap { map, page_count }
-    }
-
-    /// 文档页序 → PDF 页；没有页表、越界、笔记页 → 原值。
-    pub fn pdf_of(&self, doc: u32) -> u32 {
-        self.map.as_ref().and_then(|m| m.get(doc as usize).copied().flatten()).unwrap_or(doc)
-    }
-
-    /// PDF 页 → 文档页序（第一个映射到它的文档页）；没有页表或找不到 → 原值。
-    pub fn doc_of(&self, pdf: u32) -> u32 {
-        self.map.as_ref().and_then(|m| m.iter().position(|&p| p == Some(pdf))).map_or(pdf, |i| i as u32)
-    }
-
-    /// PDF 总页数：有页表取最大 PDF 页 + 1，否则 `pageCount`。
-    pub fn pdf_total(&self) -> Option<u32> {
-        match &self.map {
-            Some(m) => m.iter().flatten().max().map(|&p| p + 1),
-            None => self.page_count,
-        }
-    }
 }
 
 #[cfg(test)]
@@ -357,19 +297,19 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn page_map_v1_redirection_with_note_pages_and_bad_entries() {
-        let pm = PageMap::parse(&json!({"formatVersion":1,"pageCount":5,"redirectionPageMap":[0,1,-1,2,3]}));
+    fn page_table_v1_redirection_with_note_pages_and_bad_entries() {
+        let pm = PageTable::parse(&json!({"formatVersion":1,"pageCount":5,"redirectionPageMap":[0,1,-1,2,3]}));
         assert_eq!((pm.pdf_of(0), pm.pdf_of(3), pm.pdf_of(4)), (0, 2, 3), "笔记页之后的文档页往前挪一个 PDF 页");
         assert_eq!(pm.pdf_of(2), 2, "笔记页（-1）按原值");
         assert_eq!(pm.pdf_of(99), 99, "越界按原值");
         assert_eq!((pm.doc_of(2), pm.doc_of(3), pm.doc_of(77)), (3, 4, 77));
         assert_eq!(pm.pdf_total(), Some(4));
-        let none = PageMap::parse(&json!({"pageCount":7}));
+        let none = PageTable::parse(&json!({"pageCount":7}));
         assert_eq!((none.pdf_of(5), none.doc_of(5), none.pdf_total()), (5, 5, Some(7)), "没有页表 → 恒等，总数用 pageCount");
     }
 
     #[test]
-    fn page_map_v2_sorted_by_idx_drops_deleted_and_uses_redir() {
+    fn page_table_v2_sorted_by_idx_drops_deleted_and_uses_redir() {
         let page = |idx: &str, redir: Option<u32>, deleted: i64| {
             let mut p = json!({"id": idx, "idx": {"timestamp":"1:1","value": idx}});
             if let Some(r) = redir {
@@ -382,12 +322,12 @@ pub(crate) mod tests {
         };
         // 乱序存放；"bb" 是插进来的笔记页（没有 redir）；"ab" 已删除
         let v = json!({"formatVersion":2,"pageCount":4,"cPages":{"pages":[page("bc",Some(2),0), page("ba",Some(0),0), page("ab",Some(9),1), page("bb",None,0), page("bd",Some(3),0)]}});
-        let pm = PageMap::parse(&v);
+        let pm = PageTable::parse(&v);
         assert_eq!((pm.pdf_of(0), pm.pdf_of(1), pm.pdf_of(2), pm.pdf_of(3)), (0, 1, 2, 3), "第 1 页是笔记页 → 原值");
         assert_eq!((pm.doc_of(2), pm.doc_of(3)), (2, 3));
         assert_eq!(pm.pdf_total(), Some(4));
         // 一页都没有 redir → 恒等
-        let plain = PageMap::parse(&json!({"formatVersion":2,"pageCount":3,"cPages":{"pages":[page("b",None,0), page("a",None,0)]}}));
+        let plain = PageTable::parse(&json!({"formatVersion":2,"pageCount":3,"cPages":{"pages":[page("b",None,0), page("a",None,0)]}}));
         assert_eq!((plain.pdf_of(1), plain.doc_of(1), plain.pdf_total()), (1, 1, Some(3)));
     }
 

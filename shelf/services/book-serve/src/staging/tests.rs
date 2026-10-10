@@ -115,9 +115,9 @@ fn busy_lock_blocks_second_start_and_conflicting_delete_deliver() {
     let busy = s.busy_guard("x.epub", "").expect("第一次加锁应该成功");
     assert!(s.busy_guard("x.epub", "").is_err(), "已经忙着，第二次应该失败");
     assert!(s.is_busy("x.epub"));
-    assert!(s.remove("x.epub").unwrap_err().contains("正在处理中"), "忙的时候不该能删");
+    assert!(matches!(s.remove("x.epub").unwrap_err(), Error::Conflict(m) if m.contains("正在处理中")), "忙的时候不该能删（409）");
     let bus = Arc::new(rmsvc_core::events::EventBus::new());
-    assert!(s.spawn_deliver("x.epub", "", &crate::jobs::Jobs::default(), bus).unwrap_err().contains("正在处理中"), "忙的时候不该能起第二个落库");
+    assert!(matches!(s.spawn_deliver("x.epub", "", &crate::jobs::Jobs::default(), bus).unwrap_err(), Error::Conflict(m) if m.contains("正在处理中")), "忙的时候不该能起第二个落库");
     assert!(s.list().iter().find(|e| e.name == "x.epub").unwrap().busy, "GET /staging 列表应体现 busy");
     drop(busy);
     assert!(!s.is_busy("x.epub"));
@@ -133,7 +133,7 @@ fn spawn_deliver_runs_in_background_records_result_then_clears_busy() {
     s.spawn_deliver("d.pdf", "", &crate::jobs::Jobs::default(), bus).unwrap();
     assert!(s.is_busy("d.pdf"), "spawn 返回时忙锁应已生效");
     let bus2 = Arc::new(rmsvc_core::events::EventBus::new());
-    assert!(s.spawn_deliver("d.pdf", "", &crate::jobs::Jobs::default(), bus2).unwrap_err().contains("正在处理中"));
+    assert!(matches!(s.spawn_deliver("d.pdf", "", &crate::jobs::Jobs::default(), bus2).unwrap_err(), Error::Conflict(m) if m.contains("正在处理中")));
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     while s.is_busy("d.pdf") && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(10));
@@ -142,7 +142,7 @@ fn spawn_deliver_runs_in_background_records_result_then_clears_busy() {
     let e = s.list().into_iter().find(|e| e.name == "d.pdf").unwrap();
     assert!(!e.busy);
     let dc = e.delivered.and_then(|d| d.deliver).expect("应该写了异步落库结果");
-    assert_eq!(dc.status, "failed", "测试环境 xochitl 不可达，落库必然失败");
+    assert_eq!(dc.status, DeliverStatus::Failed, "测试环境 xochitl 不可达，落库必然失败");
 }
 
 #[test]
@@ -151,9 +151,9 @@ fn spawn_deliver_rejects_bad_format_synchronously_without_busy_lock() {
     let s = staging(&t);
     s.stage_new("c.cbz", b"PK").unwrap();
     let bus = Arc::new(rmsvc_core::events::EventBus::new());
-    assert!(s.spawn_deliver("c.cbz", "", &crate::jobs::Jobs::default(), bus.clone()).unwrap_err().contains("只读 EPUB / PDF"));
+    assert!(matches!(s.spawn_deliver("c.cbz", "", &crate::jobs::Jobs::default(), bus.clone()).unwrap_err(), Error::Invalid(m) if m.contains("只读 EPUB / PDF")));
     assert!(!s.is_busy("c.cbz"), "校验失败不该留下忙锁");
-    assert!(s.spawn_deliver("none.epub", "", &crate::jobs::Jobs::default(), bus).is_err());
+    assert!(matches!(s.spawn_deliver("none.epub", "", &crate::jobs::Jobs::default(), bus), Err(Error::NotFound(_))), "母版库里没有 → 404");
 }
 
 /// 造一本多卷合集漫画（带 NCX 分卷目录），塞进 mini_epub 装不了的二进制字节所以这里直接手搓 zip——
@@ -270,7 +270,7 @@ fn onopen_render_record_upgrades_to_ok_once_xochitl_rewrites_page_count() {
     s.ensure().unwrap();
     s.stage_new("big.epub", &comic_epub_with_real_images(&[12, 13])).unwrap();
     std::fs::write(lib.join("u1.content"), r#"{"pageCount":2}"#).unwrap();
-    s.set_render("big.epub", sidecar::RenderCheck { uuid: "u1".into(), pages: 2, status: "onopen".into(), at: 1 }).unwrap();
+    s.set_render("big.epub", sidecar::RenderCheck { uuid: "u1".into(), pages: 2, status: RenderStatus::Onopen, at: 1 }).unwrap();
     let rc = |s: &Staging| s.list()[0].delivered.clone().unwrap().render.unwrap();
     assert_eq!((rc(&s).status.as_str(), rc(&s).pages), ("onopen", 2), "没打开过：保持 onopen");
     std::fs::write(lib.join("u1.content"), r#"{"pageCount":351}"#).unwrap();
@@ -287,10 +287,10 @@ fn onopen_with_unknown_placeholder_pages_waits_for_epubindex() {
     let s = staging_in(t.path().join("staging"), x, 1024 * 1024, None);
     s.ensure().unwrap();
     s.stage_new("big.epub", &comic_epub_with_real_images(&[12, 13])).unwrap();
-    s.set_render("big.epub", sidecar::RenderCheck { uuid: "u1".into(), pages: 0, status: "onopen".into(), at: 1 }).unwrap();
+    s.set_render("big.epub", sidecar::RenderCheck { uuid: "u1".into(), pages: 0, status: RenderStatus::Onopen, at: 1 }).unwrap();
     let rc = |s: &Staging| s.list()[0].delivered.clone().unwrap().render.unwrap();
     std::fs::write(lib.join("u1.content"), r#"{"pageCount":2}"#).unwrap();
-    assert_eq!(rc(&s).status, "onopen", "只有占位的页数、没有 .epubindex：不算渲染过");
+    assert_eq!(rc(&s).status, RenderStatus::Onopen, "只有占位的页数、没有 .epubindex：不算渲染过");
     std::fs::write(lib.join("u1.epubindex"), b"x").unwrap();
     std::fs::write(lib.join("u1.content"), r#"{"pageCount":351}"#).unwrap();
     assert_eq!((rc(&s).status.as_str(), rc(&s).pages), ("ok", 351), ".epubindex 重新出现 = 真书渲染过");
@@ -332,9 +332,9 @@ fn long_book_name_sidecar_full_lifecycle() {
     let car = sidecar::path_for(&s.dir.join(&name));
     assert!(car.is_file() && car.file_name().unwrap().len() <= 255);
     // 启动修复：pending → failed
-    s.set_deliver_check(&name, sidecar::DeliverCheck { status: "pending".into(), ..Default::default() }).unwrap();
+    s.set_deliver_check(&name, sidecar::DeliverCheck { status: DeliverStatus::Pending, ..Default::default() }).unwrap();
     assert_eq!(s.recover_interrupted(), (1, 0));
-    assert_eq!(sidecar::read(&s.dir.join(&name)).unwrap().deliver.unwrap().status, "failed");
+    assert_eq!(sidecar::read(&s.dir.join(&name)).unwrap().deliver.unwrap().status, DeliverStatus::Failed);
     // 孤儿清理：有书的短名边车不动；再放一个普通孤儿 + 一个短名孤儿，都清掉
     let orphan_long = sidecar::file_name_for(&format!("{}zz.pdf", "书".repeat(81)));
     std::fs::write(s.dir.join(&orphan_long), b"{}").unwrap();
@@ -393,9 +393,9 @@ fn remove_holds_busy_lock_and_releases_it() {
     s.stage_new("r.epub", b"x").unwrap();
     s.remove("r.epub").unwrap();
     assert!(!s.is_busy("r.epub") && !s.has("r.epub"), "删完释放忙锁");
-    assert!(s.remove("r.epub").is_err(), "已删再删报错");
+    assert!(matches!(s.remove("r.epub"), Err(Error::NotFound(_))), "已删再删：404");
     assert!(!s.is_busy("r.epub"), "失败也释放忙锁");
-    assert!(s.remove("../x").is_err() && !s.is_busy("../x"), "非法名不占锁");
+    assert!(matches!(s.remove("../x"), Err(Error::Invalid(_))) && !s.is_busy("../x"), "非法名不占锁");
 }
 
 #[test]
@@ -403,16 +403,16 @@ fn recover_interrupted_fixes_stale_pending_and_removes_tmp() {
     let t = tempfile::tempdir().unwrap();
     let s = staging(&t);
     let name = s.stage_new("a.epub", &mini_epub(&[("OEBPS/a.xhtml", "<p>x</p>")])).unwrap();
-    s.set_deliver_check(&name, sidecar::DeliverCheck { status: "pending".into(), ..Default::default() }).unwrap();
-    s.set_render(&name, sidecar::RenderCheck { status: "pending".into(), ..Default::default() }).unwrap();
+    s.set_deliver_check(&name, sidecar::DeliverCheck { status: DeliverStatus::Pending, ..Default::default() }).unwrap();
+    s.set_render(&name, sidecar::RenderCheck { status: RenderStatus::Pending, ..Default::default() }).unwrap();
     let ok = s.stage_new("ok.epub", &mini_epub(&[("OEBPS/a.xhtml", "<p>y</p>")])).unwrap();
-    s.set_deliver_check(&ok, sidecar::DeliverCheck { status: "ok".into(), message: "已加入".into(), ..Default::default() }).unwrap();
+    s.set_deliver_check(&ok, sidecar::DeliverCheck { status: DeliverStatus::Ok, message: "已加入".into(), ..Default::default() }).unwrap();
     std::fs::write(s.dir.join(".a.epub.optimizing.tmp"), vec![0u8; 1000]).unwrap();
     std::fs::write(s.dir.join(".123.0.landing.tmp"), vec![0u8; 1000]).unwrap();
     assert_eq!(s.recover_interrupted(), (1, 2), "只修 pending 的那本，清 2 个半成品（旧版优化 + 跨分区入库）");
     let d = sidecar::read(&s.dir.join(&name)).unwrap();
-    assert_eq!(d.deliver.unwrap().status, "failed");
-    assert_eq!(d.render.unwrap().status, "timeout");
+    assert_eq!(d.deliver.unwrap().status, DeliverStatus::Failed);
+    assert_eq!(d.render.unwrap().status, RenderStatus::Timeout);
     assert_eq!(sidecar::read(&s.dir.join(&ok)).unwrap().deliver.unwrap().message, "已加入", "已完成的记录不动");
     assert!(!s.dir.join(".a.epub.optimizing.tmp").exists());
     assert_eq!(s.recover_interrupted(), (0, 0), "幂等");
@@ -466,7 +466,7 @@ fn list_caches_sidecar_and_onopen_page_count_until_files_change() {
     let s = staging_in(t.path().join("staging"), Arc::new(Xochitl::new("127.0.0.1:1", &lib, 1)), 1024 * 1024, None);
     s.ensure().unwrap();
     s.stage_new("a.epub", b"PK").unwrap();
-    s.set_render("a.epub", RenderCheck { uuid: U.into(), pages: 2, status: "onopen".into(), at: 1 }).unwrap();
+    s.set_render("a.epub", RenderCheck { uuid: U.into(), pages: 2, status: RenderStatus::Onopen, at: 1 }).unwrap();
     std::fs::write(lib.join(format!("{U}.content")), r#"{"pageCount":2}"#).unwrap();
     let rc = |s: &Staging| s.list()[0].delivered.clone().unwrap().render.unwrap();
     assert_eq!((rc(&s).status.as_str(), rc(&s).pages), ("onopen", 2));
@@ -550,9 +550,25 @@ fn deliver_ensures_folder_enqueues_and_waits_for_agent_to_create_it() {
     assert_eq!(mkdir.list()[0].name, "新文件夹");
 }
 
+/// 假 xochitl 的行为（认领的复现测试用）。
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum Fake {
+    /// 原样收下。
+    Faithful,
+    /// 收下但 `<uuid>.epub` 存成别的字节（按字节永远认不出）。
+    Rewrites,
+    /// 收下我们这本之前，"别人"同时投的一本先进库：同 visibleName、不同字节、`createdTime` 更晚（新→旧排在我们前面）。
+    Intruder,
+}
+
 /// 假 xochitl：`POST /upload` 把文件部分落成 `<uuid>.{ext}` + `.metadata`（+ EPUB 的渲染缓存 `.pdf`、PDF 的 `.content`）
-/// 回 201，其余请求回 200——够 `Xochitl::upload_large_file` 走通"占位→替换成真文件"这条大文件通道。
+/// 回 201，其余请求回 200——够 `Xochitl::upload_large` 走通"占位→替换成真文件"这条大文件通道。
 pub(crate) fn fake_xochitl(lib: std::path::PathBuf) -> String {
+    fake_xochitl_with(lib, Fake::Faithful)
+}
+
+/// 同 [`fake_xochitl`]，行为见 [`Fake`]。
+pub(crate) fn fake_xochitl_with(lib: std::path::PathBuf, mode: Fake) -> String {
     let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
     let addr = server.server_addr().to_ip().unwrap().to_string();
     std::thread::spawn(move || {
@@ -576,7 +592,14 @@ pub(crate) fn fake_xochitl(lib: std::path::PathBuf) -> String {
             n += 1;
             let uuid = format!("0000000{n}-0000-4000-8000-000000000000");
             let ext = fname.rsplit('.').next().unwrap();
-            std::fs::write(lib.join(format!("{uuid}.{ext}")), &body[start..tail]).unwrap();
+            if mode == Fake::Intruder {
+                let theirs = format!("fffffff{n}-0000-4000-8000-000000000000");
+                std::fs::write(lib.join(format!("{theirs}.{ext}")), b"PK-them").unwrap();
+                std::fs::write(lib.join(format!("{theirs}.content")), r#"{"pageCount":99}"#).unwrap();
+                std::fs::write(lib.join(format!("{theirs}.metadata")), format!(r#"{{"type":"DocumentType","visibleName":"{fname}","parent":"","createdTime":"{}"}}"#, rmsvc_core::clock::now_ms() + 5_000)).unwrap();
+            }
+            let stored: &[u8] = if mode == Fake::Rewrites { b"PK-rewritten" } else { &body[start..tail] };
+            std::fs::write(lib.join(format!("{uuid}.{ext}")), stored).unwrap();
             std::fs::write(lib.join(format!("{uuid}.metadata")), format!(r#"{{"type":"DocumentType","visibleName":"{fname}","parent":"{current}","createdTime":"{}"}}"#, rmsvc_core::clock::now_ms())).unwrap();
             if ext == "epub" {
                 std::fs::write(lib.join(format!("{uuid}.pdf")), b"render-cache").unwrap();
@@ -642,7 +665,7 @@ fn deliver_oversized_epub_uses_direct_channel_placeholder_then_real_file() {
     let d = sidecar::read(&s.dir().join("big.epub")).unwrap();
     assert!(d.native.is_some(), "应记一笔已加入原生");
     let rc = d.render.unwrap();
-    assert_eq!(rc.status, "onopen", "EPUB 首次打开才渲染，先记 onopen");
+    assert_eq!(rc.status, RenderStatus::Onopen, "EPUB 首次打开才渲染，先记 onopen");
     assert!(uuid_epub.file_name().unwrap().to_string_lossy().starts_with(&rc.uuid));
 }
 
@@ -761,13 +784,13 @@ fn rename_keeps_format_moves_sidecar_and_refuses_conflicts() {
     assert!(!dir.join("a.epub").exists());
     assert!(crate::sidecar::read(&dir.join("新名字.epub")).is_some_and(|d| d.native.is_some()), "落库记录跟着改名");
 
-    assert!(s.rename("新名字.epub", "b").unwrap_err().contains("已有《b.epub》"));
+    assert!(matches!(s.rename("新名字.epub", "b").unwrap_err(), Error::Conflict(m) if m.contains("已有《b.epub》")));
     assert_eq!(s.rename("新名字.epub", "x.pdf").unwrap(), "x.pdf.epub", "不能借改名改格式：别的扩展名只当名字的一部分");
-    assert!(s.rename("x.pdf.epub", "../evil").is_err(), "路径分隔符拒绝");
-    assert!(s.rename("x.pdf.epub", " ").unwrap_err().contains("不能为空"));
+    assert!(matches!(s.rename("x.pdf.epub", "../evil"), Err(Error::Invalid(_))), "路径分隔符拒绝");
+    assert!(matches!(s.rename("x.pdf.epub", " ").unwrap_err(), Error::Invalid(m) if m.contains("不能为空")));
 
     let _busy = s.busy_guard("b.epub", "").unwrap();
-    assert!(s.rename("b.epub", "c").unwrap_err().contains("正在处理中"));
+    assert!(matches!(s.rename("b.epub", "c").unwrap_err(), Error::Conflict(m) if m.contains("正在处理中")));
 }
 
 #[test]
@@ -780,7 +803,7 @@ fn open_for_download_returns_file_and_length() {
     let mut buf = Vec::new();
     f.read_to_end(&mut buf).unwrap();
     assert_eq!((buf.as_slice(), n), (&b"hello"[..], 5));
-    assert!(s.open_for_download("nope.epub").is_err());
+    assert!(matches!(s.open_for_download("nope.epub"), Err(Error::NotFound(_))));
 }
 
 /// 「首次打开才渲染」的书被打开后，列表把 onopen 升级成 ok，并**写回边车**——之后的列表不再去读 xochitl 的 `.content`。
@@ -793,10 +816,10 @@ fn list_persists_onopen_to_ok_upgrade() {
     let s = staging_in(t.path().join("staging"), Arc::new(Xochitl::new("127.0.0.1:1", &lib, 1)), 0, None);
     s.ensure().unwrap();
     s.stage_new("big.epub", b"PK").unwrap();
-    s.set_render("big.epub", RenderCheck { uuid: U.into(), pages: 3, status: "onopen".into(), at: 1 }).unwrap();
+    s.set_render("big.epub", RenderCheck { uuid: U.into(), pages: 3, status: RenderStatus::Onopen, at: 1 }).unwrap();
     std::fs::write(lib.join(format!("{U}.content")), r#"{"pageCount":3}"#).unwrap();
     let rc = |s: &Staging| s.list()[0].delivered.clone().unwrap().render.unwrap();
-    assert_eq!(rc(&s).status, "onopen", "页数没变＝还没打开过");
+    assert_eq!(rc(&s).status, RenderStatus::Onopen, "页数没变＝还没打开过");
     std::fs::write(lib.join(format!("{U}.content")), r#"{"pageCount":412}"#).unwrap();
     assert_eq!((rc(&s).status.as_str(), rc(&s).pages), ("ok", 412));
     let stored = sidecar::read(&s.dir().join("big.epub")).unwrap().render.unwrap();
@@ -895,14 +918,14 @@ fn spawn_deliver_queues_behind_running_job() {
     std::thread::sleep(std::time::Duration::from_millis(100));
     let e = s.list().into_iter().find(|e| e.name == "q.pdf").unwrap();
     assert!(e.busy, "排队期间算处理中");
-    assert_eq!(e.delivered.and_then(|d| d.deliver).map(|d| d.status), Some("pending".to_string()));
+    assert_eq!(e.delivered.and_then(|d| d.deliver).map(|d| d.status), Some(DeliverStatus::Pending));
     go_tx.send(()).unwrap();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     while s.is_busy("q.pdf") && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     let dc = s.list().into_iter().find(|e| e.name == "q.pdf").unwrap().delivered.and_then(|d| d.deliver).unwrap();
-    assert_eq!(dc.status, "failed", "轮到它才真去投（测试里 xochitl 不可达）");
+    assert_eq!(dc.status, DeliverStatus::Failed, "轮到它才真去投（测试里 xochitl 不可达）");
 }
 
 /// 列表派生字段逐字移植网页 `stgClean` / `stgTitle` / `isBookDone`（2026-10-10，契约 S4）。用例取自网页注释与真实书名；
@@ -923,12 +946,12 @@ fn list_title_series_and_done_match_web_rules() {
     for (name, title, series) in cases {
         assert_eq!((list_title(name).as_str(), series_of(&list_title(name)).as_str()), (title, series), "{name:?}");
     }
-    let d = |native: Option<u64>, st: Option<&str>| Delivered { native, render: None, deliver: st.map(|s| sidecar::DeliverCheck { status: s.into(), message: String::new(), at: 1 }) };
-    assert!(is_done(false, Some(&d(Some(5), Some("ok")))));
+    let d = |native: Option<u64>, st: Option<DeliverStatus>| Delivered { native, render: None, deliver: st.map(|s| sidecar::DeliverCheck { status: s, message: String::new(), at: 1 }) };
+    assert!(is_done(false, Some(&d(Some(5), Some(DeliverStatus::Ok)))));
     assert!(is_done(false, Some(&d(Some(5), None))));
-    assert!(!is_done(true, Some(&d(Some(5), Some("ok")))), "处理中不算");
-    assert!(!is_done(false, Some(&d(Some(5), Some("failed")))), "上次加入失败不算");
-    assert!(!is_done(false, Some(&d(None, Some("ok")))), "没加入过");
+    assert!(!is_done(true, Some(&d(Some(5), Some(DeliverStatus::Ok)))), "处理中不算");
+    assert!(!is_done(false, Some(&d(Some(5), Some(DeliverStatus::Failed)))), "上次加入失败不算");
+    assert!(!is_done(false, Some(&d(None, Some(DeliverStatus::Ok)))), "没加入过");
     assert!(!is_done(false, Some(&d(Some(0), None))), "JS !!0 为假");
     assert!(!is_done(false, None));
     // 列表里带上这三个字段
@@ -938,4 +961,72 @@ fn list_title_series_and_done_match_web_rules() {
     s.mark_delivered("亂馬1⁄2 典藏版 - 07卷.pdf").unwrap();
     let v = serde_json::to_value(&s.list()[0]).unwrap();
     assert_eq!((v["title"].as_str(), v["series"].as_str(), v["done"].as_bool()), (Some("亂馬1⁄2 典藏版 - 07卷"), Some("亂馬1⁄2 典藏版"), Some(true)));
+}
+
+/// 回归（2026-10-10，审计 X-1；第二阶段改由基座 `upload_and_claim` 认领后照样成立）：落库 EPUB 当场按字节认出自己那份——
+/// 别人同时投的、书名相同、比我们晚进库的那本不认；投递前就在书库里的同字节文档（快照里有）也不认。漫画页边距只登记到自己那份。
+#[test]
+fn deliver_epub_claims_own_bytes_not_concurrent_or_preexisting() {
+    const OLD: &str = "aaaaaaaa-0000-4000-8000-000000000003";
+    let t = tempfile::tempdir().unwrap();
+    let lib = t.path().join("xochitl");
+    std::fs::create_dir_all(&lib).unwrap();
+    let q = Arc::new(crate::comic_margins::ComicMargins::new(&t.path().join("state"), &lib));
+    let x = Arc::new(Xochitl::new(&fake_xochitl_with(lib.clone(), Fake::Intruder), &lib, 10));
+    let s = staging_in(t.path().join("staging"), x, 1 << 20, Some(q.clone()));
+    s.ensure().unwrap();
+    let book = mini_epub(&[(shelf_conv::epub::READER_MARGINS_MARKER, "1"), ("OEBPS/p1.xhtml", "<p>x</p>")]);
+    s.stage_new("a.epub", &book).unwrap();
+    std::fs::write(lib.join(format!("{OLD}.metadata")), format!(r#"{{"type":"DocumentType","visibleName":"a.epub","parent":"","createdTime":"{}"}}"#, rmsvc_core::clock::now_ms())).unwrap();
+    std::fs::write(lib.join(format!("{OLD}.epub")), &book).unwrap();
+    let out = s.deliver("a.epub", "").unwrap();
+    let plan = out.render.expect("EPUB 有渲染自检计划");
+    const MINE: &str = "00000001-0000-4000-8000-000000000000";
+    assert_eq!(plan.uuid, MINE, "认的是自己上传的那份");
+    std::fs::write(lib.join(format!("{MINE}.content")), r#"{"pageCount":10}"#).unwrap();
+    crate::render_check::run_with(&s, &rmsvc_core::events::EventBus::new(), &lib, &plan, std::time::Duration::from_millis(20), std::time::Duration::from_millis(200));
+    assert_eq!((q.get(MINE), q.get("fffffff1-0000-4000-8000-000000000000"), q.get(OLD)), (Some(1), None, None));
+    let rc = sidecar::read(&s.dir().join("a.epub")).and_then(|d| d.render).unwrap();
+    assert_eq!((rc.status, rc.pages, rc.uuid.as_str()), (RenderStatus::Ok, 10, MINE));
+}
+
+/// 回归（2026-10-10，审计 X-1）：认不出就不认——书库里只有别人刚投的书（书名相同、比我们新）、我们那份字节对不上时，
+/// 落库照算成功（书已交给 xochitl），渲染记 timeout、uuid 留空、不登记页边距；此前"都不符时取最新一本"会把别人的书认成自己的。
+#[test]
+fn deliver_epub_unclaimed_records_timeout_and_never_takes_newest() {
+    let t = tempfile::tempdir().unwrap();
+    let lib = t.path().join("xochitl");
+    std::fs::create_dir_all(&lib).unwrap();
+    let q = Arc::new(crate::comic_margins::ComicMargins::new(&t.path().join("state"), &lib));
+    let x = Arc::new(Xochitl::new(&fake_xochitl_with(lib.clone(), Fake::Rewrites), &lib, 10));
+    let mut d = XochitlDelivery::new(x, Arc::new(crate::mkdir::MkdirQueue::new(&t.path().join("state"), &lib)), 1 << 20).with_comic_margins(q.clone());
+    d = d.with_waits(std::time::Duration::from_secs(1), std::time::Duration::from_millis(500));
+    let s = Staging::new(t.path().join("staging"), Arc::new(d));
+    s.ensure().unwrap();
+    s.stage_new("a.epub", &mini_epub(&[(shelf_conv::epub::READER_MARGINS_MARKER, "1")])).unwrap();
+    const NEWER: &str = "bbbbbbbb-0000-4000-8000-000000000001";
+    std::fs::write(lib.join(format!("{NEWER}.metadata")), format!(r#"{{"type":"DocumentType","visibleName":"a","parent":"","createdTime":"{}"}}"#, rmsvc_core::clock::now_ms() + 60_000)).unwrap();
+    std::fs::write(lib.join(format!("{NEWER}.epub")), b"PK-them").unwrap();
+    let out = s.deliver("a.epub", "").unwrap();
+    assert!(out.render.is_none() && out.message.contains("已加入 xochitl"), "{}", out.message);
+    let rc = sidecar::read(&s.dir().join("a.epub")).and_then(|d| d.render).unwrap();
+    assert_eq!((rc.status, rc.uuid.as_str()), (RenderStatus::Timeout, ""));
+    assert_eq!((q.get(NEWER), q.get("00000001-0000-4000-8000-000000000000")), (None, None), "谁的页边距都不登记");
+}
+
+/// PDF 落库只上传、不认领（没有渲染自检、不登记页边距，用不着 uuid）：不拍书库快照、不等认领。
+#[test]
+fn deliver_pdf_uploads_without_claiming() {
+    let t = tempfile::tempdir().unwrap();
+    let lib = t.path().join("xochitl");
+    std::fs::create_dir_all(&lib).unwrap();
+    let x = Arc::new(Xochitl::new(&fake_xochitl_with(lib.clone(), Fake::Rewrites), &lib, 10));
+    let s = staging_in(t.path().join("staging"), x, 1 << 20, None);
+    s.ensure().unwrap();
+    s.stage_new("d.pdf", b"%PDF-1.4").unwrap();
+    let started = std::time::Instant::now();
+    let out = s.deliver("d.pdf", "").unwrap();
+    assert!(started.elapsed() < std::time::Duration::from_secs(2), "字节对不上也不等认领（staging_in 的认领上限是 3 秒）");
+    assert_eq!((out.message.as_str(), out.render), ("已加入 xochitl《d.pdf》", None));
+    assert!(sidecar::read(&s.dir().join("d.pdf")).and_then(|d| d.render).is_none());
 }

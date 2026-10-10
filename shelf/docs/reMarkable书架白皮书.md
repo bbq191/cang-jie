@@ -72,7 +72,7 @@
 | 0 | 定位、原则与基础 | §00 · §01 · §02 · §03 |
 | A | 入库与母版库 | §03b · §03r · §03s · §03u · §03ap |
 | B | 书架不再优化书（2026-10-07 的决定与清理） | §03bw · §03bx · §03by |
-| C | 落库、大文件、xochitl 代理、找回阅读位置、投递层统一 | §03l · §03aa · §03ax · §03be · §03bf · §03bn · **§03ca** · **§03cb** |
+| C | 落库、大文件、xochitl 代理、找回阅读位置、投递层统一、迁到基座新接口 | §03l · §03aa · §03ax · §03be · §03bf · §03bn · **§03ca** · **§03cb** · **§03cc** |
 | D | 网关与网页 UI | §03g · §03h · §03j · §03m · §03n · §03z · §03ac · §03ah · §03aj · §03an · §03au · §03bj · §03bl · §03bp |
 | E | 稳定性、内存与耗电 | §03ab · §03ba · §03bh · §03bi · §03bm · §03bq · §03bz |
 | F | 设备、字体壁纸与固件 | §03c · §03f · §03k · §03o · §03v · §03w · §03x · §03at · §03bd |
@@ -94,7 +94,7 @@
 | 改名 / 下载原件 | 只勾一本时出现；改名只改文件名（扩展名、书内书名不变）；下载全程流式 | 传书线架构 §2.4 |
 | 剩余空间 | `GET /staging` 带 `freeBytes` 与 `lowSpace`（剩余 <300MiB，10-09 起由 book-serve 判，网页优先读它） | 传书线架构 §9 |
 | 阅读方向 | **书架不管**（10-07 稍后，用户定，§03bx）：xochitl 不看 OPF 方向标记，日漫一律从左往右翻（用户接受） | 传书线架构 §2.5 |
-| 加入 xochitl | 文件夹＝书库根下这个名字的（10-10 起不再按名字在全库任意层找，§03cb）；≤90MB 流式 `/upload` + 渲染自检（按上传前快照 + 逐字节认出新文档的 uuid、记页数；认不出就不认，10-10）；与直接导入排进同一个串行作业队列（10-10）；>90MB 走"占位+磁盘替换"（≤1GiB，整本；09-25 真机：156.5MB《乱马》首次打开约 74 秒渲染出 349 页）；走不了就整本拒绝。投到已被删的文件夹时落书库根（10-09；此前会落进上一本书的文件夹） | §03bn |
+| 加入 xochitl | 文件夹＝书库根下这个名字的（10-10 起不再按名字在全库任意层找，§03cb）；≤90MB 流式 `/upload`；EPUB 在作业里当场按字节认出新文档的 uuid（基座 `upload_and_claim`，认不出就不认，10-10 第二阶段，§03cc），再由渲染自检记页数；PDF 只上传不认领；与直接导入排进同一个串行作业队列（10-10）；>90MB 走"占位+磁盘替换"（≤1GiB，整本；09-25 真机：156.5MB《乱马》首次打开约 74 秒渲染出 349 页）；走不了就整本拒绝。投到已被删的文件夹时落书库根（10-09；此前会落进上一本书的文件夹） | §03bn |
 | 直接导入（sheng-ren 用） | 经 SSH 端口转发直连 book-serve，不进母版库；异步任务（回 202 + 任务 id）；`folder` 可多级；`?uuid=` 原地替换已有文档；同一 uuid 正在替换时回 409 | 传书线架构 §9「直接导入」 |
 | 替换后找回阅读位置 | 原地替换前 book-serve 记下读到哪个章节文件、文件内比例；重开时 `shelf-keep-progress.qmd` 问 `GET /progress/{uuid}`，让 xochitl 自己 `goToPage`（10-09 已部署，真机验证一次） | §03ca |
 | 读 EPUB 的内存上限 | `shelf-conv::epub` 只读 container.xml、OPF、几页正文和一张封面；单条目解压上限按用途分开：文本 16MB（`epubpkg::MAX_TEXT_BYTES`）、封面图 64MB（10-09；此前统一 256MB，超过 book-serve 自己的 192MB 内存上限） | §03bz |
@@ -104,11 +104,11 @@
 | 批量与并发 | 批量队列在网关（只有「加入 xochitl」；顺序逐本、落盘续跑、可全部中止）；只有 book-serve 回报 `ok` 才算成功，结果不明一律记失败、提示去 xochitl 书库核对 | §03bp、网关白皮书 §04 |
 | 中途停止 | 没有：剩下的投递没有安全中断点；批量「全部中止」只清还没开始的 | 传书线架构 §7.1 |
 | 稳定性 | `panic="unwind"`+`catch_unwind`、`OpRegistry`（只剩忙锁，`try_guard` 返回离开作用域自动解锁的守卫）、启动时修正被中断的 `pending` | §03bq |
-| 进程内并发 | 忙锁（按书名）、落名临界区、spool 锁、边车写锁、xochitl 上传锁、大文件通道锁；落库与直接导入共用一个串行作业队列（10-10，§03cb） | 传书线架构 §7.3 |
+| 进程内并发 | 忙锁（按书名）、落名临界区、spool 锁、边车写锁、认领串行、大文件通道锁；落库与直接导入共用一个串行作业队列（10-10，§03cb）；"设文件夹 → 上传"另有跨进程锁（锁文件 flock，管到 note-serve，10-10，§03cc） | 传书线架构 §7.3 |
 | 卸载 | `shelf-uninstall` 删了 qmd 时记"待生效"标记并提示整机重启（10-09） | 第 F 章速查 |
 | 让 qmd 改动生效 | **整机重启**（09-25 起）。不再单独 `systemctl restart xochitl`：xochitl 退出时自身有概率崩溃；xovi 已生效时**绝不**跑 `xovi/start` | 第 F 章速查 |
 | 上传暂存与临时文件 | 书在 `books/.work/`；xochitl 字体/壁纸在 `~/.local/state/shelf/upload/`——都在 /home。母版库里的临时文件只剩跨分区入库中转 `.<pid>.<序号>.landing.tmp`，出错或 panic 当场删、启动再清一遍所有点前缀 `*.tmp` | 传书线架构 §2.2、§9 |
-| 测试 | `cd shelf && cargo test --workspace`：2026-10-10 book-serve 121 + shelf-conv 24 个（§03cb）；`rmsvc-core/epubpkg` 11 个；`rmsvc-core` 133 个（另 1 个 ignored）；clippy 无告警（数字来自 §03ca 的开发机实跑） | §03ca、§03bz |
+| 测试 | `cd shelf && cargo test --workspace`：2026-10-10 第二阶段 book-serve 123 + shelf-conv 24 个（§03cc）；`rmsvc-core/epubpkg` 11 个；`rmsvc-core` 133 个（另 1 个 ignored）；clippy 无告警（数字来自 §03ca 的开发机实跑） | §03ca、§03bz |
 
 **已砍/已被取代（别再找）**：网关并发闸门与行内"取消排队"、渲染自检的期望页数与 `warn`、sheng-ren `bookconv` 依赖、日漫翻页（10-07 稍后，§03bx）；`POST /staging/mark`、边车 `koreader` 字段、格式 `cbz` 单列（10-07 代码审查，§03by）；设备上的「优化」、入库 PDF 转换、原 PDF 备份、抓网文、联网补封面、旧产物兼容、中途取消、优化徽章与筛选（10-07，§03bw）；电脑端 `shelf` 命令行（09-18，附录 B）；KOReader 一切入口与 koreader-serve（09-29，附录 B）；超限书按卷拆分与按书设阅读方向（09-30，附录 B）；母版库"优化档位"与"投完自动删除"（09-19）；漫画"优化转 PDF"（09-19 做、09-20 换回 EPUB、09-30 代码删除）；三档格式（09-17/18 收成一档）；微信读书内容源（09-05）；bind-mount 壁纸（§03x）；`/inbox*` 与 `/staging/render/*` HTTP 接口（09-22 删，scp 进 `inbox/` 仍可用）；"restart xochitl 让改动生效"（09-25 改整机重启）。
 
@@ -454,6 +454,30 @@
 **离线验证**：book-serve 121 个测试（新增 8：子文件夹同名、并发认书、预先存在的同字节文档、母版被删时按书名、排队、派生字段、幂等检查、文件夹解析两条通道）、shelf-conv 24 个，clippy 0 告警，aarch64 交叉编译 0 告警。两份 qmd 用 .172 解出的 MainView.qml `qmldiff apply-diffs`：两个 AFFECT 都应用，输出与改前只差预期的几行，`qmllint` 告警数不变（12 → 12）。
 
 **要真机验证**（§05 #27）：网页选根下已有 / 不存在的文件夹各加入一本；直接导入建过「X/卷01」后网页选"卷01"加入，书落根下的「卷01」；漫画加入后页边距登记在自己那本上；连续加入几本时它们一本一本处理；回收站代理 journal 正常。
+
+### 03cc｜迁到 rmsvc-core 新接口：认领交给基座、状态与错误分类型（2026-10-10 重构第二阶段 2a，**未部署**）
+
+**起因**：第一阶段基座新增了一批接口（上传并认领、`Folder`、页表、线上状态枚举、错误构造器……），各服务第二阶段迁过去，旧接口才能在 2b 删掉。book-serve 这次迁完后，基座列为旧接口的那些在 `shelf/` 里零调用。
+
+| 方面 | 第一阶段 | 现在 |
+|---|---|---|
+| 认领 | `delivery.rs` 自写 `Claim` 快照 + 进程内认领锁；落库只拍快照，交给渲染自检线程在 10 分钟里慢慢认，母版没了就按书名认 | 基座 `Xochitl::upload_and_claim(…, ClaimBy::SameBytes, ClaimWait{20 秒 / 30 分钟, 防抖 500ms})`；落库 EPUB 与直接导入一样在作业里**当场认领**，渲染自检拿到 uuid 只等页数；认领时忙锁占着、母版一定还在，书名兜底删掉；**认不出就不认**：落库照算成功、渲染记 `timeout`、不登记页边距 |
+| PDF 落库 | 也拍快照（没人用） | 只上传（`upload_only` → 基座 `upload_to`），不扫书库 |
+| 文件夹 | `String` uuid（空串＝根） | `Folder`（`Root` / `Id(FolderId)`）；按层找用基座 `child_folder` |
+| 找回阅读位置 | 自写 `PageMap`、手解 `lastOpenedPage` | 基座 `PageTable`、`Metadata::last_opened_page` |
+| 边车状态 | `status: String` | `wire::{DeliverStatus, RenderStatus}`，线上字符串不变；旧边车里的 `cancelled` 等历史值读成 `Unknown`（写回会变 `unknown`，网页按"不是 ok 也不是 pending"显示） |
+| 错误状态码 | 母版库 / 回收站 / 建文件夹一律 `map_err(ApiError::bad)` → 400 | `error.rs` 分种类：请求不对 400、不在 404、冲突 409、设备出错 500（传书线架构 §9） |
+| 其它 | `AssetStore` 两个死转发；`sse_reply()` 靠线程局部读 `?ka=`；测试手写 `Request{..}` | `UploadTarget`；`sse_reply_for(&Request)`；`TestRequest`（流式请求体那一个测试仍手写） |
+
+**同批**：代理放弃记录的 `kind` 收成枚举 `FailureKind`（`trash` / `mkdir`，落盘与线上字节不变）；事件 `publish(area, kind)` 的字面量收成 `events.rs` 常量，测试核对网页 `core.js` 的 `EV` 表认得每一个；服务 → 源码顶层目录收成 `manifest.sh` 的 `shelf_svc_home` 一处，`shelf/build.sh` 与 `packaging/deploy.sh` 都从它推导（审计 PK-2），`build.sh` 的 cargo 一律 `--locked`。直接导入的阶段「上传给 xochitl」「等 xochitl 排版」合成「上传给 xochitl、等它排版」（认领在基座里一口气做完）。
+
+**行为变化**（都要真机验证）：① 落库 EPUB 的作业多占队列直到认出（xochitl 回 2xx 时书多半已经落盘，通常当场认出；回了"很可能已送达"最多等 30 分钟，与直接导入一样）；认不出时渲染立刻记 `timeout`（以前最多再等 10 分钟）。② 几个接口的错误状态码从 400 改成 404 / 409 / 500，网页和 sheng-ren 只看是否成功与 `message`，不受影响。③ 跨进程上传锁（基座第一阶段）随新 book-serve 一起生效。
+
+**效率**：认领路径的书库扫描没有变多。每次投 EPUB：第一阶段＝上传前快照 1 次整库 `.metadata` 扫描 + 渲染自检线程里每次书库有动静扫 1 次直到认出；现在＝快照 1 次 + 基座认领里每次书库有动静扫 1 次直到认出（同样的 `find_documents_since`，同样先比大小再逐字节比），认出后渲染自检只读这一份 `.content`，不再扫。每次投 PDF 少 1 次整库扫描（不再拍没人用的快照）。基座第一阶段实测这种扫描 2050 份 `.metadata` 约 0.8～3ms/次。
+
+**离线验证**：book-serve 123 个测试（认领的复现测试改在母版库层用假 xochitl 跑：别人同时投的同名新书不认、投递前就在的同字节文档不认、字节对不上时不取最新一本也不登记页边距、PDF 不等认领；旧边车历史状态值；各接口状态码；`FailureKind` 落盘格式；事件常量与网页 `EV` 表）、shelf-conv 24 个，clippy 0 告警；`sh shelf/build.sh` aarch64 交叉编译通过（8 个服务全静态）；安装脚本模拟测试 387 项通过，shellcheck 0 告警。
+
+**要真机验证**（§05 #28）：网页加入一本 EPUB，几秒内边车出现 uuid、渲染徽章显示页数；加入带页边距标记的漫画，`GET /api/books/margins/<它的 uuid>` 有登记；加入 PDF 照常；note-serve 同步笔记本与网页加入同时进行时，书和笔记本各落各的文件夹；删除正在处理的书时网页提示"正在处理中"（状态码 409）。
 
 #### 本章已挪走的节
 
@@ -914,6 +938,7 @@ qmd 和 xovi 扩展只在 xochitl **启动时**注入，所以改了要让 xochi
 | 25 | **2026-10-09 第六轮审计**（§03bz；10-09 已部署，部署自检 38✓，功能未手测） | 待手测：一本封面很大或 OPF 异常的坏 EPUB 入库、加入时 book-serve 不被 OOM 杀（看 `NRestarts`）；网页「设备健康 → 清理」把书排进回收站时，xochitl 正在改写那本书的 `.metadata` 也不丢（书最终进回收站）；「加入 xochitl → 新建文件夹」加入后不再白等 20 秒；把书投到刚在 xochitl 里删掉的文件夹，书落书库根而不是上一本书的文件夹；母版库所在分区剩余不到 300MiB 时网页标红；超过 90MB 的书走大文件通道照常（认领改等 inotify）；`shelf-uninstall --only book` 删了 qmd 后提示整机重启、`deploy-xovi-apply.sh` 据标记重启；inbox 失败项的 `.reason` 正常 | §03bz；网关白皮书 §09 |
 | 26 | **2026-10-09 原地替换后找回阅读位置**（§03ca；10-09 已部署，部署自检 39✓） | ✅ 10-09 真机验证一次：《绍宋》替换后重开跳回第 15 页，快照被删，新 `.epubindex` 打开当场写出、`.content` 是 v2 带 `redir`（§03ca）。还要测：sheng-ren **改动内容、页数变了**之后重开是否落在同一章附近；书里**插过笔记页**时跳到的页对不对；新 `.content` 的 `pageCount` 是否与新 `.epubindex` 同时更新；没替换过的书打开时 journal 没有 `CJ-KEEP-PROGRESS` | §03ca；传书线架构 §9 |
 | 27 | **2026-10-10 投递层统一**（§03cb；**未部署**，要换 book-serve 和两份 qmd，qmd 生效需整机重启） | 待部署后手测：网页「加入 → 文件夹」选根下已有 / 不存在的文件夹各一本，书落根下那个文件夹；书库里已有「X/卷01」而根下没有「卷01」时选"卷01"，根下新建「卷01」、书落进去；带页边距标记的漫画加入后页边距登记在它自己的 uuid 上（`GET /api/books/margins/<uuid>`）；连续加入几本时网页上一本一本处理，排着的显示处理中；sheng-ren 直接导入与网页加入同时进行时都成功；回收站入队后书很快进回收站、journal 无 `SHELF-TRASH: failed`；建文件夹代理照常建（含子文件夹） | §03cb；传书线架构 §2.3、§4 |
+| 28 | **2026-10-10 迁到基座新接口**（§03cc；**未部署**，只换 book-serve） | 待部署后手测：网页加入一本 EPUB，几秒内母版库这本的渲染状态出现页数、边车里有 uuid；带页边距标记的漫画加入后 `GET /api/books/margins/<uuid>` 有登记、首次打开页边距变成 1；PDF 加入照常、没有渲染徽章；note-serve「推送本章」与网页加入同时进行时书和笔记本各落各的文件夹（跨进程锁文件 `/tmp/shelf-0/shelf/xochitl-upload.lock` 存在）；对一本处理中的书点删除，提示"正在处理中"；sheng-ren 直接导入照常（阶段显示「上传给 xochitl、等它排版」） | §03cc；传书线架构 §2.3、§7.3、§9 |
 
 **已关闭 / 作废**（编号保留，便于别处引用；详情看"见"列原来指向的 §）：
 
@@ -967,6 +992,7 @@ qmd 和 xovi 扩展只在 xochitl **启动时**注入，所以改了要让 xochi
 | 10-09 | 传书线架构 §1 | **EPUB 容器/OPF 解析与笔记线合并**：shelf-conv `epub` 与 notes `epubmap` 各写的 container.xml → OPF、manifest/spine/Dublin Core、href 解码合成 `rmsvc-core/epubpkg`（独立小 crate，不依赖 rmsvc-core 本体）；书架这边行为不变，只是 `Book::opf()` 返回的 OPF 文本已去注释（当时未部署）〔10-09 已随后续部署上机〕 |
 | 10-09 | §03ca；传书线架构 §9、§10 | **原地替换后找回阅读位置**：`finish_replace` 删旧 `.epubindex` 前拍快照（所在 spine 文件 + 文件内比例 + 全书比例），新增 `GET /progress/{uuid}`、`POST /progress/applied` 与 `shelf-keep-progress.qmd`（DocumentView，让 xochitl 自己 `goToPage`）；`.epubindex` 解析下沉到 `rmsvc-core/epubpkg`（当时未部署、未在真机验证）〔10-09 已部署，部署自检 39✓；真机验证一次，§05 #26〕 |
 | 10-10 | §03cb；传书线架构 §2.3、§4、§7、§9 | **投递层统一（重构第一阶段）**：网页「加入」的文件夹改在书库根下按层解析、按 uuid 上传；渲染自检按上传前快照 + 逐字节认书、认不出不认；抽 `XochitlDelivery`，落库与直接导入共用串行作业队列；列表加 `title`/`series`/`done`；`AgentQueue` 合并代理队列；回收站代理补 `cjWait`；删 `/mkdir/pending` 的 `names` 与 `shelf_conv::ContentType`（未部署） |
+| 10-10 | §03cc；传书线架构 §2.3、§3、§6.1、§7.3、§8、§9 | **迁到 rmsvc-core 新接口（重构第二阶段 2a）**：认领交给基座 `upload_and_claim`，落库 EPUB 当场认领、PDF 只上传；`Folder`/`FolderId`；`PageTable` 与 `last_opened_page`；边车状态用 `wire` 枚举（旧值读成 `Unknown`）；错误按种类给 400/404/409/500；`UploadTarget`、`sse_reply_for`、`TestRequest`；`FailureKind`、事件常量；`manifest.sh` 的 `shelf_svc_home` 统一服务清单、`build.sh` 加 `--locked`；并发锁图加作业队列与跨进程上传锁（未部署） |
 
 ### 附录 B｜已移除的能力：电脑端 `shelf` 命令行（原 `shelf/README.md`，2026-09-18 砍除）
 
@@ -1030,7 +1056,7 @@ qmd 和 xovi 扩展只在 xochitl **启动时**注入，所以改了要让 xochi
 | 外部约定 | KOReader 根 `SHELF_KOREADER_ROOT`（缺省 `~/xovi/exthome/appload/koreader`；历史，`rmsvc_core::paths` 这一项 09-30 已删）；xochitl 书库 `~/.local/share/remarkable/xochitl` |
 | 笔记线 | 自成一套 `notes` 命名空间，见 `../../notes/README.md` |
 
-**已搬走 / 旧名对照**（读历史节时用）：`font-serve`/`wallpaper-serve` → `enhance/`；`crates/shelf-core`（`shelf-core::*`）→ 顶层 `rmsvc-core/`；`services/shelf-gateway` → 顶层 `gateway/`；网关 `ui.rs` 大字符串 → `gateway/ui/{index.html,style.css,app.js}`；`shelf/deploy.sh` → `packaging/deploy.sh`；`wash_epub.sh` 随 host 砍除。依赖方向见 [`../README.md`](../README.md)「目录」。
+**已搬走 / 旧名对照**（读历史节时用）：`font-serve`/`wallpaper-serve` → `enhance/`；`crates/shelf-core`（`shelf-core::*`）→ 顶层 `rmsvc-core/`；`services/shelf-gateway` → 顶层 `gateway/`；网关 `ui.rs` 大字符串 → `gateway/ui/{index.html,style.css,app.js}`，10-10 `app.js` 再按页拆成 `core.js`（转义、i18n、取数、事件常量表 `EV`）/ `dom.js`（`uploader()`、`renderBusy` 等通用 DOM）/ `transfer.js`（传书页、母版库）/ `notes.js` / `assets.js`（字体、壁纸）/ `manage.js` / `health.js`（设备健康），`app.js` 只剩装配；`shelf/deploy.sh` → `packaging/deploy.sh`；`wash_epub.sh` 随 host 砍除。依赖方向见 [`../README.md`](../README.md)「目录」。
 
 ### 附录 D｜原 `shelf/README.md`「固件升级（OTA）与恢复」（2026-09-20 前的旧版，已被 `docs/INSTALL.md` 取代）
 

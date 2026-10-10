@@ -24,12 +24,14 @@
 //! · `GET /import/{uuid}` → `{uuid, name, folder, deleted, replacing}`（不存在 → 404；`replacing`＝正在原地替换）。删除用 `POST /trash/add {uuid, name}`。
 //! · `POST /import/states {uuids: [...]}` → `{docs: {<uuid>: {name, folder, deleted, replacing}}}`：一次查一批（不存在的不出现在 `docs` 里）；
 //!   sheng-ren 每轮 sync 开头查一次，免得每本书各开一次请求（2026-10-09）。一次最多 [`STATES_MAX`] 个，多了 400。
+use crate::error::Error;
 use crate::service_state::State;
 use crate::staging::StagingStore;
 use rmsvc_core::asset::{self, AssetUploadFlow};
 use rmsvc_core::formats;
 use rmsvc_core::http::{bind, ApiError, ApiResult, Reply, Request, Router};
 use std::sync::Arc;
+use crate::events as ev;
 
 /// `GET /mkdir/pending?wait=`、`GET /trash/pending?wait=` 长轮询等待时长上限（秒）。QML 端（shelf-mkdir-agent.qmd）发 wait=290：设备 Qt 6.10
 /// 的 QML XHR 不设传输超时（2026-09-24 核实，见 qmd 头注；09-22 版按"缺省 30s 超时"的假设把这里定成 28）。
@@ -39,7 +41,7 @@ const AGENT_WAIT_MAX_SECS: u64 = 300;
 pub fn router(st: Arc<State>) -> Router {
     Router::new()
         .get("/status", bind(&st, |s, _| Ok(Reply::ok(&s.status()))))
-        .get("/events", bind(&st, |s, _| Ok(s.bus.sse_reply())))
+        .get("/events", bind(&st, |s, r| Ok(s.bus.sse_reply_for(r))))
         // ── 母版库（中间层）：入库 / 落库 / 删除各自正交 ──
         .get("/staging", bind(&st, |s, _| {
             let free = s.staging.free_bytes();
@@ -48,15 +50,15 @@ pub fn router(st: Arc<State>) -> Router {
         // 原件下载：边读边发（大书上百 MB，不整本读进内存）；网关见到 Content-Disposition 也原样流式转发。
         .get("/staging/file", bind(&st, |s, r| {
             let name = r.q_required("name")?.to_string();
-            let (f, len) = s.staging.open_for_download(&name).map_err(ApiError::bad)?;
+            let (f, len) = s.staging.open_for_download(&name).map_err(api_error)?;
             // 母版库只收 EPUB/PDF；更早留下的别的格式按二进制下载
             let ctype = if formats::has_ext(&name, formats::NATIVE_EXTS) { formats::mime_of(&name) } else { "application/octet-stream" };
             Ok(Reply::sized_stream(ctype, Box::new(std::io::BufReader::new(f)), len).with_header("Content-Disposition", &rmsvc_core::multipart::content_disposition(&name)))
         }))
         .post("/staging/rename", bind(&st, |s, r| {
             let j = r.json()?;
-            let new_name = s.staging.rename(j.str("name")?, j.str("newName")?).map_err(ApiError::bad)?;
-            s.bus.publish("books", "staging");
+            let new_name = s.staging.rename(j.str("name")?, j.str("newName")?).map_err(api_error)?;
+            s.bus.publish(ev::AREA, ev::STAGING);
             Ok(Reply::ok(&serde_json::json!({"ok": true, "name": new_name})))
         }))
         .post("/staging", bind(&st, staging_upload))
@@ -69,8 +71,8 @@ pub fn router(st: Arc<State>) -> Router {
             // 母版库永远保留（可再投另一读器对照，2026-09-19 起不再有"投完自动删除"这条路）；
             // folder 空＝书库根；非空＝书库根下这个名字的文件夹，没有会先经 mkdir 队列建出来再投，见 XochitlDelivery::ensure_folder。
             // 排进与直接导入共用的后台作业队列，一次一本（见 jobs.rs）。
-            s.staging.spawn_deliver(&name, j.str_or("folder", ""), &s.jobs, s.bus.clone()).map_err(ApiError::bad)?;
-            s.bus.publish("books", "staging"); // 立即推一次，UI 马上看到这条目进入 busy 状态
+            s.staging.spawn_deliver(&name, j.str_or("folder", ""), &s.jobs, s.bus.clone()).map_err(api_error)?;
+            s.bus.publish(ev::AREA, ev::STAGING); // 立即推一次，UI 马上看到这条目进入 busy 状态
             Ok(Reply::ok(&serde_json::json!({"ok": true, "message": format!("《{name}》已开始投递，完成后自动刷新"), "async": true})))
         }))
         // ── 漫画页边距待办（QML 代理 shelf-comic-margins.qmd 在书打开时查；见 comic_margins.rs）──
@@ -79,7 +81,8 @@ pub fn router(st: Arc<State>) -> Router {
             None => Err(ApiError::not_found("没有待设的页边距")),
         }))
         .post("/margins/applied", bind(&st, |s, r| {
-            let n = s.comic_margins.applied(r.json()?.str("uuid")?).map_err(ApiError::bad)?;
+            // 销账只会因写队列失败而出错（设备这边的事）→ 500，不是请求不对。
+            let n = s.comic_margins.applied(r.json()?.str("uuid")?).map_err(ApiError::internal)?;
             Ok(Reply::ok(&serde_json::json!({"ok": true, "pending": n})))
         }))
         // ── 原地替换后找回阅读位置（QML 代理 shelf-keep-progress.qmd 在书打开时查；见 progress.rs）──
@@ -92,6 +95,7 @@ pub fn router(st: Arc<State>) -> Router {
         .post("/progress/applied", bind(&st, |s, r| {
             let j = r.json()?;
             let uuid = j.str("uuid")?;
+            // 只会因 uuid 形状不对而出错 → 400。
             let removed = s.progress.applied(uuid).map_err(ApiError::bad)?;
             // 代理等了约一分钟新排版还没出来就放弃（reason=timeout）：删掉快照，免得之后某次打开把用户已经读到的地方又拉回去
             if j.str_or("reason", "") == "timeout" && removed {
@@ -104,24 +108,24 @@ pub fn router(st: Arc<State>) -> Router {
         // "书库视图下次有动静时移进回收站"。
         .post("/trash/add", bind(&st, |s, r| {
             let j = r.json()?;
-            let n = s.trash.add(j.str("uuid")?, j.str("name")?).map_err(ApiError::bad)?;
-            s.bus.publish("books", "trash");
+            let n = s.trash.add(j.str("uuid")?, j.str("name")?).map_err(api_error)?;
+            s.bus.publish(ev::AREA, ev::TRASH);
             Ok(Reply::ok(&serde_json::json!({"ok": true, "pending": n, "message": "已排队，xochitl 会随即移进回收站"})))
         }))
         .get("/trash/pending", bind(&st, |s, r| {
             let (uuids, pruned) = s.trash.pending_wait(agent_wait(r)).map_err(ApiError::internal)?;
             if pruned > 0 {
-                s.bus.publish("books", "trash");
+                s.bus.publish(ev::AREA, ev::TRASH);
             }
             Ok(Reply::ok(&serde_json::json!({"uuids": uuids})))
         }))
         .get("/trash", bind(&st, |s, _| Ok(Reply::ok(&serde_json::json!({"items": s.trash.list()})))))
         // ── 原生书库建文件夹队列（真正的建夹由 xochitl 自己的 Library.createCollection 执行，见 mkdir.rs / shelf-mkdir-agent.qmd）──
         .post("/mkdir/add", bind(&st, |s, r| {
-            let n = s.mkdir.add(r.json()?.str("name")?).map_err(ApiError::bad)?;
+            let n = s.mkdir.add(r.json()?.str("name")?).map_err(api_error)?;
             s.invalidate_status(); // 文件夹候选可能变了
             if n > 0 {
-                s.bus.publish("books", "mkdir");
+                s.bus.publish(ev::AREA, ev::MKDIR);
             }
             Ok(Reply::ok(&serde_json::json!({"ok": true, "pending": n})))
         }))
@@ -129,7 +133,7 @@ pub fn router(st: Arc<State>) -> Router {
         .get("/mkdir/pending", bind(&st, |s, r| {
             let (items, pruned) = s.mkdir.pending_wait(agent_wait(r)).map_err(ApiError::internal)?;
             if pruned > 0 {
-                s.bus.publish("books", "mkdir");
+                s.bus.publish(ev::AREA, ev::MKDIR);
             }
             // `items` 带上级文件夹（2026-10-07 按层建）。2026-10-10 删了只放根下项的 `names`：那是给 10-07 前的旧代理留的兼容，
             // 代理与本服务总由 shelf/install.sh 一起装，走不到。
@@ -151,9 +155,20 @@ pub fn router(st: Arc<State>) -> Router {
             None => Err(ApiError::not_found("xochitl 书库里没有这份文档")),
         }))
         .post("/staging/delete", bind(&st, |s, r| {
-            s.staging.remove(r.json()?.str("name")?).map_err(ApiError::bad)?;
+            s.staging.remove(r.json()?.str("name")?).map_err(api_error)?;
             staging_changed(s)
         }))
+}
+
+/// 领域错误 → 状态码（2026-10-10，审计 CORE-1）：请求不对 400、不在 404、冲突（正在处理中 / 已占用）409、设备这边出错 500。
+/// 此前一律 `map_err(ApiError::bad)` 报 400。
+fn api_error(e: Error) -> ApiError {
+    match e {
+        Error::Invalid(m) => ApiError::bad(m),
+        Error::NotFound(m) => ApiError::not_found(m),
+        Error::Conflict(m) => ApiError::conflict(m),
+        Error::Io(m) => ApiError::internal(m),
+    }
 }
 
 /// 两个代理队列长轮询的 `?wait=<秒>`：缺省/非法＝0（立即返回），上限 [`AGENT_WAIT_MAX_SECS`]。
@@ -163,7 +178,7 @@ fn agent_wait(r: &Request<'_>) -> std::time::Duration {
 
 /// 母版库变更类操作的统一收尾：推一条 `books/staging`（网页据此重拉列表，零轮询）再回 `{ok:true}`。
 fn staging_changed(s: &State) -> ApiResult {
-    s.bus.publish("books", "staging");
+    s.bus.publish(ev::AREA, ev::STAGING);
     Ok(Reply::ok(&serde_json::json!({"ok": true})))
 }
 
@@ -173,9 +188,11 @@ fn staging_upload(st: &State, r: &mut Request<'_>) -> ApiResult {
     let boundary = r.multipart_boundary()?;
     // 不持 spool 锁：暂存名是随机的 `.<uuid>.book.part`，与 inbox 追平互不相干；真正会撞的"挑名 + 落地"
     // 由 `Staging` 内部的落名临界区串行化（见 `staging::Staging` 的 `land` 字段）。
+    // 上传流程整体失败几乎都是请求体不是合法 multipart（逐个文件的失败在回执里，不走这里）→ 400；基座这个接口只回字符串，
+    // 建暂存目录失败这种设备故障也会落进 400（极少见），要分开得基座给出错误种类。
     let items = AssetUploadFlow::in_dir(st.spool.work()).run(&StagingStore(&st.staging), &mut *r.body, &boundary).map_err(ApiError::bad)?;
     if asset::any_ok(&items) {
-        st.bus.publish("books", "staging");
+        st.bus.publish(ev::AREA, ev::STAGING);
     }
     Ok(Reply::ok(&asset::receipt(&items, serde_json::Value::Null)))
 }
@@ -215,7 +232,7 @@ fn import_book(st: &State, r: &mut Request<'_>) -> ApiResult {
         eprintln!("[book-serve] 直接导入《{name}》失败：{e:?}");
         match e {
             ImportError::Bad(m) => ApiError::bad(m),
-            ImportError::Busy(m) => ApiError { status: 409, message: m },
+            ImportError::Busy(m) => ApiError::conflict(m),
             ImportError::NotFound(m) => ApiError::not_found(m),
             ImportError::Failed(m) => ApiError::internal(m),
         }
@@ -226,7 +243,7 @@ fn import_book(st: &State, r: &mut Request<'_>) -> ApiResult {
         match &res {
             Ok(_) => {
                 invalidate(); // 可能新建了文件夹
-                bus.publish("books", "import");
+                bus.publish(ev::AREA, ev::IMPORT);
             }
             Err(e) => eprintln!("[book-serve] 直接导入《{name}》失败：{e:?}"),
         }
@@ -239,7 +256,7 @@ fn import_book(st: &State, r: &mut Request<'_>) -> ApiResult {
 mod tests {
     //! 进程内路由测试：不起 socket，直接 `Router::dispatch`——覆盖参数解析、错误码映射与忙锁冲突（这些以前只能上真机验证）。
     use super::*;
-    use rmsvc_core::http::{parse_query, Method};
+    use rmsvc_core::http::{parse_query, Method, TestRequest};
     use rmsvc_core::paths::Paths;
     use std::collections::HashMap;
 
@@ -264,9 +281,7 @@ mod tests {
     }
 
     fn call(router: &Router, m: Method, path: &str, body: &str) -> (u16, serde_json::Value) {
-        let mut b = body.as_bytes();
-        let mut r = Request { method: m, path: path.into(), query: parse_query(""), params: HashMap::new(), content_type: "application/json".into(), content_length: Some(body.len()), headers: vec![], body: &mut b };
-        let rep = router.dispatch(&mut r);
+        let rep = TestRequest::new(m, path).content_type("application/json").body(body).dispatch(router);
         (rep.status, serde_json::from_slice(&rep.body).unwrap_or(serde_json::Value::Null))
     }
 
@@ -332,8 +347,9 @@ mod tests {
         assert_eq!(v["lowSpace"].as_bool(), Some(crate::staging::low_space(free)), "{v}");
     }
 
+    /// 忙着的书再落库 / 删除：409（与当前状态冲突，2026-10-10 前是 400）+ 提示。
     #[test]
-    fn busy_book_rejects_deliver_delete_with_400_and_hint() {
+    fn busy_book_rejects_deliver_delete_with_409_and_hint() {
         let t = tempfile::tempdir().unwrap();
         let st = state(&t);
         let router = router(st.clone());
@@ -344,7 +360,7 @@ mod tests {
             ("/staging/delete", r#"{"name":"x.epub"}"#),
         ] {
             let (code, v) = call(&router, Method::Post, path, body);
-            assert_eq!(code, 400, "{path}");
+            assert_eq!(code, 409, "{path}");
             assert!(msg(&v).contains("正在处理中"), "{path}: {v}");
             assert_eq!(v["ok"], false);
         }
@@ -360,19 +376,52 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let st = state(&t);
         let router = router(st.clone());
-        // 不存在的书 / 不支持的格式：400，且没有留下忙锁
-        for (path, body, hint) in [
-            ("/staging/deliver", r#"{"name":"nope.epub"}"#, "没有这本书"),
-            ("/staging/deliver", r#"{"name":"a.cbz"}"#, "xochitl 只读 EPUB"),
+        // 不存在的书 404 / 不支持的格式 400（2026-10-10 前都是 400），且没有留下忙锁
+        for (path, body, hint, want) in [
+            ("/staging/deliver", r#"{"name":"nope.epub"}"#, "没有这本书", 404),
+            ("/staging/deliver", r#"{"name":"a.cbz"}"#, "xochitl 只读 EPUB", 400),
         ] {
             let (code, v) = call(&router, Method::Post, path, body);
-            assert_eq!(code, 400, "{path} {body}");
+            assert_eq!(code, want, "{path} {body}");
             assert!(msg(&v).contains(hint), "{path} {body}: {v}");
         }
         assert!(!st.staging.is_busy("nope.epub") && !st.staging.is_busy("a.cbz"));
         // 缺字段 400；非法 JSON 400
         assert_eq!(call(&router, Method::Post, "/staging/deliver", "{}").0, 400);
         assert_eq!(call(&router, Method::Post, "/staging/deliver", "not json").0, 400);
+    }
+
+    /// 领域错误按种类给状态码（2026-10-10，审计 CORE-1；此前一律 400）：请求不对 400、不在 404、冲突 409。
+    #[test]
+    fn domain_errors_map_to_distinct_status_codes() {
+        let t = tempfile::tempdir().unwrap();
+        let st = state(&t);
+        let router = router(st.clone());
+        let lib = paths(&t).xochitl_dir();
+        std::fs::create_dir_all(&lib).unwrap();
+        const LIVE: &str = "11111111-1111-1111-1111-111111111111";
+        const TRASHED: &str = "33333333-3333-3333-3333-333333333333";
+        std::fs::write(lib.join(format!("{LIVE}.metadata")), r#"{"type":"DocumentType","visibleName":"书","parent":""}"#).unwrap();
+        std::fs::write(lib.join(format!("{TRASHED}.metadata")), r#"{"type":"DocumentType","visibleName":"旧","parent":"trash"}"#).unwrap();
+        st.staging.stage_new("a.epub", b"PK").unwrap();
+        st.staging.stage_new("b.epub", b"PK2").unwrap();
+        let code = |m: Method, path: &str, body: &str| call(&router, m, path, body).0;
+        assert_eq!(code(Method::Post, "/trash/add", r#"{"uuid":"bad","name":"书"}"#), 400);
+        assert_eq!(code(Method::Post, "/trash/add", &format!(r#"{{"uuid":"{LIVE}","name":"别的书"}}"#)), 400, "名字对不上");
+        assert_eq!(code(Method::Post, "/trash/add", r#"{"uuid":"44444444-4444-4444-4444-444444444444","name":"书"}"#), 404);
+        assert_eq!(code(Method::Post, "/trash/add", &format!(r#"{{"uuid":"{TRASHED}","name":"旧"}}"#)), 409);
+        assert_eq!(code(Method::Post, "/trash/add", &format!(r#"{{"uuid":"{LIVE}","name":"书"}}"#)), 200);
+        assert_eq!(code(Method::Post, "/staging/rename", r#"{"name":"a.epub","newName":"b"}"#), 409, "新名字已被占用");
+        assert_eq!(code(Method::Post, "/staging/rename", r#"{"name":"nope.epub","newName":"c"}"#), 404);
+        assert_eq!(code(Method::Post, "/staging/rename", r#"{"name":"a.epub","newName":" "}"#), 400);
+        let file = |name: &str| TestRequest::new(Method::Get, "/staging/file").query("name", name).dispatch(&router);
+        assert_eq!(file("a.epub").status, 200, "路由本身是通的");
+        let missing = file("nope.epub");
+        assert_eq!(missing.status, 404);
+        assert!(String::from_utf8_lossy(&missing.body).contains("没有这本书"));
+        assert_eq!(code(Method::Post, "/staging/delete", r#"{"name":"nope.epub"}"#), 404);
+        assert_eq!(code(Method::Post, "/staging/delete", r#"{"name":"../x"}"#), 400);
+        assert_eq!(code(Method::Post, "/mkdir/add", r#"{"name":" "}"#), 400);
     }
 
     #[test]
@@ -417,6 +466,7 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
         let up = std::thread::spawn(move || {
             let mut body = Gate(rx, Vec::new());
+            // 请求体是边读边到的流（`Gate`），`TestRequest` 只装得下现成的字节，这一处只能手写 `Request`。
             let mut r = Request { method: Method::Post, path: "/staging".into(), query: parse_query(""), params: HashMap::new(), content_type: "multipart/form-data; boundary=B".into(), content_length: None, headers: vec![], body: &mut body };
             router.dispatch(&mut r).status
         });
@@ -440,9 +490,7 @@ mod tests {
         let st = state(&t);
         let router = router(st.clone());
         st.staging.stage_new("书.PDF", b"%PDF-1").unwrap();
-        let mut empty: &[u8] = b"";
-        let mut r = Request { method: Method::Get, path: "/staging/file".into(), query: parse_query("name=%E4%B9%A6.PDF"), params: HashMap::new(), content_type: String::new(), content_length: None, headers: vec![], body: &mut empty };
-        let rep = router.dispatch(&mut r);
+        let rep = TestRequest::new(Method::Get, "/staging/file").query_string("name=%E4%B9%A6.PDF").content_length(None).dispatch(&router);
         assert_eq!((rep.status, rep.content_type.as_str()), (200, "application/pdf"), "扩展名大小写不敏感");
         let h = |k: &str| rep.headers.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone()).unwrap_or_default();
         assert_eq!(h("Content-Length"), "6");
@@ -451,9 +499,7 @@ mod tests {
 
     /// `POST /import` 带原始字节体（查询串取参）。
     fn post_raw(router: &Router, query: &str, body: &[u8]) -> (u16, serde_json::Value) {
-        let mut b = body;
-        let mut r = Request { method: Method::Post, path: "/import".into(), query: parse_query(query), params: HashMap::new(), content_type: "application/epub+zip".into(), content_length: Some(body.len()), headers: vec![], body: &mut b };
-        let rep = router.dispatch(&mut r);
+        let rep = TestRequest::new(Method::Post, "/import").query_string(query).content_type("application/epub+zip").body(body).dispatch(router);
         (rep.status, serde_json::from_slice(&rep.body).unwrap_or(serde_json::Value::Null))
     }
 

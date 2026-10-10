@@ -4,39 +4,35 @@
 # 链接器与 CC/AR 在 .cargo/config.toml。
 set -e
 cd "$(dirname "$0")"
+# shellcheck disable=SC1091
+. ./manifest.sh   # SHELF_ALL / shelf_svc_of / shelf_svc_home：要编哪些项目、列哪些产物，与 packaging/deploy.sh 同一份清单
 
 TARGET=aarch64-unknown-linux-musl
-# 只列要部署的产物（koreader-serve 2026-09-29 退役，源码已从仓库删除（2026-09-30），见 git 历史）
-BINS="book-serve"
-# 网关（../gateway）+ 笔记线（../notes）+ enhance 的 wallpaper-serve/font-serve 都是独立
-# 顶层 Cargo 项目，随书架一起编/装（目录不存在则跳过）；网关是 shelf/notes/enhance 三条线
-# 共用的唯一前端，2026-09-11 从 shelf 内部 workspace 正名搬出去，见 ../gateway/README.md；
-# wallpaper-serve/font-serve 同批从 shelf 内部 workspace 挪进 ../enhance/（概念上更贴近
-# 系统增强），见 ../enhance/README.md。
-GATEWAY_BINS="gateway"
-ENHANCE_BINS="wallpaper-serve font-serve"   # battop（电池刺客）2026-09-30 已移除
-NOTES_BINS="ink-serve transcribe-serve mind-serve note-serve"
+# 要部署的服务与它们所在的顶层 Cargo 项目都取自 manifest.sh（2026-10-10 前这里另写一份 BINS/GATEWAY_BINS/ENHANCE_BINS/NOTES_BINS，
+# 审计 PK-2）。网关（../gateway）、笔记线（../notes）、enhance 的 wallpaper-serve/font-serve 都是独立顶层 Cargo 项目，随书架一起
+# 编/装（目录不存在则跳过）；网关是 shelf/notes/enhance 三条线共用的唯一前端，见 ../gateway/README.md。
+# cargo 一律 --locked（同 CI）：Cargo.lock 与 Cargo.toml 对不上就失败，不在打包时悄悄重新解析依赖。
+
+# 各服务所在项目，去重、保持 SHELF_ALL 的顺序
+HOMES=""
+for s in $SHELF_ALL; do
+    h="$(shelf_svc_home "$s")"
+    case " $HOMES " in *" $h "*) ;; *) HOMES="$HOMES $h" ;; esac
+done
 
 echo "== host 构建 + 测试 =="
-cargo build --release --workspace
-cargo test --workspace --quiet
+cargo build --release --workspace --locked
+cargo test --workspace --locked --quiet
 
 echo "== 交叉编译 $TARGET（全静态）=="
-cargo build --release --workspace --target "$TARGET"
-if [ -f ../gateway/Cargo.toml ]; then
-    echo "== 网关 gateway/：host 测试 + 交叉编译 =="
-    (cd ../gateway && cargo test --quiet && cargo build --release --target "$TARGET")
-fi
-for b in $ENHANCE_BINS; do
-    if [ -f "../enhance/$b/Cargo.toml" ]; then
-        echo "== enhance/$b/：host 测试 + 交叉编译 =="
-        (cd "../enhance/$b" && cargo test --quiet && cargo build --release --target "$TARGET")
+cargo build --release --workspace --locked --target "$TARGET"
+for h in $HOMES; do
+    [ "$h" = shelf ] && continue   # 书架自己上面已经编过
+    if [ -f "../$h/Cargo.toml" ]; then
+        echo "== $h/：host 测试 + 交叉编译 =="
+        (cd "../$h" && cargo test --workspace --locked --quiet && cargo build --release --workspace --locked --target "$TARGET")
     fi
 done
-if [ -f ../notes/Cargo.toml ]; then
-    echo "== 笔记线 notes/：host 测试 + 交叉编译 =="
-    (cd ../notes && cargo test --workspace --quiet && cargo build --release --workspace --target "$TARGET")
-fi
 
 echo
 echo "aarch64 全静态产物："
@@ -44,7 +40,4 @@ echo "aarch64 全静态产物："
 report() {
     if [ -f "$1" ]; then echo "  $1  $(wc -c <"$1")B  $(file "$1" | grep -o 'statically linked' || echo dynamic)"; fi
 }
-for b in $BINS; do report "target/$TARGET/release/$b"; done
-for b in $GATEWAY_BINS; do report "../gateway/target/$TARGET/release/$b"; done
-for b in $ENHANCE_BINS; do report "../enhance/$b/target/$TARGET/release/$b"; done
-for b in $NOTES_BINS; do report "../notes/target/$TARGET/release/$b"; done
+for s in $SHELF_ALL; do report "../$(shelf_svc_home "$s")/target/$TARGET/release/$(shelf_svc_of "$s")"; done

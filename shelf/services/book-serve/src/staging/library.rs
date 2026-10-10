@@ -74,19 +74,18 @@ impl Staging {
             let name = e.file_name().to_string_lossy().to_string();
             // 边车 → 书按反查表认（短名形式没法从文件名反推书名）；没有书的孤儿边车不修，留给 `gc_orphan_sidecars` 清。
             let Some(book_path) = sidecar::is_sidecar_name(&name).then(|| owners.get(&name)).flatten() else { continue };
-            let stale = |st: &str| st == "pending";
-            let Some(d) = sidecar::read(book_path) else { continue };
-            let needs = d.deliver.as_ref().is_some_and(|o| stale(&o.status))
-                || d.render.as_ref().is_some_and(|o| stale(&o.status));
+                        let Some(d) = sidecar::read(book_path) else { continue };
+            let needs = d.deliver.as_ref().is_some_and(|o| o.status == DeliverStatus::Pending)
+                || d.render.as_ref().is_some_and(|o| o.status == RenderStatus::Pending);
             if !needs {
                 continue;
             }
             let ok = sidecar::update(book_path, |d| {
-                if let Some(o) = d.deliver.as_mut().filter(|o| stale(&o.status)) {
-                    *o = sidecar::DeliverCheck { status: "failed".into(), message: "服务重启，上次加入被中断，可重新加入".into(), at: now };
+                if let Some(o) = d.deliver.as_mut().filter(|o| o.status == DeliverStatus::Pending) {
+                    *o = sidecar::DeliverCheck { status: DeliverStatus::Failed, message: "服务重启，上次加入被中断，可重新加入".into(), at: now };
                 }
-                if let Some(r) = d.render.as_mut().filter(|r| stale(&r.status)) {
-                    r.status = "timeout".into();
+                if let Some(r) = d.render.as_mut().filter(|r| r.status == RenderStatus::Pending) {
+                    r.status = RenderStatus::Timeout;
                     r.at = now;
                 }
             })
@@ -99,14 +98,14 @@ impl Staging {
     }
     /// 母版库条目改名：只改文件名（不改书内的书名/作者），格式不能变——新名字不带扩展名就沿用原扩展名，
     /// 带了别的扩展名则拒绝。新名已存在 / 任一名字正在处理中 → 拒绝。落库边车跟着改名。返回新名字。
-    pub fn rename(&self, name: &str, new_name: &str) -> Result<String, String> {
+    pub fn rename(&self, name: &str, new_name: &str) -> Result<String, Error> {
         let src = self.existing(name)?;
         let ext = formats::ext_of(name);
         let new_name = new_name.trim();
         let new_name = if formats::ext_of(new_name) == ext { new_name.to_string() } else { format!("{new_name}.{ext}") };
         let stem_ok = new_name.strip_suffix(&format!(".{ext}")).is_some_and(|s| !s.trim().is_empty());
         if !stem_ok {
-            return Err("新名字不能为空".into());
+            return Err(Error::Invalid("新名字不能为空".into()));
         }
         let dst = self.path_of(&new_name)?;
         if new_name == name {
@@ -116,17 +115,17 @@ impl Staging {
         let _busy_new = self.busy_guard(&new_name, "再改名")?;
         let _land = self.land_guard();
         if dst.exists() {
-            return Err(format!("母版库里已有《{new_name}》"));
+            return Err(Error::Conflict(format!("母版库里已有《{new_name}》")));
         }
-        std::fs::rename(&src, &dst).map_err(|e| format!("改名失败: {e}"))?;
+        std::fs::rename(&src, &dst).map_err(|e| Error::Io(format!("改名失败: {e}")))?;
         sidecar::rename(&src, &dst);
         // 渲染自检线程按旧书名记结果（落库完忙锁就放了，自检还要再等最多 10 分钟）：改名后它找不到书、不再写，边车会一直停在
         // "渲染中"直到下次重启。这里直接收成 timeout（列表显示"未见渲染"，不影响阅读）。
-        if sidecar::read(&dst).and_then(|d| d.render).is_some_and(|r| r.status == "pending") {
+        if sidecar::read(&dst).and_then(|d| d.render).is_some_and(|r| r.status == RenderStatus::Pending) {
             let now = rmsvc_core::clock::now_secs();
             let _ = sidecar::update(&dst, |d| {
-                if let Some(r) = d.render.as_mut().filter(|r| r.status == "pending") {
-                    r.status = "timeout".into();
+                if let Some(r) = d.render.as_mut().filter(|r| r.status == RenderStatus::Pending) {
+                    r.status = RenderStatus::Timeout;
                     r.at = now;
                 }
             });
@@ -135,9 +134,9 @@ impl Staging {
     }
 
     /// 打开母版库条目供下载：`(文件, 字节数)`。
-    pub fn open_for_download(&self, name: &str) -> Result<(std::fs::File, u64), String> {
+    pub fn open_for_download(&self, name: &str) -> Result<(std::fs::File, u64), Error> {
         let p = self.existing(name)?;
-        let f = std::fs::File::open(&p).map_err(|e| format!("打开失败: {e}"))?;
+        let f = std::fs::File::open(&p).map_err(|e| Error::Io(format!("打开失败: {e}")))?;
         let len = f.metadata().map(|m| m.len()).unwrap_or(0);
         Ok((f, len))
     }
@@ -145,11 +144,14 @@ impl Staging {
 
     /// 删除一本书（连同落库边车）。删除期间**占着忙锁**：此前只是先查"忙不忙"再删，查完到删之间别的请求可能刚好
     /// 开始落库/改名，后台线程随即对着一个已删的文件跑（2026-09-25 第四轮审计）。
-    pub fn remove(&self, name: &str) -> Result<(), String> {
+    pub fn remove(&self, name: &str) -> Result<(), Error> {
         let p = self.path_of(name)?;
         let _busy = self.busy_guard(name, "再删除")?;
         sidecar::remove(&p);
-        std::fs::remove_file(&p).map_err(|e| format!("删除失败: {e}"))
+        std::fs::remove_file(&p).map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => Error::NotFound("母版库里没有这本书".into()),
+            _ => Error::Io(format!("删除失败: {e}")),
+        })
     }
 
     /// 所在分区剩余空间（字节，非特权用户可用的那部分，与 `df` 的 Available 同义）；查不到 None。
@@ -193,21 +195,21 @@ impl Staging {
             if let Some(rc) = delivered.as_mut().and_then(|d| d.render.as_mut()) {
                 // 直接投入的 EPUB 首次打开才渲染：xochitl 渲染完会把 `.content` 的 pageCount 改成真页数，跟记录里的占位页数不同
                 // 就说明已经渲染过 → 升级成 ok。没打开过 → 保持 onopen。
-                if rc.status == "onopen" {
+                if rc.status == RenderStatus::Onopen {
                     seen_docs.insert(rc.uuid.clone());
                     if let Some(n) = self.content_pages(&rc.uuid) {
                         // 记录里是 0 = 投递时没等到占位页数（极少见）：这时 `.content` 里的数可能还是占位的，不能当已渲染；
                         // 改看 `.epubindex`——大文件通道替换时删掉了它，重新出现只能是 xochitl 渲染了真书。
                         let rendered = rc.pages != 0 || self.delivery.library_dir().join(format!("{}.epubindex", rc.uuid)).exists();
                         if n != rc.pages && rendered {
-                            rc.status = "ok".into();
+                            rc.status = RenderStatus::Ok;
                             rc.pages = n;
                             // 升级结果写回边车：此前只改返回给网页的这份拷贝，边车里永远是 onopen，于是之后每次列表
                             // （网页每收一条事件就拉一次）都要再去 xochitl 书库读一遍这本的 `.content`，读到天荒地老。
                             let uuid = rc.uuid.clone();
                             let _ = sidecar::update(&e.path(), |d| {
-                                if let Some(r) = d.render.as_mut().filter(|r| r.status == "onopen" && r.uuid == uuid) {
-                                    r.status = "ok".into();
+                                if let Some(r) = d.render.as_mut().filter(|r| r.status == RenderStatus::Onopen && r.uuid == uuid) {
+                                    r.status = RenderStatus::Ok;
                                     r.pages = n;
                                 }
                             });

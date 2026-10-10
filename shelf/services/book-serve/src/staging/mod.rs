@@ -5,13 +5,15 @@
 //! 目录 `$XDG_STATE_HOME/shelf/books/staging/`（/home 分区，重启/OTA 不丢；**不套 LRU 淘汰**，留住用户还没落库的书）。
 //! 落库记录是同目录隐藏 sidecar `.<name>.delivered`（`sidecar` 模块管读写；本模块只在落库/删书时调它）。
 use crate::delivery::XochitlDelivery;
+use crate::error::Error;
 use crate::ops::{OpGuard, OpRegistry};
 use rmsvc_core::fs::ScratchFile;
 use crate::sidecar::{self, Delivered, RenderCheck};
 use serde::Serialize;
-use rmsvc_core::asset::{AssetItem, AssetStore};
+use rmsvc_core::asset::{AssetItem, UploadTarget};
 use rmsvc_core::formats::{self, BOOK_EXTS};
 use rmsvc_core::fs::{plain_name, same_content, unique_path, Content};
+use rmsvc_core::wire::{DeliverStatus, RenderStatus};
 use rmsvc_core::xochitl::Delivery;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -94,22 +96,19 @@ pub fn is_done(busy: bool, delivered: Option<&Delivered>) -> bool {
         return false;
     }
     let Some(d) = delivered else { return false };
-    if d.deliver.as_ref().is_some_and(|c| c.status == "failed") {
+    if d.deliver.as_ref().is_some_and(|c| c.status == DeliverStatus::Failed) {
         return false;
     }
     d.native.is_some_and(|n| n != 0)
 }
 
-/// 投原生成功后交给自检线程的计划：上传前的书库快照 + 母版路径（按字节认书）+ 文件名 / dc:title（母版已被删、改名时按书名认）
-/// + 漫画页边距。
+/// 投原生成功后交给自检线程的计划：母版库里的文件名 + 投递时已经认出的文档 uuid（2026-10-10 第二阶段起投递当场认领，
+/// 见 [`crate::delivery::XochitlDelivery::upload_and_claim`]）+ 漫画页边距。
 #[derive(Clone, Debug, PartialEq)]
 pub struct RenderPlan {
     pub name: String,
-    pub title: Option<String>,
-    /// 母版库里这本书的路径。
-    pub path: PathBuf,
-    /// 上传前拍的书库快照（见 [`crate::delivery::Claim`]）。
-    pub claim: crate::delivery::Claim,
+    /// 认出的 xochitl 文档 uuid。
+    pub uuid: String,
     /// 按页边距模式排的漫画：导入完成后登记"首次打开时设成这个页边距"（见 `comic_margins.rs`）；其余 `None`。
     pub comic_margins: Option<u32>,
 }
@@ -138,11 +137,12 @@ pub struct Staging {
     land: Arc<std::sync::Mutex<()>>,
 }
 
-/// 上传模板适配：母版库作为 [`AssetStore`]——扩展名门＝书籍格式白名单，install＝同分区 rename 入库。
+/// 上传模板适配：母版库作为 [`UploadTarget`]——扩展名门＝书籍格式白名单，install＝同分区 rename 入库。列表 / 删除是母版库自己的
+/// 方法（[`Staging::list`] / [`Staging::remove`]），上传流程用不到（2026-10-10 前实现的是带 list/remove 的 `AssetStore`，只好写两个死转发）。
 /// 暂存目录应传 spool 的 `.work/`（与母版库同分区），见 `AssetUploadFlow::in_dir`。
 pub struct StagingStore<'a>(pub &'a Staging);
 
-impl AssetStore for StagingStore<'_> {
+impl UploadTarget for StagingStore<'_> {
     fn kind(&self) -> &'static str {
         "book"
     }
@@ -153,12 +153,6 @@ impl AssetStore for StagingStore<'_> {
         let landed = self.0.stage_from_path(name, staged)?;
         let bytes = std::fs::metadata(self.0.dir.join(&landed)).map(|m| m.len()).unwrap_or(0);
         Ok(AssetItem::plain(landed, bytes))
-    }
-    fn list(&self) -> Vec<AssetItem> {
-        self.0.list().into_iter().map(|e| AssetItem::plain(e.name, e.bytes)).collect()
-    }
-    fn remove(&self, name: &str) -> Result<(), String> {
-        self.0.remove(name)
     }
     fn reject_message(&self) -> String {
         reject_message()
@@ -203,8 +197,8 @@ impl Staging {
         self.ops.is_busy(name)
     }
     /// 给条目加忙锁（见 [`OpGuard`]，离开作用域自动解锁）；已经忙着 → 统一的"正在处理中"提示，`extra` 是各自的后缀。
-    pub(crate) fn busy_guard(&self, name: &str, extra: &str) -> Result<OpGuard, String> {
-        self.ops.try_guard(name).ok_or_else(|| busy_err(name, extra))
+    pub(crate) fn busy_guard(&self, name: &str, extra: &str) -> Result<OpGuard, Error> {
+        self.ops.try_guard(name).ok_or_else(|| Error::Conflict(busy_err(name, extra)))
     }
     pub fn dir(&self) -> &Path {
         &self.dir
@@ -225,17 +219,17 @@ impl Staging {
     }
 
     /// 母版库里某本书的路径（校验单段文件名）。
-    fn path_of(&self, name: &str) -> Result<PathBuf, String> {
-        Ok(self.dir.join(plain_name(name)?))
+    fn path_of(&self, name: &str) -> Result<PathBuf, Error> {
+        Ok(self.dir.join(plain_name(name).map_err(Error::Invalid)?))
     }
     /// 母版库里是否还有这本书。
     pub fn has(&self, name: &str) -> bool {
         self.existing(name).is_ok()
     }
-    fn existing(&self, name: &str) -> Result<PathBuf, String> {
+    fn existing(&self, name: &str) -> Result<PathBuf, Error> {
         let p = self.path_of(name)?;
         if !p.is_file() {
-            return Err("母版库里没有这本书".into());
+            return Err(Error::NotFound("母版库里没有这本书".into()));
         }
         Ok(p)
     }
