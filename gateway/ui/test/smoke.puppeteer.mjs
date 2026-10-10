@@ -13,12 +13,13 @@ import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { concatenated } from './load.mjs';
 const PW = process.env.PLAYWRIGHT_NODE_MODULES;
 const require = createRequire((PW || process.env.PUPPETEER_NODE_MODULES || process.cwd() + '/node_modules') + '/');
 const UI = join(dirname(fileURLToPath(import.meta.url)), '..') + '/';
 let html = fs.readFileSync(UI + 'index.html', 'utf8');
-const exts = JSON.stringify({book:['epub','pdf'],font:['ttf'],image:['png']});
-html = html.replace('__STYLE__', fs.readFileSync(UI + 'style.css','utf8')).replace('__SCRIPT__', fs.readFileSync(UI + 'app.js','utf8').replace('__EXTS__', exts));
+// 脚本 = src/ui.rs 按顺序拼接的几个源文件（与网关页面同一份，见 load.mjs）。
+html = html.replace('__STYLE__', fs.readFileSync(UI + 'style.css','utf8')).replace('__SCRIPT__', () => concatenated());
 const zh = fs.readFileSync(UI + 'locales/zh-CN.json','utf8');
 const mock = `
 window.__hits = {}; window.__es = []; window.__hidden = false; window.__xss = 0;

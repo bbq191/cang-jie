@@ -2,14 +2,34 @@
 //! 按 `/api/services` 注册表动态生成（笔记 = note-serve；xochitl 字体 = font-serve、壁纸 = wallpaper-serve 收在「其他」里）。
 //! 上传逐文件一请求（每本独立成败、独立进度条），所有上传口共用一个 `uploader` + 服务端同形回执（`asset::receipt`）；
 //! 格式白名单由 [`page`] 从 `rmsvc_core::formats` 注入（`__EXTS__`），网页 accept / 选中即拦与服务端上传门同源。
-//! 页面源码在 `gateway/ui/`（index.html 骨架 + style.css + app.js + auth.css），编译期 `include_str!` 进二进制：
+//! 页面源码在 `gateway/ui/`（index.html 骨架 + style.css + 几个 `.js`（拼接顺序见 [`APP_JS`]）+ auth.css），编译期 `include_str!` 进二进制：
 //! 网页仍是单文件零外链，但 JS/CSS 是真文件——编辑器/`node --check`（CI）直接检查，改样式不用在 Rust 原始字符串里找。
 use rmsvc_core::http::html_escape as esc;
 use std::sync::OnceLock;
 
 const INDEX_HTML: &str = include_str!("../ui/index.html");
 const STYLE_CSS: &str = include_str!("../ui/style.css");
-const APP_JS: &str = include_str!("../ui/app.js");
+/// 网页脚本按职责拆成几个源文件（2026-10-10），编译期按下面的顺序首尾相接拼回**同一个** `<script>`：页面仍是单文件、
+/// 零额外请求，运行时与拆分前只差顶层定义的先后顺序。全部是经典脚本、共用一个全局作用域（不是 ES 模块），所以：
+/// ① 顶层 `const` 只能引用排在它前面的文件里的名字（函数声明会提升，不受此限）；② 除最后的 `app.js` 外，各文件只定义、
+/// 加载时不碰 DOM/location——`core.js` 连调用时也不碰 DOM，node 测试整文件加载它（`ui/test/load.mjs`）。
+/// - `core.js`：纯逻辑——转义/格式化、i18n 的 `T()`、格式白名单 `EXT`（`__EXTS__` 占位在这里）、`j()` 等取数封装、
+///   `coalesce` 这类可单测的小件。
+/// - `dom.js`：DOM 小工具——`el`/`btn`/toast/对话框/上传器/二级标签。
+/// - `transfer.js`「传书」、`notes.js`「笔记」、`assets.js`「其他」（字体/壁纸）、`manage.js`「管理」（含模型卡片）、
+///   `health.js`「设备健康」与页头横幅。
+/// - `app.js`：启动代码（唯一有加载期副作用的文件）：建 tab、开 SSE。CI 的 `node --check gateway/ui/app.js` 只查它，
+///   其余文件的语法由 `ui/test/scripts.test.mjs` 编译整段拼接产物兜住。
+const APP_JS: &str = concat!(
+    include_str!("../ui/core.js"),
+    include_str!("../ui/dom.js"),
+    include_str!("../ui/transfer.js"),
+    include_str!("../ui/notes.js"),
+    include_str!("../ui/assets.js"),
+    include_str!("../ui/manage.js"),
+    include_str!("../ui/health.js"),
+    include_str!("../ui/app.js"),
+);
 const AUTH_CSS: &str = include_str!("../ui/auth.css");
 
 /// i18n 语言包（2026-09-09 起；09-10 起覆盖主界面全部正文，只有登录/改密码页仍是 [`login_page`]/[`password_page`]
@@ -79,7 +99,32 @@ mod tests {
         assert!(!p.contains(r#""koOnly""#), "仅 KOReader 档已随 2026-09-18 格式收窄退役");
         assert!(std::ptr::eq(p, super::page()), "OnceLock 只渲染一次");
         assert!(!p.contains("__STYLE__") && !p.contains("__SCRIPT__") && p.contains("<style>") && p.contains("</script></body></html>"), "骨架三段拼接完整");
-        assert!(super::APP_JS.contains("__EXTS__") && !super::APP_JS.contains("__STYLE__"), "白名单占位在 app.js");
+        assert!(super::APP_JS.contains("__EXTS__") && !super::APP_JS.contains("__STYLE__"), "白名单占位在拼接后的脚本里");
+    }
+
+    /// 拆分后的脚本拼回去要包含拆分前 app.js 的全部顶层定义，且每个只定义一次（漏拼一个文件、或两个文件重复定义同名
+    /// 函数，浏览器里要么 ReferenceError、要么后者静默盖掉前者）。名单取自 2026-10-10 拆分前的 app.js。
+    #[test]
+    fn concatenated_script_defines_every_top_level_name_once() {
+        let js = super::APP_JS;
+        let consts = [
+            "$", "esc", "fmtB", "stagingLowSpace", "badge", "xoviBadge", "wait", "coalesce", "refreshSec", "guardClick", "btn", "el", "renderBusy", "toastHost", "showToast", "toast", "toastLink",
+            "modal", "confirmDialog", "promptDialog", "LS", "onUsb", "T", "currentLang", "EXT", "BOOK_EXT", "up", "authRedirect", "jsend", "sendT", "postJ", "bindToggle", "upHtml", "delBtn", "fontLabel",
+            "cjkBadge", "GUIDE", "stgNameOptions", "stgIsTodo", "TABS", "STYLE_NAMES", "STATUS_NAMES", "OBSIDIAN_ICON", "DEST_ICON", "DEST_ORDER", "statusName", "PROVIDER_NAMES", "fmtUptime", "fmtSec",
+            "fmtTime", "banner", "modAct",
+        ];
+        for n in consts {
+            let at_line_start = js.lines().filter(|l| l.starts_with(&format!("const {n}=")) || l.starts_with(&format!("const {n},"))).count();
+            assert_eq!(at_line_start, 1, "顶层 const {n} 应恰好定义一次");
+        }
+        let funcs = [
+            "j", "uploader", "subtabs", "fillList", "stgBadges", "stgRow", "renderTransfer", "renderFonts", "assetTab", "renderOther", "renderNotes", "mountModelPanel", "mountHealth", "mountCleanup",
+            "showOtaBanner", "showWifiBanner", "showAgentFailBanner", "renderManage",
+        ];
+        for f in funcs {
+            assert_eq!(js.matches(&format!("function {f}(")).count(), 1, "function {f} 应恰好定义一次");
+        }
+        assert!(js.trim_end().ends_with("})();"), "启动代码（app.js 的自执行函数）拼在最后");
     }
     #[test]
     fn locale_files_have_identical_key_sets() {
