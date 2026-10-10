@@ -54,6 +54,8 @@ impl State {
     /// 跑一轮（阻塞拿锁）。没 key → 直接报告不出网。
     fn run(&self, only: Option<Target<'_>>) -> ledger::RunReport {
         let _g = rmsvc_core::sync::lock(&self.run_lock);
+        // 一轮里逐条记账 + 一轮报告合成一次写盘（取舍见 `vendorcfg::Ledger::hold`）。
+        let _hold = self.ledger.hold();
         let cfg = self.cfg();
         let now = rmsvc_core::clock::now_secs();
         let report = match self.vision(&cfg) {
