@@ -40,7 +40,7 @@ const AGENT_WAIT_MAX_SECS: u64 = 300;
 pub fn router(st: Arc<State>) -> Router {
     Router::new()
         .get("/status", bind(&st, |s, _| Ok(Reply::ok(&s.status()))))
-        .get("/events", bind(&st, |s, _| Ok(s.bus.sse_reply())))
+        .get("/events", bind(&st, |s, r| Ok(s.bus.sse_reply_for(r))))
         // ── 母版库（中间层）：入库 / 落库 / 删除各自正交 ──
         .get("/staging", bind(&st, |s, _| {
             let free = s.staging.free_bytes();
@@ -240,7 +240,7 @@ fn import_book(st: &State, r: &mut Request<'_>) -> ApiResult {
 mod tests {
     //! 进程内路由测试：不起 socket，直接 `Router::dispatch`——覆盖参数解析、错误码映射与忙锁冲突（这些以前只能上真机验证）。
     use super::*;
-    use rmsvc_core::http::{parse_query, Method};
+    use rmsvc_core::http::{parse_query, Method, TestRequest};
     use rmsvc_core::paths::Paths;
     use std::collections::HashMap;
 
@@ -265,9 +265,7 @@ mod tests {
     }
 
     fn call(router: &Router, m: Method, path: &str, body: &str) -> (u16, serde_json::Value) {
-        let mut b = body.as_bytes();
-        let mut r = Request { method: m, path: path.into(), query: parse_query(""), params: HashMap::new(), content_type: "application/json".into(), content_length: Some(body.len()), headers: vec![], body: &mut b };
-        let rep = router.dispatch(&mut r);
+        let rep = TestRequest::new(m, path).content_type("application/json").body(body).dispatch(router);
         (rep.status, serde_json::from_slice(&rep.body).unwrap_or(serde_json::Value::Null))
     }
 
@@ -418,6 +416,7 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
         let up = std::thread::spawn(move || {
             let mut body = Gate(rx, Vec::new());
+            // 请求体是边读边到的流（`Gate`），`TestRequest` 只装得下现成的字节，这一处只能手写 `Request`。
             let mut r = Request { method: Method::Post, path: "/staging".into(), query: parse_query(""), params: HashMap::new(), content_type: "multipart/form-data; boundary=B".into(), content_length: None, headers: vec![], body: &mut body };
             router.dispatch(&mut r).status
         });
@@ -441,9 +440,7 @@ mod tests {
         let st = state(&t);
         let router = router(st.clone());
         st.staging.stage_new("书.PDF", b"%PDF-1").unwrap();
-        let mut empty: &[u8] = b"";
-        let mut r = Request { method: Method::Get, path: "/staging/file".into(), query: parse_query("name=%E4%B9%A6.PDF"), params: HashMap::new(), content_type: String::new(), content_length: None, headers: vec![], body: &mut empty };
-        let rep = router.dispatch(&mut r);
+        let rep = TestRequest::new(Method::Get, "/staging/file").query_string("name=%E4%B9%A6.PDF").content_length(None).dispatch(&router);
         assert_eq!((rep.status, rep.content_type.as_str()), (200, "application/pdf"), "扩展名大小写不敏感");
         let h = |k: &str| rep.headers.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone()).unwrap_or_default();
         assert_eq!(h("Content-Length"), "6");
@@ -452,9 +449,7 @@ mod tests {
 
     /// `POST /import` 带原始字节体（查询串取参）。
     fn post_raw(router: &Router, query: &str, body: &[u8]) -> (u16, serde_json::Value) {
-        let mut b = body;
-        let mut r = Request { method: Method::Post, path: "/import".into(), query: parse_query(query), params: HashMap::new(), content_type: "application/epub+zip".into(), content_length: Some(body.len()), headers: vec![], body: &mut b };
-        let rep = router.dispatch(&mut r);
+        let rep = TestRequest::new(Method::Post, "/import").query_string(query).content_type("application/epub+zip").body(body).dispatch(router);
         (rep.status, serde_json::from_slice(&rep.body).unwrap_or(serde_json::Value::Null))
     }
 
