@@ -461,3 +461,38 @@ mod tests {
         assert_eq!(all.len(), 3, "since=0（补记全库）不设 mtime 下限");
     }
 }
+
+#[cfg(test)]
+mod bench {
+    use super::*;
+
+    /// 手动跑：`cargo test --release --lib xochitl::library::bench -- --ignored --nocapture`
+    #[test]
+    #[ignore = "性能测量，手动跑"]
+    fn scan_2000_docs() {
+        let t = tempfile::tempdir().unwrap();
+        let d = t.path();
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(86_400);
+        for i in 0..2000 {
+            let p = d.join(format!("{i:08}-0000-4000-8000-000000000000.metadata"));
+            std::fs::write(&p, format!(r#"{{"visibleName":"书{i}","type":"DocumentType","parent":"","createdTime":"1700000000000","lastModified":"1700000000000","lastOpened":"0","lastOpenedPage":12,"pinned":false,"synced":true,"version":3,"deleted":false,"metadatamodified":false,"modified":false}}"#)).unwrap();
+            std::fs::File::options().write(true).open(&p).unwrap().set_modified(old).unwrap();
+        }
+        for i in 0..50 {
+            std::fs::write(d.join(format!("f{i:07}-0000-4000-8000-000000000000.metadata")), format!(r#"{{"visibleName":"夹{i}","type":"CollectionType","parent":""}}"#)).unwrap();
+        }
+        let time = |label: &str, n: u32, f: &dyn Fn()| {
+            f();
+            let t0 = std::time::Instant::now();
+            for _ in 0..n {
+                f();
+            }
+            println!("{label}: {:.2} ms/次", t0.elapsed().as_secs_f64() * 1000.0 / n as f64);
+        };
+        time("find_folder_by_name", 20, &|| assert!(find_folder_by_name(d, "夹49").is_some()));
+        time("list_folders", 20, &|| assert_eq!(list_folders(d).len(), 50));
+        time("live_entries", 20, &|| assert_eq!(live_entries(d).len(), 2050));
+        let since = crate::clock::now_ms() - 60_000;
+        time("find_documents_since(1 分钟内)", 20, &|| assert!(find_documents_since(d, since).is_empty()));
+    }
+}
