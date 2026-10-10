@@ -1,0 +1,15 @@
+[package]
+name = "notesvc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "笔记线服务共用件：访问 ink-serve 条目库的唯一 HTTP 客户端（转写/脑/本三服务共用）+ 带日志的配置读取"
+
+[dependencies]
+rmsvc-core = { path = "../../../rmsvc-core" }
+notecore = { path = "../notecore" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"

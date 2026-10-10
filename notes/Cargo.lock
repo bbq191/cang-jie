@@ -558,6 +558,7 @@ dependencies = [
  "epubmap",
  "image",
  "notecore",
+ "notesvc",
  "rmsvc-core",
  "rmv6",
  "serde",
@@ -643,11 +644,11 @@ name = "mind-serve"
 version = "0.1.0"
 dependencies = [
  "notecore",
+ "notesvc",
  "rmsvc-core",
  "serde",
  "serde_json",
  "tempfile",
- "ureq",
  "vendorcfg",
 ]
 
@@ -702,13 +703,13 @@ name = "note-serve"
 version = "0.1.0"
 dependencies = [
  "notecore",
+ "notesvc",
  "rmsvc-core",
  "rmv6",
  "serde",
  "serde_json",
  "tempfile",
  "tiny_http 0.12.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "ureq",
  "uuid",
  "zip",
 ]
@@ -720,6 +721,17 @@ dependencies = [
  "rmv6",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "notesvc"
+version = "0.1.0"
+dependencies = [
+ "notecore",
+ "rmsvc-core",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -1295,11 +1307,11 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "notecore",
+ "notesvc",
  "rmsvc-core",
  "serde",
  "serde_json",
  "tempfile",
- "ureq",
  "vendorcfg",
 ]
 
