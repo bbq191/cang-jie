@@ -19,6 +19,10 @@
 
 # shellcheck disable=SC1091
 . "$HERE/devlib.sh"
+# 生成的目录/文件（cangjie-ime/、reading-qol.json、待换入区、备份）权限不随调用方 umask 走：umask 000 时待换入区会变成
+# 全局可写，里面的 .so 随后被换进 extensions.d、由 root 的 xochitl 加载（2026-10-10）。本文件由包装脚本在它自己的
+# 进程里 source，不影响别处。
+umask 022
 
 NO_RESTART=0
 for a in "$@"; do

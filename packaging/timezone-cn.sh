@@ -20,6 +20,7 @@
 # 不拖垮 install-all.sh 其它步骤）。
 # ═══════════════════════════════════════════════════════════════════════════
 set -u
+umask 022   # 改前记录 timezone-cn.log 等生成文件的权限不随调用方 umask 走
 
 # 下面几个路径只为本机模拟测试（packaging/tests）可覆盖，设备上一律用默认值
 TARGET="${CJ_ZONEINFO:-/usr/share/zoneinfo/Asia/Shanghai}"

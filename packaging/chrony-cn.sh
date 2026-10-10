@@ -23,13 +23,13 @@
 # 设备没有 chronyc、busybox 没有 ntpd，验收看 timedatectl + journal。
 # ═══════════════════════════════════════════════════════════════════════════
 set -u
+umask 022   # 改写出来的 chrony.conf 权限不随调用方 umask 走（下面还会显式 chmod 644）
 
 SERVERS="ntp.aliyun.com ntp.tencent.com cn.pool.ntp.org time.cloudflare.com"
 # 下面几个路径只为本机模拟测试（packaging/tests）可覆盖，设备上一律用默认值
 CONF="${CJ_CHRONY_CONF:-/etc/chrony.conf}"
 BK_DIR="${CJ_BACKUP_DIR:-/home/root/cangjie-backups}"
 MOUNTS="${CJ_MOUNTS:-/proc/mounts}"
-TMPD="${CJ_TMPDIR:-/tmp}"
 
 command -v cj_etc_lower_edit >/dev/null 2>&1 || { echo "!! 缺 devlib.sh：cat packaging/devlib.sh packaging/chrony-cn.sh | ssh root@10.11.99.1 sh -s"; exit 1; }
 [ "$(id -u)" = "0" ] || { echo "!! 需 root"; exit 1; }
@@ -44,7 +44,7 @@ rewrite() { # $1=源 $2=目标：第一条 server 行处换成 4 条国内，其
         BEGIN { n = split(servers, S, " ") }
         /^server / { if (!done) { for (i = 1; i <= n; i++) print "server " S[i] " iburst minpoll 7"; done = 1 }; next }
         { print }
-        END { if (!done) for (i = 1; i <= n; i++) print "server " S[i] " iburst minpoll 7" }' "$1" > "$2"
+        END { if (!done) for (i = 1; i <= n; i++) print "server " S[i] " iburst minpoll 7" }' "$1" > "$2" && chmod 644 "$2"
 }
 
 changed=0
@@ -63,7 +63,13 @@ edit_lower() {
         echo "-- rootfs 底层已改（备份在 $BK_DIR）"
         changed=1
     fi
-    cp "$LOWER" "$TMPD/chrony-cn.lower"   # 卸 bind 前把底层内容拷出来，下面用来同步 overlay 当前视图
+    # overlay 视图与底层不一致（overlay 缓存）→ 趁 bind 还在，把底层内容拷进当前视图（落 upper tmpfs）让本次开机立即生效。
+    # 旧版先把底层拷到 /tmp/chrony-cn.lower（固定名，root 写 /tmp 下可预测路径会跟随符号链接），卸 bind 后再拷；
+    # 现在直接从绑定点拷，不再经过 /tmp（2026-10-10）
+    if ! cmp -s "$LOWER" "$CONF"; then
+        cp "$LOWER" "$CONF" && echo "-- 已同步进 overlay（本次开机立即生效）" && changed=1
+    fi
+    return 0
 }
 if grep -q " /etc overlay " "$MOUNTS"; then
     # ── overlay：改 rootfs 底层 ──
@@ -72,16 +78,16 @@ if grep -q " /etc overlay " "$MOUNTS"; then
     if [ "$rc" = 3 ]; then
         echo "   只改本次开机的 overlay 视图（重启会丢）"
     elif [ "$rc" != 0 ]; then
-        rm -f "$TMPD/chrony-cn.lower"; exit 1
-    elif ! cmp -s "$TMPD/chrony-cn.lower" "$CONF"; then
-        # overlay 视图与底层不一致（overlay 缓存）→ 拷进 upper 让本次开机立即生效
-        cp "$TMPD/chrony-cn.lower" "$CONF" && echo "-- 已同步进 overlay（本次开机立即生效）" && changed=1
+        exit 1
     fi
-    rm -f "$TMPD/chrony-cn.lower"
 fi
 # 非 overlay 或 verity：直接改 /etc 视图（幂等）
 if ! is_cn "$CONF"; then
-    rewrite "$CONF" "$CONF.new" && mv "$CONF.new" "$CONF" && changed=1 && echo "-- /etc 视图已改"
+    if rewrite "$CONF" "$CONF.new" && mv "$CONF.new" "$CONF"; then
+        changed=1; echo "-- /etc 视图已改"
+    else
+        rm -f "$CONF.new"; echo "!! 改 $CONF 失败"; exit 1
+    fi
 fi
 
 synced() { timedatectl 2>/dev/null | grep -q "synchronized: yes"; }
