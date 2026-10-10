@@ -51,7 +51,8 @@ pub enum ChapterOutcome {
     Unchanged,
     /// 这一章没有可投影的条目（全部待转写占位也算"有"，这里指真的一条都没有/全撤销）。
     Empty,
-    Failed { error: String },
+    /// 失败原因字段叫 `message`：与网关批量/清理的失败项 `{name?, message}` 同名（2026-10-10 审计 FE-4，此前叫 `error`）。
+    Failed { message: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -72,7 +73,7 @@ pub struct Ctx<'a> {
 /// 生成/校验一章。`book` 由调用方先取好（`generate_book` 一次取书、对每章调用它，避免重复请求 ink-serve）。
 pub fn generate_chapter(c: &Ctx, book: &Book, idx: usize) -> ChapterResult {
     let Some(title) = book.chapters.get(idx).cloned() else {
-        return ChapterResult { chapter: idx, title: String::new(), outcome: ChapterOutcome::Failed { error: "没有这一章".into() } };
+        return ChapterResult { chapter: idx, title: String::new(), outcome: ChapterOutcome::Failed { message: "没有这一章".into() } };
     };
     let Some(paragraphs) = project_chapter(book, idx) else {
         // `project_chapter` 返回 `None` 有两种不同的原因，处理方式不能一样（2026-09-17 真机 bug
@@ -118,7 +119,7 @@ pub fn generate_chapter(c: &Ctx, book: &Book, idx: usize) -> ChapterResult {
 
     let outcome = match outcome {
         Ok(doc_uuid) => ChapterOutcome::Generated { doc_uuid },
-        Err(error) => ChapterOutcome::Failed { error },
+        Err(message) => ChapterOutcome::Failed { message },
     };
     ChapterResult { chapter: idx, title, outcome }
 }
@@ -379,7 +380,7 @@ mod tests {
 
         let results = generate_book(&store, &ctx(&uploader, &trash, &state, 1000), "book1").unwrap();
         match &results[0].outcome {
-            ChapterOutcome::Failed { error } => assert!(error.contains("模拟上传失败")),
+            ChapterOutcome::Failed { message } => assert!(message.contains("模拟上传失败")),
             other => panic!("应失败: {other:?}"),
         }
         assert!(state.get("book1", 0).is_none(), "失败不留状态，下次还会照常重试");
@@ -405,7 +406,7 @@ mod tests {
 
         let results = generate_book(&store, &ctx(&uploader, &trash, &state, 1000), "book1").unwrap();
         match &results[0].outcome {
-            ChapterOutcome::Failed { error } => assert!(error.contains("模拟认领失败")),
+            ChapterOutcome::Failed { message } => assert!(message.contains("模拟认领失败")),
             other => panic!("应失败: {other:?}"),
         }
         assert_eq!(uploader.uploads.lock().unwrap().len(), 1, "upload() 已经真实执行过一次——这就是孤儿文档风险的来源，不是没发生任何事");
@@ -456,6 +457,16 @@ mod tests {
         let results2 = generate_book(&store2, &ctx(&uploader, &trash, &state, 2000), "book1").unwrap();
         assert_eq!(results2[0].outcome, ChapterOutcome::Empty, "这次没有条目要笔记本，仍然是 Empty");
         assert!(state.get("book1", 0).is_some(), "但条目没死，历史记录不该被清掉——设备上的文档还在");
+    }
+
+    /// 线上形状（网页按 `status` 分支、失败读 `message`）。
+    #[test]
+    fn chapter_result_wire_shape() {
+        let r = |outcome| serde_json::to_value(ChapterResult { chapter: 2, title: "三".into(), outcome }).unwrap();
+        assert_eq!(r(ChapterOutcome::Failed { message: "坏了".into() }), serde_json::json!({"chapter": 2, "title": "三", "status": "failed", "message": "坏了"}));
+        assert_eq!(r(ChapterOutcome::Generated { doc_uuid: "d".into() }), serde_json::json!({"chapter": 2, "title": "三", "status": "generated", "doc_uuid": "d"}));
+        assert_eq!(r(ChapterOutcome::Unchanged)["status"], "unchanged");
+        assert_eq!(r(ChapterOutcome::Empty)["status"], "empty");
     }
 
     #[test]
