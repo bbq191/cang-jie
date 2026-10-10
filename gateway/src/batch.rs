@@ -675,4 +675,31 @@ mod tests {
         assert!(status().get("queuedCount").is_none());
         *lock() = saved;
     }
+
+    /// 线上格式快照（2026-10-10，GW-1）：`GET /api/batch/status`、`POST /api/batch/stop` 的字段，网页母版库底栏读它们。
+    #[test]
+    fn wire_snapshot_status_and_stop() {
+        let _g = rmsvc_core::sync::lock(&GLOBAL_STATE);
+        let saved = std::mem::take(&mut *lock());
+        {
+            let mut st = lock();
+            st.current = Some(Job { action: Action::Deliver, name: "b.epub".into(), folder: String::new() });
+            st.queue.push_back(Job { action: Action::Deliver, name: "c.epub".into(), folder: "漫画".into() });
+            st.total = 3;
+            st.done = 1;
+            st.failed.push(("a.epub".into(), "boom".into()));
+            st.worker_alive = true;
+        }
+        assert_eq!(
+            serde_json::to_value(status()).unwrap(),
+            json!({"running": true, "waitingService": false, "action": "deliver", "total": 3, "done": 1, "current": "b.epub", "queued": ["c.epub"], "failed": [{"name": "a.epub", "message": "boom"}]})
+        );
+        let t = tempfile::tempdir().unwrap();
+        let paths = Paths::sandbox(t.path());
+        let mut b: &[u8] = b"";
+        let mut r = Request { method: rmsvc_core::http::Method::Post, path: "/api/batch/stop".into(), query: Default::default(), params: Default::default(), content_type: String::new(), content_length: None, headers: vec![], body: &mut b };
+        let rep = stop_route(&paths, &mut r).unwrap();
+        assert_eq!(serde_json::from_slice::<Value>(&rep.body).unwrap(), json!({"cleared": 1}));
+        *lock() = saved;
+    }
 }

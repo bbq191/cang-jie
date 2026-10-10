@@ -252,4 +252,26 @@ Id=book-serve.service\nLoadState=not-found\nActiveState=inactive\nSubState=dead\
         assert!(v["home"]["freeBytes"].as_u64().is_some(), "临时目录所在分区应可查");
         assert!(v["uptimeSecs"].is_null() && v["xochitl"]["readable"] == false);
     }
+
+    /// 线上格式快照（2026-10-10，GW-1）：`GET /api/device/health` 的字段（随时间变的 `at` 与分区容量单独核对类型后抹掉）。
+    #[test]
+    fn wire_snapshot_collect() {
+        let t = tempfile::tempdir().unwrap();
+        let paths = Paths::sandbox(t.path());
+        let mut v = serde_json::to_value(collect(&paths, &t.path().join("proc"), Err("x".into()), None)).unwrap();
+        assert!(v["at"].as_u64().is_some() && v["home"]["freeBytes"].as_u64().is_some() && v["home"]["totalBytes"].as_u64().is_some());
+        v["at"] = 0.into();
+        v["home"] = serde_json::json!({"freeBytes": 0, "totalBytes": 0});
+        v["units"] = v["units"][0].clone();
+        assert_eq!(
+            v,
+            serde_json::json!({
+                "uptimeSecs": null, "systemctlError": "x",
+                "units": {"unit": "xochitl.service", "load": "", "active": "", "sub": "", "nRestarts": null, "pid": null, "rssKb": null, "hwmKb": null, "startedAtMs": null, "startMs": null},
+                "xochitl": {"readable": false, "xovi": false, "extensions": [], "deleted": []},
+                "soPending": [], "prevBoot": null, "home": {"freeBytes": 0, "totalBytes": 0},
+                "firmware": {"state": "pending"}, "at": 0,
+            })
+        );
+    }
 }

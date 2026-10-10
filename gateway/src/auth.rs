@@ -460,4 +460,19 @@ mod tests {
             assert!(!is_local_path(bad), "{bad:?}");
         }
     }
+
+    /// 线上格式快照（2026-10-10，GW-1）：网页/CLI 读这几个 JSON 应答的字段，改成 DTO 前后必须逐字段相同。
+    #[test]
+    fn wire_snapshot_json_replies() {
+        let body = |r: &Reply| serde_json::from_slice::<serde_json::Value>(&r.body).unwrap();
+        let st = state(false);
+        assert_eq!(body(&st.session_info()), serde_json::json!({"ok": true, "mustChange": false}));
+        let mut b: &[u8] = br#"{"password":"secret1"}"#;
+        let rep = st.login(&mut req(Method::Post, "/login", "application/json", &[], &mut b)).unwrap();
+        assert_eq!(body(&rep), serde_json::json!({"ok": true, "mustChange": false, "next": "/"}));
+        let basic = format!("Basic {}", base64::Engine::encode(&base64::engine::general_purpose::STANDARD, "cli:secret1"));
+        let mut b: &[u8] = br#"{"new":"longer1"}"#;
+        let rep = st.change_password(&mut req(Method::Post, "/password", "application/json", &[("Authorization", &basic)], &mut b)).unwrap();
+        assert_eq!(body(&rep), serde_json::json!({"ok": true, "message": "密码已更新"}));
+    }
 }

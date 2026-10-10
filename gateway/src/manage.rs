@@ -214,4 +214,26 @@ mod tests {
             assert!(v.get(k).is_none(), "{k} 不该再出现在基石探测里");
         }
     }
+
+    /// 线上格式快照（2026-10-10，GW-1）：`GET /api/manage` / `/api/foundation` / `/api/services` 的字段。
+    #[test]
+    fn wire_snapshot_manage_foundation_services() {
+        let t = tempfile::tempdir().unwrap();
+        let paths = Paths::sandbox(t.path());
+        std::fs::create_dir_all(paths.bin_dir()).unwrap();
+        std::fs::write(paths.bin_dir().join("book-serve"), b"x").unwrap();
+        let body = |r: Reply| serde_json::from_slice::<serde_json::Value>(&r.body).unwrap();
+        let v = body(status(&paths));
+        assert_eq!(v["gateway"], serde_json::json!({"running": true}));
+        assert_eq!(v["modules"].as_array().unwrap().len(), MODULES.len());
+        assert_eq!(v["modules"][0], serde_json::json!({"seg": "books", "service": "book-serve", "only": "book", "label": "母版库 / 落原生", "installed": true, "running": false}));
+        assert_eq!(v.as_object().unwrap().len(), 2);
+        assert_eq!(body(foundation(&paths)), serde_json::json!({"xovi": false, "qrr": false}));
+        let reg = registry::ServiceInfo { name: "font-serve".into(), port: 7, label: "字体".into(), version: "1".into(), pid: std::process::id(), ui: None };
+        let _r = registry::register(&paths, &reg).unwrap();
+        let v = body(services(&paths));
+        let mut want = serde_json::to_value(&reg).unwrap();
+        want["seg"] = "fonts".into();
+        assert_eq!(v, serde_json::json!({"services": [want]}));
+    }
 }

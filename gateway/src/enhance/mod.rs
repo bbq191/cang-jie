@@ -98,4 +98,20 @@ mod tests {
         let q = qol::Qol::load(&paths);
         assert!(q.tap_page_turn() && q.notes_import_md_enabled());
     }
+
+    /// 线上格式快照（2026-10-10，GW-1）：`GET /api/enhance/status`（「管理」页开关、笔记页「导入 md」可见性读它）。
+    /// 开发机/CI 上没有 xochitl 进程，`loaded` 是全空的那一份。
+    #[test]
+    fn wire_snapshot_status() {
+        let t = tempfile::tempdir().unwrap();
+        let paths = Paths::sandbox(t.path());
+        let v: serde_json::Value = serde_json::from_slice(&status(&paths).body).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({
+                "hlSnapCjk": true, "notesImportMdEnabled": false, "tapPageTurn": false,
+                "loaded": {"xochitl": false, "xovi": false, "extensions": [], "qmds": [], "qmdsPending": []},
+            })
+        );
+    }
 }

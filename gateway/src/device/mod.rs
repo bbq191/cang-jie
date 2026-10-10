@@ -135,4 +135,32 @@ mod tests {
         assert_eq!(v["ok"], false);
         assert!(!done.join("a.epub").exists());
     }
+
+    /// 线上格式快照（2026-10-10，GW-1）：`GET /api/device/cleanup` 的字段（「设备健康 → 清理」读它）。
+    #[test]
+    fn wire_snapshot_cleanup_list() {
+        let t = tempfile::tempdir().unwrap();
+        let paths = Paths::sandbox(t.path());
+        let done = cleanup::areas(&paths)[0].1.clone();
+        std::fs::create_dir_all(&done).unwrap();
+        std::fs::write(done.join("a.epub"), b"xy").unwrap();
+        std::fs::File::options().write(true).open(done.join("a.epub")).unwrap().set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1000)).unwrap();
+        let x = paths.xochitl_dir();
+        std::fs::create_dir_all(&x).unwrap();
+        let u = "00000002-1111-1111-1111-111111111111";
+        std::fs::write(x.join(format!("{u}.metadata")), r#"{"type":"DocumentType","visibleName":"书","parent":"","createdTime":"5"}"#).unwrap();
+        std::fs::write(x.join(format!("{u}.pdf")), b"pdf").unwrap();
+        let mut b: &[u8] = b"";
+        let mut r = Request { method: Method::Get, path: "/api/device/cleanup".into(), query: HashMap::new(), params: HashMap::new(), content_type: String::new(), content_length: None, headers: vec![], body: &mut b };
+        let v: serde_json::Value = serde_json::from_slice(&cleanup_list(&paths, &mut r).unwrap().body).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({
+                "files": [{"area": "books-done", "name": "a.epub", "bytes": 2, "mtime": 1000}],
+                "library": [{"uuid": u, "name": "书", "folder": "", "kind": "pdf", "bytes": 3, "createdMs": 5, "sameName": 1}],
+                "trashAgent": false,
+                "xochitl": false,
+            })
+        );
+    }
 }
