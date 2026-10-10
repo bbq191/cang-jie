@@ -115,9 +115,9 @@ fn busy_lock_blocks_second_start_and_conflicting_delete_deliver() {
     let busy = s.busy_guard("x.epub", "").expect("第一次加锁应该成功");
     assert!(s.busy_guard("x.epub", "").is_err(), "已经忙着，第二次应该失败");
     assert!(s.is_busy("x.epub"));
-    assert!(s.remove("x.epub").unwrap_err().contains("正在处理中"), "忙的时候不该能删");
+    assert!(matches!(s.remove("x.epub").unwrap_err(), Error::Conflict(m) if m.contains("正在处理中")), "忙的时候不该能删（409）");
     let bus = Arc::new(rmsvc_core::events::EventBus::new());
-    assert!(s.spawn_deliver("x.epub", "", &crate::jobs::Jobs::default(), bus).unwrap_err().contains("正在处理中"), "忙的时候不该能起第二个落库");
+    assert!(matches!(s.spawn_deliver("x.epub", "", &crate::jobs::Jobs::default(), bus).unwrap_err(), Error::Conflict(m) if m.contains("正在处理中")), "忙的时候不该能起第二个落库");
     assert!(s.list().iter().find(|e| e.name == "x.epub").unwrap().busy, "GET /staging 列表应体现 busy");
     drop(busy);
     assert!(!s.is_busy("x.epub"));
@@ -133,7 +133,7 @@ fn spawn_deliver_runs_in_background_records_result_then_clears_busy() {
     s.spawn_deliver("d.pdf", "", &crate::jobs::Jobs::default(), bus).unwrap();
     assert!(s.is_busy("d.pdf"), "spawn 返回时忙锁应已生效");
     let bus2 = Arc::new(rmsvc_core::events::EventBus::new());
-    assert!(s.spawn_deliver("d.pdf", "", &crate::jobs::Jobs::default(), bus2).unwrap_err().contains("正在处理中"));
+    assert!(matches!(s.spawn_deliver("d.pdf", "", &crate::jobs::Jobs::default(), bus2).unwrap_err(), Error::Conflict(m) if m.contains("正在处理中")));
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     while s.is_busy("d.pdf") && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(10));
@@ -151,9 +151,9 @@ fn spawn_deliver_rejects_bad_format_synchronously_without_busy_lock() {
     let s = staging(&t);
     s.stage_new("c.cbz", b"PK").unwrap();
     let bus = Arc::new(rmsvc_core::events::EventBus::new());
-    assert!(s.spawn_deliver("c.cbz", "", &crate::jobs::Jobs::default(), bus.clone()).unwrap_err().contains("只读 EPUB / PDF"));
+    assert!(matches!(s.spawn_deliver("c.cbz", "", &crate::jobs::Jobs::default(), bus.clone()).unwrap_err(), Error::Invalid(m) if m.contains("只读 EPUB / PDF")));
     assert!(!s.is_busy("c.cbz"), "校验失败不该留下忙锁");
-    assert!(s.spawn_deliver("none.epub", "", &crate::jobs::Jobs::default(), bus).is_err());
+    assert!(matches!(s.spawn_deliver("none.epub", "", &crate::jobs::Jobs::default(), bus), Err(Error::NotFound(_))), "母版库里没有 → 404");
 }
 
 /// 造一本多卷合集漫画（带 NCX 分卷目录），塞进 mini_epub 装不了的二进制字节所以这里直接手搓 zip——
@@ -393,9 +393,9 @@ fn remove_holds_busy_lock_and_releases_it() {
     s.stage_new("r.epub", b"x").unwrap();
     s.remove("r.epub").unwrap();
     assert!(!s.is_busy("r.epub") && !s.has("r.epub"), "删完释放忙锁");
-    assert!(s.remove("r.epub").is_err(), "已删再删报错");
+    assert!(matches!(s.remove("r.epub"), Err(Error::NotFound(_))), "已删再删：404");
     assert!(!s.is_busy("r.epub"), "失败也释放忙锁");
-    assert!(s.remove("../x").is_err() && !s.is_busy("../x"), "非法名不占锁");
+    assert!(matches!(s.remove("../x"), Err(Error::Invalid(_))) && !s.is_busy("../x"), "非法名不占锁");
 }
 
 #[test]
@@ -784,13 +784,13 @@ fn rename_keeps_format_moves_sidecar_and_refuses_conflicts() {
     assert!(!dir.join("a.epub").exists());
     assert!(crate::sidecar::read(&dir.join("新名字.epub")).is_some_and(|d| d.native.is_some()), "落库记录跟着改名");
 
-    assert!(s.rename("新名字.epub", "b").unwrap_err().contains("已有《b.epub》"));
+    assert!(matches!(s.rename("新名字.epub", "b").unwrap_err(), Error::Conflict(m) if m.contains("已有《b.epub》")));
     assert_eq!(s.rename("新名字.epub", "x.pdf").unwrap(), "x.pdf.epub", "不能借改名改格式：别的扩展名只当名字的一部分");
-    assert!(s.rename("x.pdf.epub", "../evil").is_err(), "路径分隔符拒绝");
-    assert!(s.rename("x.pdf.epub", " ").unwrap_err().contains("不能为空"));
+    assert!(matches!(s.rename("x.pdf.epub", "../evil"), Err(Error::Invalid(_))), "路径分隔符拒绝");
+    assert!(matches!(s.rename("x.pdf.epub", " ").unwrap_err(), Error::Invalid(m) if m.contains("不能为空")));
 
     let _busy = s.busy_guard("b.epub", "").unwrap();
-    assert!(s.rename("b.epub", "c").unwrap_err().contains("正在处理中"));
+    assert!(matches!(s.rename("b.epub", "c").unwrap_err(), Error::Conflict(m) if m.contains("正在处理中")));
 }
 
 #[test]
@@ -803,7 +803,7 @@ fn open_for_download_returns_file_and_length() {
     let mut buf = Vec::new();
     f.read_to_end(&mut buf).unwrap();
     assert_eq!((buf.as_slice(), n), (&b"hello"[..], 5));
-    assert!(s.open_for_download("nope.epub").is_err());
+    assert!(matches!(s.open_for_download("nope.epub"), Err(Error::NotFound(_))));
 }
 
 /// 「首次打开才渲染」的书被打开后，列表把 onopen 升级成 ok，并**写回边车**——之后的列表不再去读 xochitl 的 `.content`。

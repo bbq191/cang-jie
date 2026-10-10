@@ -61,9 +61,9 @@ impl Staging {
     }
 
     /// 落库前的零耗时校验：xochitl 读得了的格式 + 书还在母版库。返回路径。
-    fn deliverable(&self, name: &str) -> Result<PathBuf, String> {
+    fn deliverable(&self, name: &str) -> Result<PathBuf, Error> {
         if !formats::has_ext(name, formats::NATIVE_EXTS) {
-            return Err("xochitl 只读 EPUB / PDF".into());
+            return Err(Error::Invalid("xochitl 只读 EPUB / PDF".into()));
         }
         self.existing(name)
     }
@@ -102,7 +102,7 @@ impl Staging {
     /// 真正结果通过 `bus` 的 `books`/`staging` 事件 + `GET /staging` 列表里这条目的 `delivered.deliver`（[`sidecar::DeliverCheck`]）
     /// 异步呈现。排队期间忙锁一直占着（网页显示"处理中"，删除 / 改名 / 再次加入都被拦下）。渲染自检、`mark_delivered` 全部在
     /// 作业内部完成，不劳 HTTP 层操心；渲染自检要等最多 10 分钟，另起线程跑，不占着队列。panic 由 `catch_unwind` 兜住，转成失败记录。
-    pub fn spawn_deliver(&self, name: &str, folder: &str, jobs: &Jobs, bus: Arc<rmsvc_core::events::EventBus>) -> Result<(), String> {
+    pub fn spawn_deliver(&self, name: &str, folder: &str, jobs: &Jobs, bus: Arc<rmsvc_core::events::EventBus>) -> Result<(), Error> {
         self.deliverable(name)?;
         let busy = self.busy_guard(name, "")?;
         let now = rmsvc_core::clock::now_secs();
@@ -131,7 +131,7 @@ impl Staging {
         if let Err(e) = queued {
             // 作业连同忙锁一起被丢弃了：把边车里的 pending 收成失败，别让网页一直显示"处理中"
             let _ = self.set_deliver_check(name, sidecar::DeliverCheck { status: DeliverStatus::Failed, message: e.clone(), at: now });
-            return Err(e);
+            return Err(Error::Io(e));
         }
         Ok(())
     }

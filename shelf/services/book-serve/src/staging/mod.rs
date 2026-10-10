@@ -5,6 +5,7 @@
 //! 目录 `$XDG_STATE_HOME/shelf/books/staging/`（/home 分区，重启/OTA 不丢；**不套 LRU 淘汰**，留住用户还没落库的书）。
 //! 落库记录是同目录隐藏 sidecar `.<name>.delivered`（`sidecar` 模块管读写；本模块只在落库/删书时调它）。
 use crate::delivery::XochitlDelivery;
+use crate::error::Error;
 use crate::ops::{OpGuard, OpRegistry};
 use rmsvc_core::fs::ScratchFile;
 use crate::sidecar::{self, Delivered, RenderCheck};
@@ -196,8 +197,8 @@ impl Staging {
         self.ops.is_busy(name)
     }
     /// 给条目加忙锁（见 [`OpGuard`]，离开作用域自动解锁）；已经忙着 → 统一的"正在处理中"提示，`extra` 是各自的后缀。
-    pub(crate) fn busy_guard(&self, name: &str, extra: &str) -> Result<OpGuard, String> {
-        self.ops.try_guard(name).ok_or_else(|| busy_err(name, extra))
+    pub(crate) fn busy_guard(&self, name: &str, extra: &str) -> Result<OpGuard, Error> {
+        self.ops.try_guard(name).ok_or_else(|| Error::Conflict(busy_err(name, extra)))
     }
     pub fn dir(&self) -> &Path {
         &self.dir
@@ -218,17 +219,17 @@ impl Staging {
     }
 
     /// 母版库里某本书的路径（校验单段文件名）。
-    fn path_of(&self, name: &str) -> Result<PathBuf, String> {
-        Ok(self.dir.join(plain_name(name)?))
+    fn path_of(&self, name: &str) -> Result<PathBuf, Error> {
+        Ok(self.dir.join(plain_name(name).map_err(Error::Invalid)?))
     }
     /// 母版库里是否还有这本书。
     pub fn has(&self, name: &str) -> bool {
         self.existing(name).is_ok()
     }
-    fn existing(&self, name: &str) -> Result<PathBuf, String> {
+    fn existing(&self, name: &str) -> Result<PathBuf, Error> {
         let p = self.path_of(name)?;
         if !p.is_file() {
-            return Err("母版库里没有这本书".into());
+            return Err(Error::NotFound("母版库里没有这本书".into()));
         }
         Ok(p)
     }

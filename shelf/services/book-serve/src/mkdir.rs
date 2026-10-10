@@ -22,6 +22,7 @@
 //! 持久化、入队去重、剔除、交给代理、交满次数放弃这一整套委托 `pending_queue::AgentQueue<T>`（2026-09-09 消重复、2026-10-10
 //! 再合并 `pending` 流程，跟 `trash.rs` 是同一份基础设施，见该模块文档）；这里只留领域校验（名字合法性/文件夹是否已存在）。
 use crate::agent_failures::{AgentFailures, FailureKind};
+use crate::error::Error;
 use crate::pending_queue::{AgentItem, AgentQueue, HANDOUT_MAX_ATTEMPTS};
 use serde::{Deserialize, Serialize};
 use rmsvc_core::xochitl::{find_child_folder, folder_keys, is_uuid_shape};
@@ -101,24 +102,25 @@ impl MkdirQueue {
     /// `visibleName` 字符串整体比较，folder 的文件系统路径只走 uuid，从不落到名字里。
     ///
     /// 建在书库根（`POST /mkdir/add`、网页落库用），等于 `add_in("", name)`。
-    pub fn add(&self, name: &str) -> Result<usize, String> {
+    pub fn add(&self, name: &str) -> Result<usize, Error> {
         self.add_in("", name)
     }
 
     /// 在 `parent`（文件夹 uuid，空串＝根）下入队建 `name`：那个父文件夹正下方已经有同名活文件夹 → `Ok(0)`（不用建）；
-    /// 队列里已有同一（父, 名）不重复加；返回入队后的队列长度。`parent` 不是空串也不是 uuid 形状 → `Err`。
-    pub fn add_in(&self, parent: &str, name: &str) -> Result<usize, String> {
+    /// 队列里已有同一（父, 名）不重复加；返回入队后的队列长度。名字为空、`parent` 不是空串也不是 uuid 形状 → [`Error::Invalid`]；
+    /// 写队列失败 → [`Error::Io`]。
+    pub fn add_in(&self, parent: &str, name: &str) -> Result<usize, Error> {
         let name = name.trim();
         if name.is_empty() {
-            return Err("文件夹名不能为空".into());
+            return Err(Error::Invalid("文件夹名不能为空".into()));
         }
         if !parent.is_empty() && !is_uuid_shape(parent) {
-            return Err("上级文件夹 uuid 格式不对".into());
+            return Err(Error::Invalid("上级文件夹 uuid 格式不对".into()));
         }
         if find_child_folder(&self.lib_dir, parent, name).is_some() {
             return Ok(0); // 已经存在，不用建
         }
-        self.q.add(|p| p.parent == parent && p.name == name, || Pending { name: name.to_string(), parent: parent.to_string(), at: rmsvc_core::clock::now_secs() })
+        self.q.add(|p| p.parent == parent && p.name == name, || Pending { name: name.to_string(), parent: parent.to_string(), at: rmsvc_core::clock::now_secs() }).map_err(Error::Io)
     }
 
     /// 待办（QML 代理拉取）：顺手清掉已经真实建出来的（QML 端无需 ack），以及交满次数仍没建出来、放弃的。
@@ -175,7 +177,7 @@ mod tests {
         let lib_dir = lib(&t);
         let q = MkdirQueue::new(&t.path().join("state"), &lib_dir).with_handout_quiet(Duration::ZERO);
 
-        assert!(q.add("").unwrap_err().contains("不能为空"));
+        assert!(matches!(q.add(""), Err(Error::Invalid(m)) if m.contains("不能为空")));
 
         assert_eq!(q.add("《人骨拼圖》").unwrap(), 1);
         assert_eq!(q.add("《人骨拼圖》").unwrap(), 1, "重复入队不翻倍");
@@ -223,7 +225,7 @@ mod tests {
         assert_eq!(q.add_in(P1, "卷01").unwrap(), 1, "根下有同名不算 P1 下有");
         assert_eq!(q.add_in(P1, "卷01").unwrap(), 1, "同一（父, 名）不重复");
         assert_eq!(q.add_in(P2, "卷01").unwrap(), 2, "别的上级下的同名是另一项");
-        assert!(q.add_in("../x", "卷01").unwrap_err().contains("uuid"));
+        assert!(matches!(q.add_in("../x", "卷01"), Err(Error::Invalid(m)) if m.contains("uuid")));
         let it = |parent: &str| MkdirItem { name: "卷01".into(), parent: parent.into() };
         assert_eq!(q.pending().unwrap(), (vec![it(P1), it(P2)], 0));
         // P1 下建出来了：只剔除 P1 那一项

@@ -10,6 +10,7 @@
 //! 持久化、入队去重、剔除、交给代理、交满次数放弃这一整套委托 `pending_queue::AgentQueue<T>`（2026-09-09 消重复、2026-10-10
 //! 再合并 `pending` 流程，跟 `mkdir.rs` 是同一份基础设施，见该模块文档）；这里只留领域校验（uuid 形状/名字核对/是否已在回收站）。
 use crate::agent_failures::{AgentFailures, FailureKind};
+use crate::error::Error;
 use crate::pending_queue::{AgentItem, AgentQueue, HANDOUT_MAX_ATTEMPTS};
 use rmsvc_core::xochitl::Metadata;
 use serde::{Deserialize, Serialize};
@@ -73,21 +74,23 @@ impl TrashQueue {
     }
 
     /// 入队：uuid 必须真在书库且 visibleName 与 `name` 相符（忽略大小写、首尾空白），否则拒绝——错 uuid 就是错删别的书。
-    pub fn add(&self, uuid: &str, name: &str) -> Result<usize, String> {
+    /// 错误种类（2026-10-10）：形状不对 / 名字对不上 → 400；书库里没有 → 404；已在回收站 → 409；读 `.metadata`（可能正被 xochitl
+    /// 改写）或写队列失败 → 500（设备这边的事，过会儿重试即可）。
+    pub fn add(&self, uuid: &str, name: &str) -> Result<usize, Error> {
         if !rmsvc_core::xochitl::is_uuid_shape(uuid) {
-            return Err("uuid 形状不对".into());
+            return Err(Error::Invalid("uuid 形状不对".into()));
         }
-        let m = self.meta(uuid)?.ok_or("书库里没有这份文档")?;
+        let m = self.meta(uuid).map_err(Error::Io)?.ok_or_else(|| Error::NotFound("书库里没有这份文档".into()))?;
         let vis = m.visible_name.clone();
         if !vis.trim().eq_ignore_ascii_case(name.trim()) {
-            return Err(format!("名字对不上（书库里叫《{vis}》），拒绝入队"));
+            return Err(Error::Invalid(format!("名字对不上（书库里叫《{vis}》），拒绝入队")));
         }
         if !m.is_live() {
-            return Err("已经在回收站（或已删除）".into());
+            return Err(Error::Conflict("已经在回收站（或已删除）".into()));
         }
         // `uuid: &str` 是 Copy，两个闭包各自拿一份拷贝就够——不要先转成 String 再共享，
         // 那样第一个闭包借用、第二个闭包要移动，会被借用检查器拦下来。
-        self.q.add(|p| p.uuid == uuid, || Pending { uuid: uuid.to_string(), name: vis, at: rmsvc_core::clock::now_secs() })
+        self.q.add(|p| p.uuid == uuid, || Pending { uuid: uuid.to_string(), name: vis, at: rmsvc_core::clock::now_secs() }).map_err(Error::Io)
     }
 
     /// 待办 uuid（QML 代理拉取）：顺手清掉已进回收站 / 已不存在的，以及交满 [`HANDOUT_MAX_ATTEMPTS`] 次仍没进回收站、
@@ -131,10 +134,10 @@ mod tests {
     fn add_guards_name_and_shape_then_pending_prunes_trashed() {
         let t = tempfile::tempdir().unwrap();
         let q = TrashQueue::new(&t.path().join("state"), &lib(&t)).with_handout_quiet(Duration::ZERO);
-        assert!(q.add("bad", "x").unwrap_err().contains("形状"));
-        assert!(q.add("44444444-4444-4444-4444-444444444444", "x").unwrap_err().contains("没有"));
-        assert!(q.add("22222222-2222-2222-2222-222222222222", "书架自检探针 x").unwrap_err().contains("名字对不上"), "错 uuid 不许入队");
-        assert!(q.add("33333333-3333-3333-3333-333333333333", "已删").unwrap_err().contains("回收站"));
+        assert!(matches!(q.add("bad", "x"), Err(Error::Invalid(m)) if m.contains("形状")));
+        assert!(matches!(q.add("44444444-4444-4444-4444-444444444444", "x"), Err(Error::NotFound(m)) if m.contains("没有")));
+        assert!(matches!(q.add("22222222-2222-2222-2222-222222222222", "书架自检探针 x"), Err(Error::Invalid(m)) if m.contains("名字对不上")), "错 uuid 不许入队");
+        assert!(matches!(q.add("33333333-3333-3333-3333-333333333333", "已删"), Err(Error::Conflict(m)) if m.contains("回收站")));
         assert_eq!(q.add("11111111-1111-1111-1111-111111111111", " 书架自检探针 X ").unwrap(), 1);
         assert_eq!(q.add("11111111-1111-1111-1111-111111111111", "书架自检探针 x").unwrap(), 1, "重复入队不翻倍");
         assert_eq!(q.add("22222222-2222-2222-2222-222222222222", "用户的书").unwrap(), 2);
