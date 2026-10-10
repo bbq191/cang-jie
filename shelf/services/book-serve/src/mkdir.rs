@@ -21,7 +21,7 @@
 //!
 //! 持久化、入队去重、剔除、交给代理、交满次数放弃这一整套委托 `pending_queue::AgentQueue<T>`（2026-09-09 消重复、2026-10-10
 //! 再合并 `pending` 流程，跟 `trash.rs` 是同一份基础设施，见该模块文档）；这里只留领域校验（名字合法性/文件夹是否已存在）。
-use crate::agent_failures::AgentFailures;
+use crate::agent_failures::{AgentFailures, FailureKind};
 use crate::pending_queue::{AgentItem, AgentQueue, HANDOUT_MAX_ATTEMPTS};
 use serde::{Deserialize, Serialize};
 use rmsvc_core::xochitl::{find_child_folder, folder_keys, is_uuid_shape};
@@ -53,7 +53,7 @@ pub struct MkdirItem {
 impl AgentItem for Pending {
     /// （上级 uuid, 名字）：不同上级下的同名文件夹是不同的项。
     type Key = (String, String);
-    const KIND: &'static str = "mkdir";
+    const KIND: FailureKind = FailureKind::Mkdir;
     fn key(&self) -> (String, String) {
         (self.parent.clone(), self.name.clone())
     }
@@ -273,7 +273,7 @@ mod tests {
         }
         assert_eq!(q.pending().unwrap(), (root(&[]), 1), "交满放弃");
         assert!(q.list().is_empty(), "移出队列");
-        assert_eq!(fails.list().iter().map(|f| (f.kind.as_str(), f.name.as_str())).collect::<Vec<_>>(), [("mkdir", "丁")], "放弃记下来给网页看");
+        assert_eq!(fails.list().iter().map(|f| (f.kind, f.name.as_str())).collect::<Vec<_>>(), [(FailureKind::Mkdir, "丁")], "放弃记下来给网页看");
         assert_eq!(q.pending().unwrap(), (root(&[]), 0));
     }
 

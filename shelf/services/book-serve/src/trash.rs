@@ -9,7 +9,7 @@
 //!
 //! 持久化、入队去重、剔除、交给代理、交满次数放弃这一整套委托 `pending_queue::AgentQueue<T>`（2026-09-09 消重复、2026-10-10
 //! 再合并 `pending` 流程，跟 `mkdir.rs` 是同一份基础设施，见该模块文档）；这里只留领域校验（uuid 形状/名字核对/是否已在回收站）。
-use crate::agent_failures::AgentFailures;
+use crate::agent_failures::{AgentFailures, FailureKind};
 use crate::pending_queue::{AgentItem, AgentQueue, HANDOUT_MAX_ATTEMPTS};
 use rmsvc_core::xochitl::Metadata;
 use serde::{Deserialize, Serialize};
@@ -30,7 +30,7 @@ pub struct Pending {
 
 impl AgentItem for Pending {
     type Key = String;
-    const KIND: &'static str = "trash";
+    const KIND: FailureKind = FailureKind::Trash;
     fn key(&self) -> String {
         self.uuid.clone()
     }
@@ -174,7 +174,7 @@ mod tests {
         assert_eq!(q.pending().unwrap(), (vec![], 1), "交满放弃，算一条清掉");
         assert!(q.list().is_empty());
         let f = fails.list();
-        assert_eq!((f.len(), f[0].kind.as_str(), f[0].name.as_str(), f[0].uuid.as_str()), (1, "trash", "用户的书", "22222222-2222-2222-2222-222222222222"), "放弃记下来给网页看");
+        assert_eq!((f.len(), f[0].kind, f[0].name.as_str(), f[0].uuid.as_str()), (1, FailureKind::Trash, "用户的书", "22222222-2222-2222-2222-222222222222"), "放弃记下来给网页看");
         // 重新入队（用户再点一次）从零计数
         q.add("22222222-2222-2222-2222-222222222222", "用户的书").unwrap();
         assert_eq!(q.pending().unwrap().0.len(), 1);

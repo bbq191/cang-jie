@@ -14,10 +14,20 @@ use crate::events as ev;
 /// 最多留几条（最旧的先丢）。
 const KEEP: usize = 20;
 
+/// 放弃的是哪个队列的活。线上 / 落盘都是小写字符串 `trash` / `mkdir`（2026-10-10 前是 `String`，取值只有这两个，
+/// 网页按它挑提示文案）。
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum FailureKind {
+    /// 移进 xochitl 回收站。
+    Trash,
+    /// 在 xochitl 书库建文件夹。
+    Mkdir,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Failure {
-    /// `trash`（移进 xochitl 回收站）/ `mkdir`（在 xochitl 书库建文件夹）。
-    pub kind: String,
+    pub kind: FailureKind,
     /// 书名 / 文件夹名（给人看的）。
     pub name: String,
     /// 书的 uuid（`trash` 才有）。
@@ -37,8 +47,8 @@ impl AgentFailures {
     }
 
     /// 记一条放弃，并通知网页。写盘失败只打日志——放弃本身已经发生，不因记不下来而改变队列行为。
-    pub fn record(&self, kind: &str, name: &str, uuid: &str) {
-        let f = Failure { kind: kind.into(), name: name.into(), uuid: uuid.into(), at: rmsvc_core::clock::now_secs() };
+    pub fn record(&self, kind: FailureKind, name: &str, uuid: &str) {
+        let f = Failure { kind, name: name.into(), uuid: uuid.into(), at: rmsvc_core::clock::now_secs() };
         if let Err(e) = self.q.push_capped(f, KEEP) {
             eprintln!("[book-serve] 记录代理放弃失败: {e}");
         }
@@ -73,15 +83,26 @@ mod tests {
         let log = AgentFailures::new(t.path(), None);
         assert!(log.list().is_empty());
         for i in 0..KEEP + 3 {
-            log.record("mkdir", &format!("夹{i}"), "");
+            log.record(FailureKind::Mkdir, &format!("夹{i}"), "");
         }
         let items = log.list();
         assert_eq!(items.len(), KEEP, "只留最近 {KEEP} 条");
         assert_eq!((items[0].name.as_str(), items[KEEP - 1].name.as_str()), ("夹3", "夹22"), "最旧的先丢，顺序不乱");
-        log.record("trash", "书", "11111111-1111-1111-1111-111111111111");
+        log.record(FailureKind::Trash, "书", "11111111-1111-1111-1111-111111111111");
         assert_eq!(log.list().last().unwrap().uuid, "11111111-1111-1111-1111-111111111111");
         assert_eq!(log.clear().unwrap(), KEEP);
         assert!(log.list().is_empty());
         assert_eq!(log.clear().unwrap(), 0);
+    }
+
+    /// 改成枚举后线上 / 落盘字节不变：设备上已有的 `agent-failures.json` 照常读，网页拿到的 `kind` 还是 `trash` / `mkdir`。
+    #[test]
+    fn kind_wire_format_unchanged() {
+        let t = tempfile::tempdir().unwrap();
+        std::fs::write(t.path().join("agent-failures.json"), r#"[{"kind":"mkdir","name":"夹","at":1},{"kind":"trash","name":"书","uuid":"u","at":2}]"#).unwrap();
+        let log = AgentFailures::new(t.path(), None);
+        let items = log.list();
+        assert_eq!(items.iter().map(|f| f.kind).collect::<Vec<_>>(), [FailureKind::Mkdir, FailureKind::Trash]);
+        assert_eq!(serde_json::to_string(&items[1]).unwrap(), r#"{"kind":"trash","name":"书","uuid":"u","at":2}"#);
     }
 }
