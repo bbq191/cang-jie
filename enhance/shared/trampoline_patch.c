@@ -74,6 +74,19 @@ int cj_patch_target(void *target_addr, void *handler, size_t patch_len, const ch
         return 0;
     }
 
+    /* 被覆盖的指令要原样搬进调用桩：PC 相对的（adrp/b/bl/cbz/ldr literal…）搬过去地址全错，调用原函数时
+     * 会跳飞或读错数据（2026-10-10，审计 EN-2）。放在 mprotect 之后检查：此时页一定可读（目标地址非法时上面已失败返回）。 */
+    for (size_t off = 0; off + 4 <= patch_len; off += 4) {
+        uint32_t insn;
+        memcpy(&insn, (const uint8_t *)target_addr + off, sizeof insn);
+        if (cj_insn_pc_relative(insn)) {
+            fprintf(stderr, "[%s] 被覆盖的第 %zu 条指令 0x%08x 是 PC 相对寻址，搬进调用桩会算错地址，放弃 hook（safe mode）\n",
+                    tag, off / 4 + 1, insn);
+            restore_prot(page_base, region_len, orig_prot, tag);
+            return 0;
+        }
+    }
+
     void *jump_back_target = (uint8_t *)target_addr + patch_len;
     void *stub = make_call_through_stub((const uint8_t *)target_addr, patch_len, jump_back_target);
     if (!stub) {

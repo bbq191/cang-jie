@@ -36,7 +36,9 @@
 
 /* Step HL2：荧光笔"吸整行"元凶——命中区间向两边扩张的函数（.169 FUN_00f05ad0，
  * 中文实测走这条：对每个子区间调 FUN_00f052f0 扩 start/end）→ 整行；对无空格
- * 中文就是"划一小段吸整行"的病根。前 20 字节纯栈/寄存器可安全 patch；offset 32
+ * 中文就是"划一小段吸整行"的病根。前 20 字节纯栈/寄存器可安全 patch（paciasp / stp / mov / str / mov，
+ * 2026-10-10 对 3.28.0.172 的 xochitl 用 objdump 反汇编 0xf03670 再核过；cj_patch_target 现在也会自己拒绝
+ * PC 相对指令，见 shared/trampoline_aarch64.h 的 cj_insn_pc_relative）；offset 32
  * 的 CBZ 在 patch 区外、同版本固定，精确匹配。x0=scene，x1=range 向量。
  * 逐字节抄自 chinese-ime/langhook/src/hook_init.c 的 PROLOGUE_HL_EXPAND，
  * 2026-09-09 真机在 3.28.0.172 上复核过这段特征码仍唯一命中（不是固件迁移偏移
