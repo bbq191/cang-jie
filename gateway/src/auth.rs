@@ -120,7 +120,7 @@ impl AuthState {
                 let html = wants_html(r.header("Accept"));
                 match st.identify(r) {
                     Who::Nobody => Some(if html {
-                        Reply::redirect(&format!("/login?next={}", rmsvc_core::multipart::percent_encode(&r.path)))
+                        Reply::redirect(&format!("/login?next={}", rmsvc_core::http::percent_encode(&r.path)))
                     } else {
                         Reply::error(401, "需要登录（网页 /login；CLI 用 Basic 密码）").with_header("WWW-Authenticate", "Basic realm=\"shelf\", charset=\"UTF-8\"")
                     }),
@@ -172,11 +172,11 @@ impl AuthState {
     pub fn change_password(&self, req: &mut Request<'_>) -> ApiResult {
         let json = req.content_type.starts_with("application/json");
         let (current, new, confirm) = if json {
-            let v = req.json_body().map_err(ApiError::bad)?;
+            let v = req.json_value()?;
             let g = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
             (g("current"), g("new"), g("new"))
         } else {
-            let f = req.form_body().map_err(ApiError::bad)?;
+            let f = req.form()?;
             let g = |k: &str| f.get(k).cloned().unwrap_or_default();
             (g("current"), g("new"), g("confirm"))
         };
@@ -245,10 +245,10 @@ struct PasswordChanged {
 
 fn read_password_body(req: &mut Request<'_>) -> Result<(String, String, bool), ApiError> {
     if req.content_type.starts_with("application/json") {
-        let v = req.json_body().map_err(ApiError::bad)?;
+        let v = req.json_value()?;
         Ok((v.get("password").and_then(|x| x.as_str()).unwrap_or("").to_string(), String::new(), true))
     } else {
-        let f = req.form_body().map_err(ApiError::bad)?;
+        let f = req.form()?;
         Ok((f.get("password").cloned().unwrap_or_default(), f.get("next").cloned().unwrap_or_default(), false))
     }
 }
@@ -262,7 +262,7 @@ fn is_local_path(next: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use rmsvc_core::http::TestRequest;
 
     fn state(must_change: bool) -> Shared {
         let t = tempfile::tempdir().unwrap();
@@ -283,14 +283,13 @@ mod tests {
     fn gr_from(ip: &str, method: Method, path: &str, headers: &[(&str, &str)]) -> GuardRequest {
         GuardRequest { method, path: path.into(), headers: headers.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(), remote: Some(ip.parse().unwrap()) }
     }
-    fn req<'a>(method: Method, path: &str, ct: &str, headers: &[(&str, &str)], body: &'a mut &[u8]) -> Request<'a> {
+    fn req(method: Method, path: &str, ct: &str, headers: &[(&str, &str)], body: &[u8]) -> TestRequest {
         req_from(IP_A, method, path, ct, headers, body)
     }
-    /// 模拟服务器：对端 IP 经内部头 `REMOTE_IP_HEADER` 传给处理函数。
-    fn req_from<'a>(ip: &str, method: Method, path: &str, ct: &str, headers: &[(&str, &str)], body: &'a mut &[u8]) -> Request<'a> {
-        let mut hs: Vec<(String, String)> = headers.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
-        hs.push((rmsvc_core::http::REMOTE_IP_HEADER.to_string(), ip.to_string()));
-        Request { method, path: path.into(), query: HashMap::new(), params: HashMap::new(), content_type: ct.into(), content_length: None, headers: hs, body }
+    /// 模拟服务器：对端 IP 经内部头 `REMOTE_IP_HEADER` 传给处理函数（[`TestRequest::remote_ip`]）。
+    fn req_from(ip: &str, method: Method, path: &str, ct: &str, headers: &[(&str, &str)], body: &[u8]) -> TestRequest {
+        let t = headers.iter().fold(TestRequest::new(method, path).content_type(ct), |t, (k, v)| t.header(k, v));
+        t.remote_ip(ip.parse().unwrap()).body(body.to_vec())
     }
 
     #[test]
@@ -316,9 +315,7 @@ mod tests {
         let st = state(true);
         let g = st.guard();
         // 表单登录默认密码 → 303 /password + Set-Cookie
-        let mut body: &[u8] = b"password=shelf&next=%2Fx";
-        let mut r = req(Method::Post, "/login", "application/x-www-form-urlencoded", &[], &mut body);
-        let rep = st.login(&mut r).unwrap();
+        let rep = req(Method::Post, "/login", "application/x-www-form-urlencoded", &[], b"password=shelf&next=%2Fx").with(|r| st.login(r)).unwrap();
         assert_eq!(rep.status, 303);
         let loc = rep.headers.iter().find(|(k, _)| k == "Location").unwrap().1.clone();
         assert_eq!(loc, "/password", "首登必改");
@@ -331,19 +328,20 @@ mod tests {
         assert_eq!((g.check)(&gr(Method::Post, "/api/books", &[("Cookie", &tok)])).unwrap().status, 403);
         assert!((g.check)(&gr(Method::Post, "/password", &[("Cookie", &tok)])).is_none());
         // 改密：不一致 / 太短 / 成功
-        let mut b: &[u8] = b"current=shelf&new=abcdef1&confirm=zzz";
-        assert_eq!(st.change_password(&mut req(Method::Post, "/password", "application/x-www-form-urlencoded", &[("Cookie", &tok)], &mut b)).unwrap().status, 400);
-        let mut b: &[u8] = b"current=shelf&new=abcdef1&confirm=abcdef1";
-        let rep = st.change_password(&mut req(Method::Post, "/password", "application/x-www-form-urlencoded", &[("Cookie", &tok)], &mut b)).unwrap();
+        let b: &[u8] = b"current=shelf&new=abcdef1&confirm=zzz";
+        assert_eq!(req(Method::Post, "/password", "application/x-www-form-urlencoded", &[("Cookie", &tok)], b).with(|r| st.change_password(r)).unwrap().status, 400);
+        let b: &[u8] = b"current=shelf&new=abcdef1&confirm=abcdef1";
+        let rep = req(Method::Post, "/password", "application/x-www-form-urlencoded", &[("Cookie", &tok)], b).with(|r| st.change_password(r)).unwrap();
         assert_eq!(rep.status, 303);
         assert!(!st.must_change());
         assert!((g.check)(&gr(Method::Get, "/", &[("Cookie", &tok)])).is_none(), "改完密码本会话仍有效");
         assert!(st.cfg.lock().unwrap().verify("abcdef1"));
         // 错密码登录 JSON → 401
-        let mut b: &[u8] = br#"{"password":"nope"}"#;
-        assert_eq!(st.login(&mut req(Method::Post, "/login", "application/json", &[], &mut b)).unwrap().status, 401);
+        let b: &[u8] = br#"{"password":"nope"}"#;
+        assert_eq!(req(Method::Post, "/login", "application/json", &[], b).with(|r| st.login(r)).unwrap().status, 401);
         // 登出
-        let rep = st.logout(&mut req(Method::Post, "/logout", "", &[("Cookie", &tok)], &mut (&b""[..]))).unwrap();
+        let b: &[u8] = b"";
+        let rep = req(Method::Post, "/logout", "", &[("Cookie", &tok)], b).with(|r| st.logout(r)).unwrap();
         assert_eq!(rep.status, 303);
         assert_eq!((g.check)(&gr(Method::Get, "/api/services", &[("Cookie", &tok)])).unwrap().status, 401);
     }
@@ -378,9 +376,9 @@ mod tests {
             let pw = if must_change { "shelf" } else { "secret1" };
             assert!(st.verify(pw), "poison 后正确密码仍应通过");
             assert!(!st.verify("nope"));
-            let mut b: &[u8] = br#"{"new":"longer9"}"#;
+            let b: &[u8] = br#"{"new":"longer9"}"#;
             let basic = format!("Basic {}", base64::Engine::encode(&base64::engine::general_purpose::STANDARD, format!("cli:{pw}")));
-            let rep = st.change_password(&mut req(Method::Post, "/password", "application/json", &[("Authorization", &basic)], &mut b)).unwrap();
+            let rep = req(Method::Post, "/password", "application/json", &[("Authorization", &basic)], b).with(|r| st.change_password(r)).unwrap();
             assert_eq!(rep.status, 200, "poison 后仍能改密码");
             assert!(!st.must_change() && st.verify("longer9"));
         }
@@ -390,12 +388,12 @@ mod tests {
     fn repeated_wrong_passwords_lock_out_without_verifying() {
         let st = state(false);
         for _ in 0..LOGIN_MAX_FAILS {
-            let mut b: &[u8] = br#"{"password":"nope"}"#;
-            assert_eq!(st.login(&mut req(Method::Post, "/login", "application/json", &[], &mut b)).unwrap().status, 401);
+            let b: &[u8] = br#"{"password":"nope"}"#;
+            assert_eq!(req(Method::Post, "/login", "application/json", &[], b).with(|r| st.login(r)).unwrap().status, 401);
         }
         // 已锁定：即使给对密码也直接 429（不做校验），带 Retry-After
-        let mut b: &[u8] = br#"{"password":"secret1"}"#;
-        let rep = st.login(&mut req(Method::Post, "/login", "application/json", &[], &mut b)).unwrap();
+        let b: &[u8] = br#"{"password":"secret1"}"#;
+        let rep = req(Method::Post, "/login", "application/json", &[], b).with(|r| st.login(r)).unwrap();
         assert_eq!(rep.status, 429);
         assert!(rep.headers.iter().any(|(k, _)| k == "Retry-After"));
         // Basic 同样被挡
@@ -404,8 +402,8 @@ mod tests {
         assert_eq!((g.check)(&gr(Method::Get, "/api/services", &[("Authorization", &format!("Basic {ok}"))])).unwrap().status, 401);
         // 解锁（模拟窗口过去）后成功登录会清零
         st.limiter.reset(IP_A.parse().unwrap());
-        let mut b: &[u8] = br#"{"password":"secret1"}"#;
-        assert_eq!(st.login(&mut req(Method::Post, "/login", "application/json", &[], &mut b)).unwrap().status, 200);
+        let b: &[u8] = br#"{"password":"secret1"}"#;
+        assert_eq!(req(Method::Post, "/login", "application/json", &[], b).with(|r| st.login(r)).unwrap().status, 200);
     }
 
     #[test]
@@ -413,29 +411,29 @@ mod tests {
         let st = state(false);
         let g = st.guard();
         for _ in 0..LOGIN_MAX_FAILS {
-            let mut b: &[u8] = br#"{"password":"nope"}"#;
-            assert_eq!(st.login(&mut req_from(IP_A, Method::Post, "/login", "application/json", &[], &mut b)).unwrap().status, 401);
+            let b: &[u8] = br#"{"password":"nope"}"#;
+            assert_eq!(req_from(IP_A, Method::Post, "/login", "application/json", &[], b).with(|r| st.login(r)).unwrap().status, 401);
         }
-        let mut b: &[u8] = br#"{"password":"secret1"}"#;
-        assert_eq!(st.login(&mut req_from(IP_A, Method::Post, "/login", "application/json", &[], &mut b)).unwrap().status, 429, "A 已锁定");
+        let b: &[u8] = br#"{"password":"secret1"}"#;
+        assert_eq!(req_from(IP_A, Method::Post, "/login", "application/json", &[], b).with(|r| st.login(r)).unwrap().status, 429, "A 已锁定");
         // B 不受 A 连累：表单登录、JSON 登录、Basic 都照常
-        let mut b: &[u8] = br#"{"password":"secret1"}"#;
-        assert_eq!(st.login(&mut req_from(IP_B, Method::Post, "/login", "application/json", &[], &mut b)).unwrap().status, 200, "B 仍可登录");
+        let b: &[u8] = br#"{"password":"secret1"}"#;
+        assert_eq!(req_from(IP_B, Method::Post, "/login", "application/json", &[], b).with(|r| st.login(r)).unwrap().status, 200, "B 仍可登录");
         let ok = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, "x:secret1");
         let basic = format!("Basic {ok}");
         assert!((g.check)(&gr_from(IP_B, Method::Get, "/api/services", &[("Authorization", &basic)])).is_none(), "B 的 Basic 照常");
         assert_eq!((g.check)(&gr_from(IP_A, Method::Get, "/api/services", &[("Authorization", &basic)])).unwrap().status, 401, "A 的 Basic 仍被挡");
         // B 登录成功只清 B 自己，A 仍锁着
-        let mut b: &[u8] = br#"{"password":"secret1"}"#;
-        assert_eq!(st.login(&mut req_from(IP_A, Method::Post, "/login", "application/json", &[], &mut b)).unwrap().status, 429);
+        let b: &[u8] = br#"{"password":"secret1"}"#;
+        assert_eq!(req_from(IP_A, Method::Post, "/login", "application/json", &[], b).with(|r| st.login(r)).unwrap().status, 429);
         // USB 网段 / 回环不豁免：同样会被锁
         for ip in ["10.11.99.1", "127.0.0.1"] {
             for _ in 0..LOGIN_MAX_FAILS {
-                let mut b: &[u8] = br#"{"password":"nope"}"#;
-                assert_eq!(st.login(&mut req_from(ip, Method::Post, "/login", "application/json", &[], &mut b)).unwrap().status, 401);
+                let b: &[u8] = br#"{"password":"nope"}"#;
+                assert_eq!(req_from(ip, Method::Post, "/login", "application/json", &[], b).with(|r| st.login(r)).unwrap().status, 401);
             }
-            let mut b: &[u8] = br#"{"password":"secret1"}"#;
-            assert_eq!(st.login(&mut req_from(ip, Method::Post, "/login", "application/json", &[], &mut b)).unwrap().status, 429, "{ip} 不豁免");
+            let b: &[u8] = br#"{"password":"secret1"}"#;
+            assert_eq!(req_from(ip, Method::Post, "/login", "application/json", &[], b).with(|r| st.login(r)).unwrap().status, 429, "{ip} 不豁免");
         }
     }
 
@@ -443,12 +441,12 @@ mod tests {
     fn existing_session_unaffected_by_lockout() {
         let st = state(false);
         let g = st.guard();
-        let mut b: &[u8] = br#"{"password":"secret1"}"#;
-        let rep = st.login(&mut req_from(IP_A, Method::Post, "/login", "application/json", &[], &mut b)).unwrap();
+        let b: &[u8] = br#"{"password":"secret1"}"#;
+        let rep = req_from(IP_A, Method::Post, "/login", "application/json", &[], b).with(|r| st.login(r)).unwrap();
         let tok = rep.headers.iter().find(|(k, _)| k == "Set-Cookie").unwrap().1.split(';').next().unwrap().to_string();
         for _ in 0..LOGIN_MAX_FAILS {
-            let mut b: &[u8] = br#"{"password":"nope"}"#;
-            st.login(&mut req_from(IP_A, Method::Post, "/login", "application/json", &[], &mut b)).unwrap();
+            let b: &[u8] = br#"{"password":"nope"}"#;
+            req_from(IP_A, Method::Post, "/login", "application/json", &[], b).with(|r| st.login(r)).unwrap();
         }
         assert!(st.limiter.locked_for(IP_A.parse().unwrap()).is_some());
         assert!((g.check)(&gr_from(IP_A, Method::Get, "/api/services", &[("Cookie", &tok)])).is_none(), "已登录会话不受锁定影响");
@@ -458,8 +456,8 @@ mod tests {
     fn basic_can_change_password_without_current_field() {
         let st = state(true);
         let b = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, "cli:shelf");
-        let mut body: &[u8] = br#"{"new":"longer1"}"#;
-        let rep = st.change_password(&mut req(Method::Post, "/password", "application/json", &[("Authorization", &format!("Basic {b}"))], &mut body)).unwrap();
+        let body: &[u8] = br#"{"new":"longer1"}"#;
+        let rep = req(Method::Post, "/password", "application/json", &[("Authorization", &format!("Basic {b}"))], body).with(|r| st.change_password(r)).unwrap();
         assert_eq!(rep.status, 200, "{}", String::from_utf8_lossy(&rep.body));
         assert!(!st.must_change());
     }
@@ -474,10 +472,28 @@ mod tests {
         assert!((g.check)(&gr(Method::Get, "/api/services", &[("Authorization", &ok)])).is_none());
         assert!((g.check)(&gr(Method::Get, "/api/services", &[("Authorization", &ok)])).is_none(), "第二次命中缓存照样放行");
         assert_eq!((g.check)(&gr(Method::Get, "/api/services", &[("Authorization", &basic("secret2"))])).unwrap().status, 401, "别的密码不命中缓存");
-        let mut body: &[u8] = br#"{"new":"longer1"}"#;
-        assert_eq!(st.change_password(&mut req(Method::Post, "/password", "application/json", &[("Authorization", &ok)], &mut body)).unwrap().status, 200);
+        let body: &[u8] = br#"{"new":"longer1"}"#;
+        assert_eq!(req(Method::Post, "/password", "application/json", &[("Authorization", &ok)], body).with(|r| st.change_password(r)).unwrap().status, 200);
         assert_eq!((g.check)(&gr(Method::Get, "/api/services", &[("Authorization", &ok)])).unwrap().status, 401, "改密后旧密码不能再靠缓存通过");
         assert!((g.check)(&gr(Method::Get, "/api/services", &[("Authorization", &basic("longer1"))])).is_none());
+    }
+
+    /// 请求体超过 1MB 上限 → 413（2026-10-10 前 `json_body/form_body` 的错误一律包成 400，超限与"格式不对"分不清）；
+    /// 解析不了 → 仍是 400。登录、改密，JSON 与表单两种写法都走同一条读取。超限的请求不计入失败次数（没校验密码）。
+    #[test]
+    fn oversized_body_is_413_and_bad_json_400() {
+        let st = state(false);
+        let big = vec![b'a'; rmsvc_core::http::SMALL_BODY_MAX as usize + 1];
+        for ct in ["application/json", "application/x-www-form-urlencoded"] {
+            let e = req(Method::Post, "/login", ct, &[], &big).with(|r| st.login(r)).err().expect("超限应报错");
+            assert_eq!(e.status, 413, "{ct} 登录");
+            let e = req(Method::Post, "/password", ct, &[], &big).with(|r| st.change_password(r)).err().expect("超限应报错");
+            assert_eq!(e.status, 413, "{ct} 改密");
+        }
+        let e = req(Method::Post, "/login", "application/json", &[], b"{nope").with(|r| st.login(r)).err().expect("坏 JSON 应报错");
+        assert_eq!(e.status, 400);
+        assert!(st.limiter.locked_for(IP_A.parse().unwrap()).is_none());
+        assert_eq!(req(Method::Post, "/login", "application/json", &[], br#"{"password":"secret1"}"#).with(|r| st.login(r)).unwrap().status, 200);
     }
 
     #[test]
@@ -495,12 +511,12 @@ mod tests {
         let body = |r: &Reply| serde_json::from_slice::<serde_json::Value>(&r.body).unwrap();
         let st = state(false);
         assert_eq!(body(&st.session_info()), serde_json::json!({"ok": true, "mustChange": false}));
-        let mut b: &[u8] = br#"{"password":"secret1"}"#;
-        let rep = st.login(&mut req(Method::Post, "/login", "application/json", &[], &mut b)).unwrap();
+        let b: &[u8] = br#"{"password":"secret1"}"#;
+        let rep = req(Method::Post, "/login", "application/json", &[], b).with(|r| st.login(r)).unwrap();
         assert_eq!(body(&rep), serde_json::json!({"ok": true, "mustChange": false, "next": "/"}));
         let basic = format!("Basic {}", base64::Engine::encode(&base64::engine::general_purpose::STANDARD, "cli:secret1"));
-        let mut b: &[u8] = br#"{"new":"longer1"}"#;
-        let rep = st.change_password(&mut req(Method::Post, "/password", "application/json", &[("Authorization", &basic)], &mut b)).unwrap();
+        let b: &[u8] = br#"{"new":"longer1"}"#;
+        let rep = req(Method::Post, "/password", "application/json", &[("Authorization", &basic)], b).with(|r| st.change_password(r)).unwrap();
         assert_eq!(body(&rep), serde_json::json!({"ok": true, "message": "密码已更新"}));
         let no_auth = serde_json::to_value(Session { ok: true, must_change: false, auth: Some(false) }).unwrap();
         assert_eq!(no_auth, serde_json::json!({"ok": true, "mustChange": false, "auth": false}), "没开认证时 main.rs 回的那一份");

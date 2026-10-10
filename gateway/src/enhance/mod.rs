@@ -153,13 +153,10 @@ pub fn set_qol(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rmsvc_core::http::Method;
-    use std::collections::HashMap;
+    use rmsvc_core::http::{Method, TestRequest};
 
     fn put(paths: &Paths, body: &[u8]) -> ApiResult {
-        let mut b: &[u8] = body;
-        let mut r = Request { method: Method::Put, path: "/api/enhance/qol".into(), query: HashMap::new(), params: HashMap::new(), content_type: "application/json".into(), content_length: None, headers: vec![], body: &mut b };
-        set_qol(paths, &mut r)
+        TestRequest::new(Method::Put, "/api/enhance/qol").content_type("application/json").body(body.to_vec()).with(|r| set_qol(paths, r))
     }
 
     #[test]

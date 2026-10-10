@@ -7,8 +7,8 @@ const cjkBadge=p=>p==null?'':`<span class="badge ${p>=80?'on':(p>=8?'':'off')}" 
 
 /* 服务 tab（按注册表出现）。key = 注册的服务名。service→seg（AREA）不再在这里手搓一份——
    那正是 gateway/src/manage.rs::MODULES 表已声明的唯一事实源，网关在 GET /api/services 的每一项上带回
-   `seg`（2026-10-09 起；此前网页为它另取一次 /api/manage），见下面 init() 里的 AREA 变量：手搓的映射会跟 MODULES 改名/新增
-   悄悄脱节，SSE 事件的 area 就对不上、对应 tab 的事件驱动刷新会静默失效。 */
+   `seg`（2026-10-09 起；此前网页为它另取一次 /api/manage），见 app.js 启动代码里的 SEG 变量：手搓的映射会跟 MODULES 改名/新增
+   悄悄脱节，SSE 事件的 svc 就对不上、「其他」里子面板的事件驱动刷新会静默失效。 */
 const TABS={
  'note-serve':{titleKey:'tab.notes',render:renderNotes},
  'font-serve':{render:renderFonts},
@@ -87,7 +87,7 @@ function assetTab(sec,api,o){sec.innerHTML=`<div class="card">${o.title?`<h2>${o
    原来各自独立的顶层 tab 降一级，包进这个 tab 当二级子标签——各服务的 render() 原样复用，只是换个挂载点。
    只装了其中一部分时，subnav 只列已装的那几个（笔记 tab 本身不在这里——note-serve 单独占「其他」前面那个固定位置）。
    （原来的 KOReader 子标签随 2026-09-29 设备卸载 KOReader 撤掉。） */
-function renderOther(sec,svcs,areaOf){
+function renderOther(sec,svcs,segOf){
   const items=[{name:'font-serve',icon:'🔤',label:'xochitl'},{name:'wallpaper-serve',icon:'🖼️',label:T('tab.wallpaper')}]
     .filter(it=>svcs.some(s=>s.name===it.name));
   sec.innerHTML=`<div class="subnav">${items.map((it,i)=>`<button${i===0?' class="on"':''}>${it.icon} ${it.label}</button>`).join('')}</div>
@@ -97,6 +97,6 @@ function renderOther(sec,svcs,areaOf){
   sec.refresh=()=>Promise.all(items.map(it=>{const c=pane(it);return c&&c.refresh&&c.refresh()}));
   /* 事件只刷发事件的那个服务的子面板（字体/壁纸各自 2 个请求），不再几块一起重取——壁纸每次休眠轮换都会发事件。
      认不出来源（没有映射）时退回整块刷新。 */
-  sec.onEvent=ev=>{const it=items.find(x=>areaOf(x.name)===ev.area);const c=it&&pane(it);if(c&&c.refresh)refreshSec(c);else refreshSec(sec)};
+  sec.onEvent=ev=>{const it=items.find(x=>segOf(x.name)===ev.svc);const c=it&&pane(it);if(c&&c.refresh)refreshSec(c);else refreshSec(sec)};
   subtabs(sec);
 }

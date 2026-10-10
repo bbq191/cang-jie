@@ -155,8 +155,8 @@
 ![事件汇聚](diagrams/events-fanin.svg)
 
 - **原则**（用户 2026-09-06 定）：不轮询、不监听全盘、日志写入不触发。事件只来自服务代码里的变更点，加上注册表目录的 inotify。
-- **汇聚**：`events::spawn` 为 `MODULES` 里有 `/events` 的每个服务起一条线程，跑基座的 `events::follow`（服务没起就等注册表 inotify；连上用 `?ka=120`，两分钟一次心跳；断线 3 秒→60 秒指数退避；对方回 404 就长等 10 分钟），返回总线（2026-10-07 审查修复删了只包一层的 `Hub` 结构）。收到的事件补上 `"svc":"<seg>"` 后发进网关总线。另一条线程阻塞在基座的 `events::registry_wake` 上（订阅线程等服务上线用的同一条 inotify 监听，防抖 300ms），服务上下线时发 `{"area":"manage"}`；此前网关自己另起一条 inotify 监听同一个目录（防抖 500ms），每次注册表变化唤醒两个线程。
-- **网关自己也发**：`batch.rs` 每次落盘都经 `events::notify_books()` 发 `{"area":"books","kind":"batch"}`（不带 `svc`，以此和 book-serve 自己的事件区分）。网页收到这类事件只重取 `/api/batch/status` 一个接口（2026-10-07 稍后起；此前闸门还发 `budget`，网页多取 `/api/budget/status`）；book-serve 的 `staging` 事件 09-25 起也不再全量刷新，前端各 tab 按事件来源取多少见 §5.1。批量运行时也不再每 3 秒轮询。
+- **汇聚**：`events::spawn` 为 `MODULES` 里有 `/events` 的每个服务起一条线程，跑基座的 `events::follow`（服务没起就等注册表 inotify；连上用 `?ka=120`，两分钟一次心跳；断线 3 秒→60 秒指数退避；对方回 404 就长等 10 分钟），返回总线（2026-10-07 审查修复删了只包一层的 `Hub` 结构）。收到的事件补上 `"svc":"<seg>"` 和 `"tab":"<MODULES 里声明的 tab>"` 后发进网关总线（`events::tag`）。另一条线程阻塞在基座的 `events::registry_wake` 上（订阅线程等服务上线用的同一条 inotify 监听，防抖 300ms），服务上下线时发 `{"area":"manage","kind":"services","tab":"manage"}`；此前网关自己另起一条 inotify 监听同一个目录（防抖 500ms），每次注册表变化唤醒两个线程。
+- **网关自己也发**：`batch.rs` 每次落盘都经 `events::notify_books()` 发 `{"area":"books","kind":"batch","tab":"books"}`（不带 `svc`，以此和 book-serve 自己的事件区分）。网页收到这类事件只重取 `/api/batch/status` 一个接口（2026-10-07 稍后起；此前闸门还发 `budget`，网页多取 `/api/budget/status`）；book-serve 的 `staging` 事件 09-25 起也不再全量刷新，前端各 tab 按事件来源取多少见 §5.1。批量运行时也不再每 3 秒轮询。
 - **反过来驱动批量队列**：book-serve 发来的 `books` 事件还会唤醒批量 worker 里“等这本书处理完再取下一本”的等待（`books_wake`，见 §4.3；2026-10-07 稍后前唤醒的是闸门里等着还名额的线程）。“哪个服务的事件要叫醒谁”写在 `MODULES` 的 `wake` 字段里（目前只有 book-serve 一行）；2026-10-10 前是汇聚循环里写死 `seg == "books"`。
 - **浏览器侧**：`new EventSource('/api/events?ka=60')`，60 秒一次心跳。收到事件只刷新对应区域；不在前台的 tab 只记“待刷”。页面隐藏超过 60 秒就主动断开 SSE（锁屏的手机不再让设备为它保活），重新可见时重连，重连成功后补刷当前 tab，断开期间的事件不会漏掉效果。前端完整的取数时机见 §5.1 的图。
 - **事件 area/kind 总表**（2026-10-10 全仓 `rg 'publish(' ` 收集；网页所有事件分支只认 `ui/core.js` 的 `EV` 常量表，网关自己发的两种在 `events.rs` 是常量，`ui.rs` 的测试核对 `EV` 表里有它们；**各服务侧仍是字符串字面量**，改名时两边都要动，第二阶段再收）：
@@ -176,7 +176,13 @@
   | `fonts` | `fonts` / `ui` / `config` | font-serve `main.rs:85,121` / `96,106,115` / `127` | 阅读字体池 / 界面字体 / 加粗开关变化 | 其他：只刷字体子面板 |
   | `wallpapers` | `pool` | wallpaper-serve `main.rs:114,122,129,134`、`wake.rs:79` | 壁纸池或当前壁纸变化（含每次休眠轮换） | 其他：只刷壁纸子面板 |
 
-  网页按 **area** 找 tab（`secByArea`），不是按 `svc`：ink-serve 与 transcribe-serve 都发 `area:"notes"`，能落到「笔记」tab 只因为 note-serve 的 seg 恰好也叫 `notes`（FE-6，第二阶段让 `MODULES` 管事件路由）。
+  网页按事件的 **`tab`** 找顶层 tab（`secByTab`，取值 `books`/`notes`/`other`/`manage`，即传书/笔记/其他/管理；`core.js` 的 `EV.tab`）。
+  服务事件的 `tab` 由 `manage.rs::MODULES` 每行的 `tab` 字段声明（book-serve → `books`；ink/transcribe/mind/note-serve → `notes`；
+  font/wallpaper-serve → `other`），网关汇聚时补上、覆盖服务自带的同名字段；网关自己的两种事件在发出处写定（`batch` → `books`，
+  `services` → `manage`）。「其他」tab 再按 `svc` 分到字体/壁纸子面板。`area` 字段照旧保留，网页只用它判 `manage` 与传书的刷新档位。
+  2026-10-10 前按 **area** 找 tab（`secByArea`）：ink-serve 与 transcribe-serve 都发 `area:"notes"`，能落到「笔记」tab 只因为
+  note-serve 的 seg 恰好也叫 `notes`（审计 FE-6）；新增服务时 area 与 seg 对不上，事件会静默丢掉。`ui.rs` 的测试核对
+  `EV.tab` 覆盖网关会发的每个 tab 值，`events.rs` 的测试钉住各服务的归属。
 - **浏览器放弃重连时**（09-30）：WiFi 掉线这类断开 EventSource 会自己重连；但连上时回的不是 200（网关重启后内存里的会话全没了 → 401，并发满 → 503），它会直接进 `CLOSED`、再也不重试——此前页面就此静默失去实时刷新。现在进 `CLOSED` 时先查一次 `/api/session`（401 由 `j()` 带去登录页），其余情况按 5 秒起、翻倍、封顶 5 分钟退避重开；页面隐藏时不重试，重新可见时照常重连。
 
 ## 04｜批量队列（闸门 2026-10-07 删除）
@@ -291,7 +297,7 @@
 ### 5.3 前后端契约（2026-10-10 重构第一阶段）
 
 - **网关自有接口一律 DTO**：`batch::Status`/`Enqueued`、`manage` 的 `ManageStatus`/`Services`/`Foundation`/`ActionDone`、`enhance::Status`、`device::health::Health`、`device` 的 `CleanupList`/`CleanupDeleted`、`auth` 的 `Session`/`LoggedIn`/`PasswordChanged` 都是 `#[derive(Serialize)] #[serde(rename_all="camelCase")]` 结构体（照 `ota::Check` 的写法），不再 `json!` 现拼。改之前先给每个接口写了线上格式快照测试（`wire_snapshot_*`），改完逐字段相同。唯一的可见差异是**键序**：`json!` 按字母序输出，结构体按字段声明序，JSON 语义相同、网页不看键序。留着 `json!` 的只有不是网关应答的地方：转发给 book-serve 的请求体（`batch.rs::run_one`）、`/api/device/wifi`（原样转发 wifi-watch 写的文件，字段由那个脚本定）、事件补 `svc` 失败时的兜底、页面注入的格式白名单。
-- **"失败项"形状**：批量队列 `failed[]` 与清理接口 `failed[]` 都是 `{name, message}`（`wire::Failed`）。清理接口 2026-10-10 前是 `{name, error}`，并用 200 应答里的 `ok:false` 表示部分失败——与基座错误信封 `{ok:false, message}` 撞名；现在 200 应答不带 `ok`，部分失败（含全部失败）标 `partial:true`，`ok:false` 只来自错误信封（请求本身被拒）。笔记"推送本章"的 `Failed{error}` 在 note-serve，第二阶段再统一。
+- **"失败项"形状**：批量队列 `failed[]` 与清理接口 `failed[]` 都是 `{name, message}`（`failed::Failed`，原名 `wire::Failed`，2026-10-10 改名；跨服务共享的落库/渲染状态值用 `rmsvc_core::wire`）。清理接口 2026-10-10 前是 `{name, error}`，并用 200 应答里的 `ok:false` 表示部分失败——与基座错误信封 `{ok:false, message}` 撞名；现在 200 应答不带 `ok`，部分失败（含全部失败）标 `partial:true`，`ok:false` 只来自错误信封（请求本身被拒）。笔记"推送本章"的 `Failed{error}` 在 note-serve，第二阶段再统一。
 - **后端下发派生字段，前端不再镜像规则**：母版库条目的 `title`/`series`/`done`（book-serve）、笔记条目的 `live`（ink-serve，`= Status::is_live_for_projection()`，只在 HTTP 应答里、不写进条目库文件）、系统增强开关的 `toggles[].loaded`（网关，§06）。网页直接用，删掉了 `stgClean`/`stgTitle`/`isBookDone` 和"活条目"状态名单；不写兼容旧后端的回退（各服务总是一起部署）。
 - **动态 i18n 键有测试**：网页里拼接出来的键（`ota.reason.<码>`、`ota.recovery.<值>`、`stg.batch.<动作>`、`wifi.banner.<状态>`、`agentfail.<种类>`、`manage.modules.label.<seg>`）由 `src/ui.rs` 的 `dynamic_i18n_keys_cover_every_backend_value` 遍历后端取值集合、断言两份语言包都有。取值直接来自 Rust 常量：OTA 判据与恢复方式 2026-10-10 收成枚举 `ota::Reason`/`Recovery`（线上值不变，`""` 仍表示不需要恢复）、批量动作 `batch::Action::ALL`、`MODULES`。网关里没有源头的两组就地列出并注明出处：WiFi 横幅状态 `portal`/`none`（`packaging/wifi-watch/wifi-watch.sh` 的 `probe()`）、代理失败种类 `trash`/`mkdir`（book-serve `trash.rs:96`、`mkdir.rs:151`）——book-serve 把种类收成枚举后应改为直接引用。同一个测试还核对网页 `TOGGLE_UI` 给 `TOGGLES` 的每个键都配了文案、`EV` 表含网关自发事件的取值。
 - **条目字段读蛇形、写驼峰（现状，不改）**：笔记条目 `notecore::model::Entry` 既是 HTTP 应答也是**条目库的落盘格式**，字段按 Rust 默认的蛇形序列化（`page_index`、`chapter_title`、`ask_ai`），网页读的就是这些名字（`notes.js` 里 `e.page_index`）；改名会让设备上已有的条目库读不回来（要加 `serde(alias)` 并迁移），收益只是命名统一，所以不动。而网页**写**条目走 ink-serve 的 `POST …/entries/{id}`，那是手解的请求体，收驼峰（`askAi`、`destination`、`text`，`ink-serve/src/main.rs` 的字段补丁处），与网关其余接口的驼峰约定一致。全文搜索的 `Hit`（`ink-serve/src/search.rs`）是纯应答 DTO，按惯例驼峰（`pageIndex`、`chapterTitle`）——所以同一页面里 `e.page_index` 与 `h.pageIndex` 并存是有意的：前者是落盘格式的原样转出，后者是专门的应答结构。新增条目字段时沿用蛇形；新增纯应答结构用驼峰。

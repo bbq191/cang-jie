@@ -39,7 +39,7 @@ fn agent() -> &'static ureq::Agent {
 pub fn forward(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
     let Some(name) = crate::manage::service_of(req.param("svc")) else { return Err(ApiError::not_found("未知服务")) };
     let Some(info) = registry::find(paths, name) else {
-        return Err(ApiError { status: 404, message: format!("{name} 未安装或未运行") });
+        return Err(ApiError::not_found(format!("{name} 未安装或未运行")));
     };
     // 剥掉服务段：`/api/fonts/x` → 后端 `/x`，`/api/fonts` → 后端 `/`。后端直连（SSH 调试）与经网关同一套路由。
     let rest = req.param("*").to_string();
@@ -64,7 +64,7 @@ pub fn forward(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
     let (status, resp) = match resp {
         Ok(r) => (r.status(), r),
         Err(ureq::Error::Status(c, r)) => (c, r),
-        Err(e) => return Err(ApiError { status: 502, message: format!("{name} 无响应: {e}") }),
+        Err(e) => return Err(ApiError::bad_gateway(format!("{name} 无响应: {e}"))),
     };
     let ctype = resp.header("Content-Type").unwrap_or("application/octet-stream").to_string();
     // 只转发两个头，别的一律不转发，不给后端服务借这条通道夹带别的东西：
@@ -94,6 +94,7 @@ pub fn forward(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rmsvc_core::http::TestRequest;
 
     /// 回归：客户端发了带 `Content-Length` 的 DELETE，网关用 `call()` 不转发 body，也就不能转发这个长度——否则后端会
     /// 干等那几个字节。假后端只读请求头，记下有没有 `content-length`，然后立刻回 200。
@@ -122,10 +123,7 @@ mod tests {
         });
         let info = registry::ServiceInfo { name: "font-serve".into(), port, label: String::new(), version: String::new(), pid: std::process::id(), ui: None };
         let _reg = registry::register(&paths, &info).unwrap();
-        let mut rd: &[u8] = b"12345";
-        let params = [("svc", "fonts"), ("*", "x.ttf")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
-        let mut req = Request { method: Method::Delete, path: "/api/fonts/x.ttf".into(), query: Default::default(), params, content_type: String::new(), content_length: Some(5), headers: vec![], body: &mut rd };
-        let reply = forward(&paths, &mut req).unwrap();
+        let reply = TestRequest::new(Method::Delete, "/api/fonts/x.ttf").param("svc", "fonts").param("*", "x.ttf").body(*b"12345").with(|r| forward(&paths, r)).unwrap();
         let head = backend.join().unwrap();
         assert_eq!(reply.status, 200);
         assert!(head.starts_with("delete /x.ttf"), "{head}");
