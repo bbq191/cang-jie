@@ -67,7 +67,8 @@ const postJ=(url,body)=>sendT(url,'POST',body);
    找顶层 tab（`secByTab`；tab 由网关 manage.rs::MODULES 声明，2026-10-10 前按 area 找，ink/transcribe 发 area:'notes' 能到笔记页
    只因 note-serve 的段恰好叫 notes）、按 svc 分「其他」里的子面板、按 kind 决定刷多少；所有分支都用这张表，不写字面量。
    产生方与各取值的含义见网关白皮书「事件 area/kind 总表」。
-   服务侧目前仍是字符串字面量（第二阶段再收成常量），改名时两边都要动。 */
+   服务侧：网关（events.rs）、book-serve（events.rs）、笔记线三个服务（各自 main.rs 的 EVENT_* 常量）都是常量，网关与 book-serve 的测试
+   核对本表认得它们发的每个取值；font-serve、wallpaper-serve 仍写字面量（取值少、只在本服务里）。改名时两边都要动。 */
 const EV={
   area:{BOOKS:'books',NOTES:'notes',FONTS:'fonts',WALLPAPERS:'wallpapers',MANAGE:'manage'},
   tab:{BOOKS:'books',NOTES:'notes',OTHER:'other',MANAGE:'manage'},      // 顶层 tab：传书 / 笔记 / 其他 / 管理
