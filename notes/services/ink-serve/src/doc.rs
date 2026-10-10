@@ -1,42 +1,25 @@
-//! xochitl 书库里一份文档的**只读**视图：`<uuid>.metadata`（名字/类型/回收站）、`<uuid>.content`（fileType、`pages` 页 id 表）、
+//! xochitl 书库里一份文档的**只读**视图：`<uuid>.metadata`（名字/类型/回收站）、`<uuid>.content`（fileType、页 id 表）、
 //! `<uuid>/<page>.rm`（有手写/勾画的页才有文件）、`<uuid>.epubindex` + `<uuid>.epub`（页→章）。
 //! （`<uuid>.thumbnails/` 缩略图已不读：裁图改自渲染，见 `crop.rs`。）
 //! 绝不写书库目录（xochitl 不认外部改动，且 metadata 含凭证以外的隐私）。
-use serde::Deserialize;
+use rmsvc_core::xochitl::PageTable;
 use std::path::{Path, PathBuf};
 
 /// `.metadata` 的强类型视图与"活文档"判据用共享底座那份（书架/网关同一套）。
 pub use rmsvc_core::xochitl::Metadata;
 
-#[derive(Deserialize, Debug, Default, Clone, PartialEq)]
-#[serde(default)]
+/// `<uuid>.content` 里摄取要的两样：`fileType` 与页表。页表解析用共享底座的 `PageTable`（2026-10-10 起，与书架找回阅读位置
+/// 同一份 v1 `pages` / v2 `cPages` 解析；此前这里自己解析一份，审计 X-2）。ink-serve 用它的 `page_ids()`：`pages` 非空就用它，
+/// 否则取 `cPages.pages` 按 `idx` 排、去掉已删页——与改动前的 `Content::page_ids` 语义相同。
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct Content {
-    #[serde(rename = "fileType")]
     pub file_type: String,
-    /// 页 id 顺序表（0-based 下标 = 页号，与 .epubindex 起始页对齐）。`formatVersion 1` 的形状（真机 3.28 上的 EPUB 样本就是它）。
-    pub pages: Vec<String>,
-    /// `formatVersion 2` 的页表（笔记本是这个形状）：没有 `pages` 时用它，见 [`Content::page_ids`]。按原始 JSON 收，
-    /// 形状对不上也不影响整份 `.content` 的解析（v1 的结果绝不能因为这个兜底字段变差）。
-    #[serde(rename = "cPages")]
-    c_pages: serde_json::Value,
+    pub pages: PageTable,
 }
 
 impl Content {
-    /// 按页序排列的页 id。有 `pages` 就用它；没有则取 `cPages.pages`：按 `idx`（分数索引字符串，字典序即页序）排、
-    /// 去掉已删除的页。此前只认 `pages`，遇到 v2 形状的 `.content` 每页都会落到页号 0、整本书的条目都没有章、两处投影都不收
-    /// ——目前真机样本里的 EPUB 都还是 v1，这是兜底，v1 的结果不变。
-    pub fn page_ids(&self) -> Vec<&str> {
-        if !self.pages.is_empty() {
-            return self.pages.iter().map(String::as_str).collect();
-        }
-        let Some(pages) = self.c_pages.get("pages").and_then(|v| v.as_array()) else { return vec![] };
-        let mut v: Vec<(&str, &str)> = pages
-            .iter()
-            .filter(|p| p.pointer("/deleted/value").and_then(|d| d.as_i64()).unwrap_or(0) == 0)
-            .filter_map(|p| Some((p.pointer("/idx/value").and_then(|x| x.as_str()).unwrap_or(""), p.get("id")?.as_str().filter(|id| !id.is_empty())?)))
-            .collect();
-        v.sort_by(|a, b| a.0.cmp(b.0));
-        v.into_iter().map(|(_, id)| id).collect()
+    fn parse(v: &serde_json::Value) -> Content {
+        Content { file_type: v.get("fileType").and_then(|x| x.as_str()).unwrap_or("").to_string(), pages: PageTable::parse(v) }
     }
 }
 
@@ -62,8 +45,9 @@ impl Doc {
     pub fn read_metadata(&self) -> Result<Option<Metadata>, String> {
         rmsvc_core::xochitl::read_meta(&self.lib, &self.uuid).map_err(|e| format!("{e}（先跳过，下次再试）"))
     }
+    /// `.content` 读一次、解析一次（`fileType` 与页表同出一份 JSON，不为两样东西各读一遍文件）；读不了/不是 JSON → `None`。
     pub fn content(&self) -> Option<Content> {
-        serde_json::from_str(&std::fs::read_to_string(self.side("content")).ok()?).ok()
+        serde_json::from_slice::<serde_json::Value>(&std::fs::read(self.side("content")).ok()?).ok().map(|v| Content::parse(&v))
     }
     /// 只取 `.content` 的 `fileType`（流式，不把整张页 id 表解析成 `Vec<String>`）；缺这个字段 → `None`。
     pub fn file_type(&self) -> Option<String> {
@@ -115,16 +99,16 @@ mod tests {
 
     #[test]
     fn parses_real_content_and_metadata_shapes() {
-        let c: Content = serde_json::from_str(include_str!("../../../testdata/renggu/book.content")).unwrap();
-        assert_eq!((c.file_type.as_str(), c.pages.len()), ("epub", 523));
-        assert_eq!(c.pages[0], "f02e9084-d864-46f3-a07e-ae84ba19d344");
-        assert_eq!(c.page_ids().len(), 523, "v1 形状照旧用 pages");
-        let v2: Content = serde_json::from_str(r#"{"fileType":"epub","formatVersion":2,"cPages":{"pages":[{"id":"c","idx":{"timestamp":"1:2","value":"bc"}},{"id":"a","idx":{"timestamp":"1:2","value":"ba"}},{"id":"x","idx":{"timestamp":"1:2","value":"bb"},"deleted":{"timestamp":"1:3","value":1}},{"id":"b","idx":{"timestamp":"1:2","value":"bb"}}]}}"#).unwrap();
-        assert_eq!(v2.page_ids(), ["a", "b", "c"], "v2 形状按 idx 排、去掉已删页");
-        let odd: Content = serde_json::from_str(r#"{"fileType":"epub","pages":["p1"],"cPages":{"pages":[{"id":5,"deleted":true}]}}"#).unwrap();
-        assert_eq!(odd.page_ids(), ["p1"], "cPages 形状不认识也不影响 v1 解析");
-        let real_v2: Content = serde_json::from_str(include_str!("../../../testdata/seven_styles/book.content")).unwrap();
-        assert_eq!(real_v2.page_ids(), ["1ab4edce-0a88-4271-9624-9b6abe2673e5", "0439fde3-2b3d-4f33-8735-fb44134c5efc"], "真机笔记本样本（v2）读得出页表");
+        let parse = |s: &str| Content::parse(&serde_json::from_str(s).unwrap());
+        let c = parse(include_str!("../../../testdata/renggu/book.content"));
+        assert_eq!((c.file_type.as_str(), c.pages.page_ids().len()), ("epub", 523), "v1 形状照旧用 pages");
+        assert_eq!(c.pages.page_ids()[0], "f02e9084-d864-46f3-a07e-ae84ba19d344");
+        let v2 = parse(r#"{"fileType":"epub","formatVersion":2,"cPages":{"pages":[{"id":"c","idx":{"timestamp":"1:2","value":"bc"}},{"id":"a","idx":{"timestamp":"1:2","value":"ba"}},{"id":"x","idx":{"timestamp":"1:2","value":"bb"},"deleted":{"timestamp":"1:3","value":1}},{"id":"b","idx":{"timestamp":"1:2","value":"bb"}}]}}"#);
+        assert_eq!(v2.pages.page_ids(), ["a", "b", "c"], "v2 形状按 idx 排、去掉已删页");
+        let odd = parse(r#"{"fileType":"epub","pages":["p1"],"cPages":{"pages":[{"id":5,"deleted":true}]}}"#);
+        assert_eq!(odd.pages.page_ids(), ["p1"], "cPages 形状不认识也不影响 v1 解析");
+        let real_v2 = parse(include_str!("../../../testdata/seven_styles/book.content"));
+        assert_eq!(real_v2.pages.page_ids(), ["1ab4edce-0a88-4271-9624-9b6abe2673e5", "0439fde3-2b3d-4f33-8735-fb44134c5efc"], "真机笔记本样本（v2）读得出页表");
         let m: Metadata = serde_json::from_str(r#"{"visibleName":"人骨拼圖","type":"DocumentType","parent":"","lastModified":"1"}"#).unwrap();
         assert!(m.is_live_document());
         let t: Metadata = serde_json::from_str(r#"{"visibleName":"x","type":"DocumentType","parent":"trash"}"#).unwrap();
@@ -149,6 +133,8 @@ mod tests {
         assert_eq!(d.file_type(), None, "没有 .content");
         std::fs::write(lib.join("u1.content"), r#"{"fileType":"pdf","pages":["p1","p2"],"x":{"y":[1]}}"#).unwrap();
         assert_eq!(d.file_type().as_deref(), Some("pdf"));
+        let c = d.content().unwrap();
+        assert_eq!((c.file_type.as_str(), c.pages.page_ids()), ("pdf", vec!["p1", "p2"]), "一次读出 fileType 与页表");
         std::fs::write(lib.join("u1.content"), r#"{"fileType":"#).unwrap();
         assert_eq!(d.file_type(), None, "半截文件");
         std::fs::write(lib.join("u1/a.rm"), b"x").unwrap();
