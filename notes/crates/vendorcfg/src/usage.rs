@@ -91,7 +91,8 @@ impl<Extra: Clone + Serialize + DeserializeOwned> Ledger<Extra> {
 /// 用量全 0——方便用户先把价格填上）；账本里出现过但不在预置表里的（比如用过的自定义模型）也补进来。
 /// 花费只在用户填过单价（`prices`，缺省 0）时才算，没填就是 `null`，网页只显示 token 数不显示金额——理由见
 /// crate 头注"花费不做官方定价表"。`transcribe-serve`/`mind-serve` 此前各写一份逐行相同的版本。
-pub fn usage_profile<C: crate::VendorConfig, E>(cfg: &C, presets: &[crate::Preset], usage: &UsageBook<E>) -> serde_json::Value {
+pub fn usage_profile<C: crate::VendorConfig, E>(cfg: &C, usage: &UsageBook<E>) -> serde_json::Value {
+    let presets = C::presets();
     let mut keys: Vec<String> = presets.iter().map(|p| p.id.to_string()).collect();
     for k in usage.by_model.keys() {
         if !keys.contains(k) {
@@ -163,7 +164,7 @@ mod tests {
         let mut book: UsageBook = UsageBook::default();
         book.by_model.insert("m1".into(), ModelUsage { calls: 2, ok: 2, prompt_tokens: 2000, completion_tokens: 1000, ..Default::default() });
         book.by_model.insert("custom:x".into(), ModelUsage { calls: 1, ok: 1, prompt_tokens: 10, ..Default::default() });
-        let v = usage_profile(&cfg, TEST_PRESETS, &book);
+        let v = usage_profile(&cfg, &book);
         let rows = v.as_array().unwrap();
         assert_eq!(rows.iter().map(|r| r["id"].as_str().unwrap()).collect::<Vec<_>>(), ["m1", "m2", "custom:x"], "预置全列（没用过的用量 0），账本里的自定义模型补在后面");
         assert_eq!(rows[0]["active"], true);

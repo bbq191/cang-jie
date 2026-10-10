@@ -32,7 +32,7 @@ pub mod usage;
 pub use preset::{
     apply_common, key_masked, key_source, migrate_legacy, provider_for_base_url, public_json,
     remap_retired_preset, resolve_base_url, resolve_key, resolve_model, resolve_provider, usage_key, KeySource, Preset,
-    Price, VendorConfig, DASHSCOPE, DEEPSEEK, GEMINI, KEY_ENV, OPENAI,
+    Price, VendorConfig, DASHSCOPE, DEEPSEEK, ENV_PROVIDER, GEMINI, KEY_ENV, OPENAI, PROVIDERS,
 };
 pub use cell::ConfigCell;
 pub use chat::{parse_chat_reply, post_chat, ChatClient, ChatReply, ClientCache};

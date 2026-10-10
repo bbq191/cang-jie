@@ -143,6 +143,15 @@ impl TranscribeConfig {
 mod tests {
     use super::*;
 
+    /// 预置表里每一项的 `provider` 必须跟它 baseUrl 认出的厂商一致：不然同一账号的 key 按预置存一格、按自定义地址
+    /// 又认到另一格（09-08 真机踩过的 key 找不到）。
+    #[test]
+    fn preset_providers_match_base_url_table() {
+        for p in PRESETS {
+            assert_eq!(vendorcfg::provider_for_base_url(p.base_url), Some(p.provider), "{}", p.id);
+        }
+    }
+
     #[test]
     fn key_priority_and_masking_scoped_by_provider() {
         let mut c = TranscribeConfig::default();

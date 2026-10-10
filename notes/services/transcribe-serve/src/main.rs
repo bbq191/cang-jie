@@ -137,7 +137,7 @@ fn main() {
                 Err(_) => (false, 0),
             };
             let (cfg, usage) = (s.cfg(), s.ledger.snapshot());
-            Ok(Reply::ok(&serde_json::json!({"config": cfg.public(), "usageByModel": vendorcfg::usage::usage_profile(&cfg, config::PRESETS, &usage), "usage": usage, "failures": s.failures.list(), "inkReachable": ink, "pending": pending})))
+            Ok(Reply::ok(&serde_json::json!({"config": cfg.public(), "usageByModel": vendorcfg::usage::usage_profile(&cfg, &usage), "usage": usage, "failures": s.failures.list(), "inkReachable": ink, "pending": pending})))
         }))
         .get("/config", bind(&st, |s, _| Ok(Reply::ok(&s.cfg().public()))))
         .put("/config", bind(&st, |s, r| {

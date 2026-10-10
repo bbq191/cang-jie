@@ -9,6 +9,13 @@ pub const OPENAI: &str = "https://api.openai.com/v1";
 pub const GEMINI: &str = "https://generativelanguage.googleapis.com/v1beta/openai/";
 pub const DEEPSEEK: &str = "https://api.deepseek.com/v1";
 
+/// 已知厂商：provider 标识 → 官方 OpenAI 兼容 baseUrl。按 baseUrl 认厂商（[`provider_for_base_url`]）查这张表；
+/// 加厂商在这加一行（2026-10-10 由 if 链改表驱动）。
+pub const PROVIDERS: &[(&str, &str)] = &[("dashscope", DASHSCOPE), ("openai", OPENAI), ("gemini", GEMINI), ("deepseek", DEEPSEEK)];
+
+/// 环境变量 [`KEY_ENV`] 只给这个厂商兜底（变量名就是它家的），不能被误当成别家的 key。
+pub const ENV_PROVIDER: &str = "dashscope";
+
 /// baseUrl 兜底认厂商：一个厂商的 key 对它旗下所有模型都通用，不该按"这个具体型号在不在预置表里"来
 /// 分格——2026-09-08 真机在 mind-serve 那边踩过这个坑（那边预置表是文字模型，没收视觉模型
 /// `qwen3-vl-plus`，老配置迁移时判成"没匹配上"落进 `custom` 格，切到同样是 DashScope 的 `qwen-plus`
@@ -22,17 +29,7 @@ pub fn provider_for_base_url(base_url: &str) -> Option<&'static str> {
     // 认不出厂商、落进 custom 桶存 key，之后切到 Gemini 预置又找不到这把 key——复现过 §03w 那次
     // provider 隔离 bug 的同款体验。两侧一起 trim 后比较，不管常量以后是否再改是否带斜杠都稳。
     let b = base_url.trim_end_matches('/');
-    if b == DASHSCOPE.trim_end_matches('/') {
-        Some("dashscope")
-    } else if b == OPENAI.trim_end_matches('/') {
-        Some("openai")
-    } else if b == GEMINI.trim_end_matches('/') {
-        Some("gemini")
-    } else if b == DEEPSEEK.trim_end_matches('/') {
-        Some("deepseek")
-    } else {
-        None
-    }
+    PROVIDERS.iter().find(|(_, url)| url.trim_end_matches('/') == b).map(|(id, _)| *id)
 }
 
 /// 一个预置模型选项：网页下拉给的都是"已知能用"的组合，不需要用户自己填 baseUrl。`provider` 决定这条
@@ -89,7 +86,7 @@ pub fn resolve_key(keys: &BTreeMap<String, String>, provider: &str, env: Option<
     if let Some(k) = keys.get(provider).map(|s| s.trim()).filter(|s| !s.is_empty()) {
         return Some(k.to_string());
     }
-    if provider == "dashscope" {
+    if provider == ENV_PROVIDER {
         return env.map(|e| e.trim().to_string()).filter(|e| !e.is_empty());
     }
     None
@@ -98,7 +95,7 @@ pub fn resolve_key(keys: &BTreeMap<String, String>, provider: &str, env: Option<
 pub fn key_source(keys: &BTreeMap<String, String>, provider: &str) -> KeySource {
     if keys.get(provider).map(|k| !k.trim().is_empty()).unwrap_or(false) {
         KeySource::Config
-    } else if provider == "dashscope" && std::env::var(KEY_ENV).map(|e| !e.trim().is_empty()).unwrap_or(false) {
+    } else if provider == ENV_PROVIDER && std::env::var(KEY_ENV).map(|e| !e.trim().is_empty()).unwrap_or(false) {
         KeySource::Env
     } else {
         KeySource::None
@@ -373,6 +370,15 @@ mod tests {
         assert_eq!(resolve_provider(PRESETS, "a", ""), "dashscope");
         assert_eq!(resolve_provider(PRESETS, "custom", DEEPSEEK), "deepseek", "预置里没有，但 baseUrl 认得出来");
         assert_eq!(resolve_provider(PRESETS, "custom", "https://x.example/v1"), "custom", "两边都认不出来才落 custom");
+    }
+
+    #[test]
+    fn every_known_provider_is_recognized_by_its_base_url() {
+        for (id, url) in PROVIDERS {
+            assert_eq!(provider_for_base_url(url), Some(*id));
+        }
+        assert_eq!(provider_for_base_url("https://x.example/v1"), None);
+        assert!(PROVIDERS.iter().any(|(id, _)| *id == ENV_PROVIDER), "环境变量兜底的厂商必须是已知厂商");
     }
 
     #[test]

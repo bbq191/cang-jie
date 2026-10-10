@@ -58,7 +58,7 @@ fn main() {
     let router = Router::new()
         .get("/status", bind(&st, |s, _| {
             let (cfg, usage) = (s.cfg(), s.ledger.snapshot());
-            Ok(Reply::ok(&serde_json::json!({"config": cfg.public(), "usageByModel": vendorcfg::usage::usage_profile(&cfg, config::PRESETS, &usage), "usage": usage})))
+            Ok(Reply::ok(&serde_json::json!({"config": cfg.public(), "usageByModel": vendorcfg::usage::usage_profile(&cfg, &usage), "usage": usage})))
         }))
         .get("/config", bind(&st, |s, _| Ok(Reply::ok(&s.cfg().public()))))
         .put("/config", bind(&st, |s, r| {
