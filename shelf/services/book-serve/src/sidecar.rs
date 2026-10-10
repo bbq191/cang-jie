@@ -4,6 +4,7 @@
 //! 对方的字段语义（2026-09-06 从 staging.rs 拆出）。
 use serde::{Deserialize, Serialize};
 use rmsvc_core::fs::write_atomic;
+use rmsvc_core::wire::{DeliverStatus, RenderStatus};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -23,24 +24,25 @@ pub struct Delivered {
     pub deliver: Option<DeliverCheck>,
 }
 
-/// 异步落库的结果：`status` = pending（后台线程跑着）/ ok / failed。`message` 是回执文案（成功＝"已加入 xochitl《...》"；
+/// 异步落库的结果：`status` = pending（后台线程跑着）/ ok / failed（[`DeliverStatus`]，2026-10-10 起是枚举，线上仍是这几个小写字符串；
+/// 旧边车里的历史值如 `cancelled` 读成 `Unknown`，网页按"不是 ok 也不是 pending"显示）。`message` 是回执文案（成功＝"已加入 xochitl《...》"；
 /// 失败＝错误原因）。落库只有整本上传 / 大文件通道两条路，都是一步到位、没有分步进度。旧边车里的 `optimize` 字段
 /// （书架 2026-10-07 前的「优化」结果）解析时当未知字段忽略，下次改写边车时自然消失。
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 pub struct DeliverCheck {
-    pub status: String,
+    pub status: DeliverStatus,
     pub message: String,
     pub at: u64,
 }
 
-/// 渲染自检结果：`status` = pending（等 xochitl 渲染）/ ok / onopen（大文件通道的 EPUB，首次打开才渲染）/ timeout。
+/// 渲染自检结果：`status` = pending（等 xochitl 渲染）/ ok / onopen（大文件通道的 EPUB，首次打开才渲染）/ timeout（[`RenderStatus`]）。
 /// 2026-10-07 前还有 `warn`（页数远低于按字数估的期望页数）和 `expected` 字段：书改在电脑上用 sheng-ren 优化、有它的质量门把关后删掉，
 /// 旧边车里的 `expected` 解析时忽略，旧的 `warn` 记录照样显示页数。
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 pub struct RenderCheck {
     pub uuid: String,
     pub pages: u64,
-    pub status: String,
+    pub status: RenderStatus,
     pub at: u64,
 }
 
@@ -134,18 +136,33 @@ mod tests {
         assert_eq!(path_for(&book).file_name().unwrap(), ".b.epub.delivered");
         assert!(read(&book).is_none());
         update(&book, |d| d.native = Some(7)).unwrap();
-        update(&book, |d| d.render = Some(RenderCheck { uuid: "u".into(), pages: 3, status: "ok".into(), at: 1 })).unwrap();
+        update(&book, |d| d.render = Some(RenderCheck { uuid: "u".into(), pages: 3, status: RenderStatus::Ok, at: 1 })).unwrap();
         let d = read(&book).unwrap();
         assert_eq!(d.native, Some(7));
         assert_eq!(d.render.as_ref().map(|r| r.pages), Some(3));
         // 旧版边车（无 render 字段）照读；带已退役字段的也照读、字段忽略：`direction`（按书方向，2026-09-30 撤）、
         // `source`（CLI 洗书原始输入，CLI 09-18 砍）、`deliver.progress`（按卷拆分投递进度，09-30 撤）
         std::fs::write(path_for(&book), br#"{"native":1,"koreader":2,"direction":"rtl","source":{"name":"a.pdf","bytes":9},"deliver":{"status":"ok","message":"m","at":3,"progress":{"done":1,"total":2}}}"#).unwrap();
-        let deliver = Some(DeliverCheck { status: "ok".into(), message: "m".into(), at: 3 });
+        let deliver = Some(DeliverCheck { status: DeliverStatus::Ok, message: "m".into(), at: 3 });
         assert_eq!(read(&book), Some(Delivered { native: Some(1), render: None, deliver }));
         remove(&book);
         assert!(read(&book).is_none());
         remove(&book);
+    }
+
+    /// 状态改成枚举（2026-10-10）后：已知值写出的字节跟以前的字符串逐字节一致；旧边车里的历史值（书架还"优化"书时取消留下的
+    /// `cancelled`、2026-10-07 前的 `warn`）照常读，认不出的读成 `Unknown`，不让整份边车解析失败（网页上的落库状态就不会凭空消失）。
+    #[test]
+    fn status_enums_keep_wire_strings_and_read_legacy_values() {
+        let d = Delivered { native: Some(1), render: Some(RenderCheck { uuid: "u".into(), pages: 2, status: RenderStatus::Onopen, at: 3 }), deliver: Some(DeliverCheck { status: DeliverStatus::Pending, message: String::new(), at: 4 }) };
+        assert_eq!(serde_json::to_string(&d).unwrap(), r#"{"native":1,"render":{"uuid":"u","pages":2,"status":"onopen","at":3},"deliver":{"status":"pending","message":"","at":4}}"#);
+        let t = tempfile::tempdir().unwrap();
+        let book = t.path().join("b.epub");
+        std::fs::write(path_for(&book), br#"{"native":1,"render":{"uuid":"u","pages":7,"status":"warn","at":1},"deliver":{"status":"cancelled","message":"m","at":2}}"#).unwrap();
+        let d = read(&book).expect("带历史值的旧边车照读");
+        assert_eq!((d.deliver.unwrap().status, d.render.unwrap().status), (DeliverStatus::Unknown, RenderStatus::Warn));
+        std::fs::write(path_for(&book), br#"{"render":{"uuid":"u","pages":0,"status":"whatever","at":1}}"#).unwrap();
+        assert_eq!(read(&book).and_then(|d| d.render).map(|r| r.status), Some(RenderStatus::Unknown));
     }
 
     /// 普通书名的边车名跟改动前逐字节一致（设备上已有的边车必须照常认）；拼出来正好 255 字节的也还是老格式。

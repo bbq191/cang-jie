@@ -68,14 +68,14 @@ impl Staging {
         //   页数（≠ 0）就会误判成"已渲染"。所以先等它出现（书库目录有变化才查，最多 PLACEHOLDER_PAGES_WAIT）；
         //   通常替换前复制大文件的那几秒里早就写好了，这里不会真等。
         let (pages, status) = match up.pages {
-            Some(n) => (n as u64, "ok"),
+            Some(n) => (n as u64, RenderStatus::Ok),
             None => {
                 let lib = self.delivery.library_dir();
                 let n = rmsvc_core::fswatch::wait_for(lib, PLACEHOLDER_PAGES_DEBOUNCE, PLACEHOLDER_PAGES_WAIT, || rmsvc_core::xochitl::page_count(lib, &up.uuid));
-                (n.unwrap_or(0), "onopen")
+                (n.unwrap_or(0), RenderStatus::Onopen)
             }
         };
-        let _ = self.set_render(name, sidecar::RenderCheck { uuid: up.uuid, pages, status: status.into(), at: rmsvc_core::clock::now_secs() });
+        let _ = self.set_render(name, sidecar::RenderCheck { uuid: up.uuid, pages, status, at: rmsvc_core::clock::now_secs() });
         let stem = formats::stem_of(name);
         Ok(Some(DeliverOutcome {
             message: format!("《{stem}》{} MB 超过网页上传上限，已直接写入 xochitl 书库；首次打开需重新渲染，请稍候", size >> 20),
@@ -92,7 +92,7 @@ impl Staging {
         self.deliverable(name)?;
         let busy = self.busy_guard(name, "")?;
         let now = rmsvc_core::clock::now_secs();
-        let _ = self.set_deliver_check(name, sidecar::DeliverCheck { status: "pending".into(), message: String::new(), at: now });
+        let _ = self.set_deliver_check(name, sidecar::DeliverCheck { status: DeliverStatus::Pending, message: String::new(), at: now });
         let (this, owned_name, folder) = (self.clone(), name.to_string(), folder.to_string());
         let queued = jobs.run(Box::new(move || {
             let name = owned_name;
@@ -102,8 +102,8 @@ impl Staging {
                     .unwrap_or_else(|_| Err("落库过程内部异常（已捕获，不影响其他操作）".to_string()));
                 let at = rmsvc_core::clock::now_secs();
                 let (status, message) = match &result {
-                    Ok(o) => ("ok".to_string(), o.message.clone()),
-                    Err(e) => ("failed".to_string(), e.clone()),
+                    Ok(o) => (DeliverStatus::Ok, o.message.clone()),
+                    Err(e) => (DeliverStatus::Failed, e.clone()),
                 };
                 let _ = this.set_deliver_check(&name, sidecar::DeliverCheck { status, message, at });
                 if let Ok(DeliverOutcome { render: Some(plan), .. }) = result {
@@ -116,7 +116,7 @@ impl Staging {
         }));
         if let Err(e) = queued {
             // 作业连同忙锁一起被丢弃了：把边车里的 pending 收成失败，别让网页一直显示"处理中"
-            let _ = self.set_deliver_check(name, sidecar::DeliverCheck { status: "failed".into(), message: e.clone(), at: now });
+            let _ = self.set_deliver_check(name, sidecar::DeliverCheck { status: DeliverStatus::Failed, message: e.clone(), at: now });
             return Err(e);
         }
         Ok(())

@@ -142,7 +142,7 @@ fn spawn_deliver_runs_in_background_records_result_then_clears_busy() {
     let e = s.list().into_iter().find(|e| e.name == "d.pdf").unwrap();
     assert!(!e.busy);
     let dc = e.delivered.and_then(|d| d.deliver).expect("应该写了异步落库结果");
-    assert_eq!(dc.status, "failed", "测试环境 xochitl 不可达，落库必然失败");
+    assert_eq!(dc.status, DeliverStatus::Failed, "测试环境 xochitl 不可达，落库必然失败");
 }
 
 #[test]
@@ -270,7 +270,7 @@ fn onopen_render_record_upgrades_to_ok_once_xochitl_rewrites_page_count() {
     s.ensure().unwrap();
     s.stage_new("big.epub", &comic_epub_with_real_images(&[12, 13])).unwrap();
     std::fs::write(lib.join("u1.content"), r#"{"pageCount":2}"#).unwrap();
-    s.set_render("big.epub", sidecar::RenderCheck { uuid: "u1".into(), pages: 2, status: "onopen".into(), at: 1 }).unwrap();
+    s.set_render("big.epub", sidecar::RenderCheck { uuid: "u1".into(), pages: 2, status: RenderStatus::Onopen, at: 1 }).unwrap();
     let rc = |s: &Staging| s.list()[0].delivered.clone().unwrap().render.unwrap();
     assert_eq!((rc(&s).status.as_str(), rc(&s).pages), ("onopen", 2), "没打开过：保持 onopen");
     std::fs::write(lib.join("u1.content"), r#"{"pageCount":351}"#).unwrap();
@@ -287,10 +287,10 @@ fn onopen_with_unknown_placeholder_pages_waits_for_epubindex() {
     let s = staging_in(t.path().join("staging"), x, 1024 * 1024, None);
     s.ensure().unwrap();
     s.stage_new("big.epub", &comic_epub_with_real_images(&[12, 13])).unwrap();
-    s.set_render("big.epub", sidecar::RenderCheck { uuid: "u1".into(), pages: 0, status: "onopen".into(), at: 1 }).unwrap();
+    s.set_render("big.epub", sidecar::RenderCheck { uuid: "u1".into(), pages: 0, status: RenderStatus::Onopen, at: 1 }).unwrap();
     let rc = |s: &Staging| s.list()[0].delivered.clone().unwrap().render.unwrap();
     std::fs::write(lib.join("u1.content"), r#"{"pageCount":2}"#).unwrap();
-    assert_eq!(rc(&s).status, "onopen", "只有占位的页数、没有 .epubindex：不算渲染过");
+    assert_eq!(rc(&s).status, RenderStatus::Onopen, "只有占位的页数、没有 .epubindex：不算渲染过");
     std::fs::write(lib.join("u1.epubindex"), b"x").unwrap();
     std::fs::write(lib.join("u1.content"), r#"{"pageCount":351}"#).unwrap();
     assert_eq!((rc(&s).status.as_str(), rc(&s).pages), ("ok", 351), ".epubindex 重新出现 = 真书渲染过");
@@ -332,9 +332,9 @@ fn long_book_name_sidecar_full_lifecycle() {
     let car = sidecar::path_for(&s.dir.join(&name));
     assert!(car.is_file() && car.file_name().unwrap().len() <= 255);
     // 启动修复：pending → failed
-    s.set_deliver_check(&name, sidecar::DeliverCheck { status: "pending".into(), ..Default::default() }).unwrap();
+    s.set_deliver_check(&name, sidecar::DeliverCheck { status: DeliverStatus::Pending, ..Default::default() }).unwrap();
     assert_eq!(s.recover_interrupted(), (1, 0));
-    assert_eq!(sidecar::read(&s.dir.join(&name)).unwrap().deliver.unwrap().status, "failed");
+    assert_eq!(sidecar::read(&s.dir.join(&name)).unwrap().deliver.unwrap().status, DeliverStatus::Failed);
     // 孤儿清理：有书的短名边车不动；再放一个普通孤儿 + 一个短名孤儿，都清掉
     let orphan_long = sidecar::file_name_for(&format!("{}zz.pdf", "书".repeat(81)));
     std::fs::write(s.dir.join(&orphan_long), b"{}").unwrap();
@@ -403,16 +403,16 @@ fn recover_interrupted_fixes_stale_pending_and_removes_tmp() {
     let t = tempfile::tempdir().unwrap();
     let s = staging(&t);
     let name = s.stage_new("a.epub", &mini_epub(&[("OEBPS/a.xhtml", "<p>x</p>")])).unwrap();
-    s.set_deliver_check(&name, sidecar::DeliverCheck { status: "pending".into(), ..Default::default() }).unwrap();
-    s.set_render(&name, sidecar::RenderCheck { status: "pending".into(), ..Default::default() }).unwrap();
+    s.set_deliver_check(&name, sidecar::DeliverCheck { status: DeliverStatus::Pending, ..Default::default() }).unwrap();
+    s.set_render(&name, sidecar::RenderCheck { status: RenderStatus::Pending, ..Default::default() }).unwrap();
     let ok = s.stage_new("ok.epub", &mini_epub(&[("OEBPS/a.xhtml", "<p>y</p>")])).unwrap();
-    s.set_deliver_check(&ok, sidecar::DeliverCheck { status: "ok".into(), message: "已加入".into(), ..Default::default() }).unwrap();
+    s.set_deliver_check(&ok, sidecar::DeliverCheck { status: DeliverStatus::Ok, message: "已加入".into(), ..Default::default() }).unwrap();
     std::fs::write(s.dir.join(".a.epub.optimizing.tmp"), vec![0u8; 1000]).unwrap();
     std::fs::write(s.dir.join(".123.0.landing.tmp"), vec![0u8; 1000]).unwrap();
     assert_eq!(s.recover_interrupted(), (1, 2), "只修 pending 的那本，清 2 个半成品（旧版优化 + 跨分区入库）");
     let d = sidecar::read(&s.dir.join(&name)).unwrap();
-    assert_eq!(d.deliver.unwrap().status, "failed");
-    assert_eq!(d.render.unwrap().status, "timeout");
+    assert_eq!(d.deliver.unwrap().status, DeliverStatus::Failed);
+    assert_eq!(d.render.unwrap().status, RenderStatus::Timeout);
     assert_eq!(sidecar::read(&s.dir.join(&ok)).unwrap().deliver.unwrap().message, "已加入", "已完成的记录不动");
     assert!(!s.dir.join(".a.epub.optimizing.tmp").exists());
     assert_eq!(s.recover_interrupted(), (0, 0), "幂等");
@@ -466,7 +466,7 @@ fn list_caches_sidecar_and_onopen_page_count_until_files_change() {
     let s = staging_in(t.path().join("staging"), Arc::new(Xochitl::new("127.0.0.1:1", &lib, 1)), 1024 * 1024, None);
     s.ensure().unwrap();
     s.stage_new("a.epub", b"PK").unwrap();
-    s.set_render("a.epub", RenderCheck { uuid: U.into(), pages: 2, status: "onopen".into(), at: 1 }).unwrap();
+    s.set_render("a.epub", RenderCheck { uuid: U.into(), pages: 2, status: RenderStatus::Onopen, at: 1 }).unwrap();
     std::fs::write(lib.join(format!("{U}.content")), r#"{"pageCount":2}"#).unwrap();
     let rc = |s: &Staging| s.list()[0].delivered.clone().unwrap().render.unwrap();
     assert_eq!((rc(&s).status.as_str(), rc(&s).pages), ("onopen", 2));
@@ -642,7 +642,7 @@ fn deliver_oversized_epub_uses_direct_channel_placeholder_then_real_file() {
     let d = sidecar::read(&s.dir().join("big.epub")).unwrap();
     assert!(d.native.is_some(), "应记一笔已加入原生");
     let rc = d.render.unwrap();
-    assert_eq!(rc.status, "onopen", "EPUB 首次打开才渲染，先记 onopen");
+    assert_eq!(rc.status, RenderStatus::Onopen, "EPUB 首次打开才渲染，先记 onopen");
     assert!(uuid_epub.file_name().unwrap().to_string_lossy().starts_with(&rc.uuid));
 }
 
@@ -793,10 +793,10 @@ fn list_persists_onopen_to_ok_upgrade() {
     let s = staging_in(t.path().join("staging"), Arc::new(Xochitl::new("127.0.0.1:1", &lib, 1)), 0, None);
     s.ensure().unwrap();
     s.stage_new("big.epub", b"PK").unwrap();
-    s.set_render("big.epub", RenderCheck { uuid: U.into(), pages: 3, status: "onopen".into(), at: 1 }).unwrap();
+    s.set_render("big.epub", RenderCheck { uuid: U.into(), pages: 3, status: RenderStatus::Onopen, at: 1 }).unwrap();
     std::fs::write(lib.join(format!("{U}.content")), r#"{"pageCount":3}"#).unwrap();
     let rc = |s: &Staging| s.list()[0].delivered.clone().unwrap().render.unwrap();
-    assert_eq!(rc(&s).status, "onopen", "页数没变＝还没打开过");
+    assert_eq!(rc(&s).status, RenderStatus::Onopen, "页数没变＝还没打开过");
     std::fs::write(lib.join(format!("{U}.content")), r#"{"pageCount":412}"#).unwrap();
     assert_eq!((rc(&s).status.as_str(), rc(&s).pages), ("ok", 412));
     let stored = sidecar::read(&s.dir().join("big.epub")).unwrap().render.unwrap();
@@ -895,14 +895,14 @@ fn spawn_deliver_queues_behind_running_job() {
     std::thread::sleep(std::time::Duration::from_millis(100));
     let e = s.list().into_iter().find(|e| e.name == "q.pdf").unwrap();
     assert!(e.busy, "排队期间算处理中");
-    assert_eq!(e.delivered.and_then(|d| d.deliver).map(|d| d.status), Some("pending".to_string()));
+    assert_eq!(e.delivered.and_then(|d| d.deliver).map(|d| d.status), Some(DeliverStatus::Pending));
     go_tx.send(()).unwrap();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     while s.is_busy("q.pdf") && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     let dc = s.list().into_iter().find(|e| e.name == "q.pdf").unwrap().delivered.and_then(|d| d.deliver).unwrap();
-    assert_eq!(dc.status, "failed", "轮到它才真去投（测试里 xochitl 不可达）");
+    assert_eq!(dc.status, DeliverStatus::Failed, "轮到它才真去投（测试里 xochitl 不可达）");
 }
 
 /// 列表派生字段逐字移植网页 `stgClean` / `stgTitle` / `isBookDone`（2026-10-10，契约 S4）。用例取自网页注释与真实书名；
@@ -923,12 +923,12 @@ fn list_title_series_and_done_match_web_rules() {
     for (name, title, series) in cases {
         assert_eq!((list_title(name).as_str(), series_of(&list_title(name)).as_str()), (title, series), "{name:?}");
     }
-    let d = |native: Option<u64>, st: Option<&str>| Delivered { native, render: None, deliver: st.map(|s| sidecar::DeliverCheck { status: s.into(), message: String::new(), at: 1 }) };
-    assert!(is_done(false, Some(&d(Some(5), Some("ok")))));
+    let d = |native: Option<u64>, st: Option<DeliverStatus>| Delivered { native, render: None, deliver: st.map(|s| sidecar::DeliverCheck { status: s, message: String::new(), at: 1 }) };
+    assert!(is_done(false, Some(&d(Some(5), Some(DeliverStatus::Ok)))));
     assert!(is_done(false, Some(&d(Some(5), None))));
-    assert!(!is_done(true, Some(&d(Some(5), Some("ok")))), "处理中不算");
-    assert!(!is_done(false, Some(&d(Some(5), Some("failed")))), "上次加入失败不算");
-    assert!(!is_done(false, Some(&d(None, Some("ok")))), "没加入过");
+    assert!(!is_done(true, Some(&d(Some(5), Some(DeliverStatus::Ok)))), "处理中不算");
+    assert!(!is_done(false, Some(&d(Some(5), Some(DeliverStatus::Failed)))), "上次加入失败不算");
+    assert!(!is_done(false, Some(&d(None, Some(DeliverStatus::Ok)))), "没加入过");
     assert!(!is_done(false, Some(&d(Some(0), None))), "JS !!0 为假");
     assert!(!is_done(false, None));
     // 列表里带上这三个字段

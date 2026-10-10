@@ -12,6 +12,7 @@ use serde::Serialize;
 use rmsvc_core::asset::{AssetItem, AssetStore};
 use rmsvc_core::formats::{self, BOOK_EXTS};
 use rmsvc_core::fs::{plain_name, same_content, unique_path, Content};
+use rmsvc_core::wire::{DeliverStatus, RenderStatus};
 use rmsvc_core::xochitl::Delivery;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -94,7 +95,7 @@ pub fn is_done(busy: bool, delivered: Option<&Delivered>) -> bool {
         return false;
     }
     let Some(d) = delivered else { return false };
-    if d.deliver.as_ref().is_some_and(|c| c.status == "failed") {
+    if d.deliver.as_ref().is_some_and(|c| c.status == DeliverStatus::Failed) {
         return false;
     }
     d.native.is_some_and(|n| n != 0)

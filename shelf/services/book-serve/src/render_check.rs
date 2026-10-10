@@ -13,6 +13,7 @@ use crate::staging::{RenderPlan, Staging};
 use rmsvc_core::clock::now_secs as now;
 use rmsvc_core::events::EventBus;
 use rmsvc_core::fswatch::wait_for;
+use rmsvc_core::wire::RenderStatus;
 use rmsvc_core::xochitl::{page_count, DocInfo};
 use std::cell::RefCell;
 use std::path::Path;
@@ -29,19 +30,19 @@ pub fn run(staging: &Staging, bus: &EventBus, lib_dir: &Path, plan: &RenderPlan)
 
 /// 同 [`run`]，防抖与总时限可调（单测用毫秒级值，不真等 3 秒 / 10 分钟）。
 pub fn run_with(staging: &Staging, bus: &EventBus, lib_dir: &Path, plan: &RenderPlan, debounce: Duration, timeout: Duration) {
-    let write = |uuid: &str, pages: u64, status: &str| {
+    let write = |uuid: &str, pages: u64, status: RenderStatus| {
         // 用户在自检期间把书从母版库删了（投完就删很常见）：结果没处可记，静默跳过，不当成失败刷日志。
         if !staging.has(&plan.name) {
             return;
         }
-        let rc = RenderCheck { uuid: uuid.to_string(), pages, status: status.to_string(), at: now() };
+        let rc = RenderCheck { uuid: uuid.to_string(), pages, status, at: now() };
         if let Err(e) = staging.set_render(&plan.name, rc) {
             println!("[book-serve] 渲染自检记录《{}》失败: {e}", plan.name);
         }
         bus.publish_with("books", "render", serde_json::json!({"name": plan.name, "status": status, "pages": pages}));
         println!("[book-serve] 渲染自检《{}》: {status} pages={pages} uuid={uuid}", plan.name);
     };
-    write("", 0, "pending");
+    write("", 0, RenderStatus::Pending);
     // 认出来就记住：之后每次书库有动静只查页数，不再逐字节比对。页边距在认出的那一刻登记（书还没渲染完也一样）。
     let claimed: RefCell<Option<String>> = RefCell::new(None);
     let check = || {
@@ -53,14 +54,14 @@ pub fn run_with(staging: &Staging, bus: &EventBus, lib_dir: &Path, plan: &Render
             *claimed.borrow_mut() = Some(uuid);
         }
         let uuid = claimed.borrow().clone()?;
-        page_count(lib_dir, &uuid).map(|pages| write(&uuid, pages, "ok"))
+        page_count(lib_dir, &uuid).map(|pages| write(&uuid, pages, RenderStatus::Ok))
     };
     if wait_for(lib_dir, debounce, timeout, check).is_none() {
         let uuid = claimed.borrow().clone().unwrap_or_default();
         if uuid.is_empty() {
             println!("[book-serve] 渲染自检《{}》：{} 秒内没在书库里认出这本书（不认别人的书，也不登记页边距）", plan.name, timeout.as_secs());
         }
-        write(&uuid, 0, "timeout");
+        write(&uuid, 0, RenderStatus::Timeout);
     }
 }
 
