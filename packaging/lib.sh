@@ -64,6 +64,7 @@ CJ_TMP_DIRS=""
 CJ_NL="
 "
 cj_tmp_register() { CJ_TMP_FILES="$CJ_TMP_FILES$1$CJ_NL"; }
+# shellcheck disable=SC2120  # 参数 -d 由 source 本库的脚本传（如 verify-on-device.sh），单看本文件见不到调用
 cj_mktemp() {
     if [ "${1:-}" = "-d" ]; then
         CJ_TMP="$(mktemp -d)" || return 1
