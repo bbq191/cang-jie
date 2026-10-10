@@ -1,56 +1,49 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 700" font-family="Noto Sans CJK SC, sans-serif">
-<defs><marker id="mk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker><marker id="mr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b0451f"/></marker><marker id="mg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2f7d45"/></marker></defs>
-<rect x="0" y="0" width="1240" height="700" fill="#fbfbfa"/>
-<text x="620.0" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">「整理」页现行形态（2026-09-30 按 app.js 核对）</text>
-<text x="620.0" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">目标：任意时刻屏幕上最多只有“一章”的内容——滚动这件事本身消失；网页在网关的 ui/notes.js 的 renderNotes 里</text>
-<rect x="24" y="84" width="300" height="90" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
-<text x="174.0" y="104" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">顶部：选书 · 重扫 · 搜索框</text>
-<text x="174.0" y="127" text-anchor="middle" font-size="10" fill="#3a3a3a">子视图：浏览 · 整理 · 回收站 · 导入 md 文档</text>
-<text x="174.0" y="142" text-anchor="middle" font-size="10" fill="#3a3a3a">（导入 md 默认隐藏，由书架「实验室」开关控制）</text>
-<rect x="24" y="200" width="560" height="150" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
-<text x="36" y="220" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">第一层：未导出 / 已导出 两个 tab</text>
-<text x="36" y="243" text-anchor="start" font-size="10" fill="#3a3a3a">归属判据 everExported：这章是否被“推送”过（notebookGeneratedAt / obsidianExportedAt 非空）</text>
-<text x="36" y="258" text-anchor="start" font-size="10" fill="#3a3a3a">推送过一次就稳定留在「已导出」，不再随内容编辑跳来跳去</text>
-<text x="36" y="273" text-anchor="start" font-size="10" fill="#3a3a3a">“有没有新改动待推送”降级成已导出内的一个提示（fullySynced 徽章），信息不丢</text>
-<text x="36" y="288" text-anchor="start" font-size="10" fill="#3a3a3a">“未归章”条目永远在未导出、无同步徽章/按钮（/sync 按章 idx 定位）</text>
-<polyline points="304,174 304,200" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
-<rect x="24" y="376" width="560" height="96" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
-<text x="36" y="396" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">第二层：章节标签（只列当前 tab 下有活条目的章）</text>
-<text x="36" y="419" text-anchor="start" font-size="10" fill="#3a3a3a">点哪章只显示哪一章的卡片；默认“跟随”——编辑动作不会把画面甩到别的章</text>
-<text x="36" y="434" text-anchor="start" font-size="10" fill="#3a3a3a">只有显式点 tab、或「推送本章」成功后，才自动跳到下一个待处理章</text>
-<polyline points="304,350 304,376" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
-<rect x="24" y="498" width="560" height="180" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
-<text x="36" y="518" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">章头</text>
-<text x="36" y="541" text-anchor="start" font-size="10" fill="#3a3a3a">章名 · 条数 · 同步徽章（📓 设备笔记本 / Obsidian）</text>
-<text x="36" y="556" text-anchor="start" font-size="10" fill="#3a3a3a">「推送本章」：依次调 generate + export，按每条的“去处”决定各做哪样</text>
-<text x="36" y="571" text-anchor="start" font-size="10" fill="#3a3a3a">  两边都没变化 → “已同步，没有变化”；md 写出后提示里给下载链接</text>
-<text x="36" y="586" text-anchor="start" font-size="10" fill="#3a3a3a">推送中显示进度条；结果文案停留 3 s，期间不被自动刷新冲掉</text>
-<polyline points="304,472 304,498" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
-<rect x="620" y="84" width="596" height="594" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
-<text x="918.0" y="104" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">条目卡片（.entry，一条一张，手机/桌面同一份 DOM）</text>
-<rect x="640" y="118" width="556" height="58" rx="10" fill="#f1f1ef" stroke="#8a8a8a" stroke-width="1.6"/>
-<text x="654" y="142" text-anchor="start" font-size="12" font-weight="bold" fill="#1a1a1a">裁图</text>
-<text x="654" y="162" text-anchor="start" font-size="10.5" fill="#3a3a3a">自渲染的手写笔迹 PNG（纯勾画条目没有）</text>
-<rect x="640" y="184" width="556" height="58" rx="10" fill="#f1f1ef" stroke="#8a8a8a" stroke-width="1.6"/>
-<text x="654" y="208" text-anchor="start" font-size="12" font-weight="bold" fill="#1a1a1a">勾画原文引用</text>
-<text x="654" y="228" text-anchor="start" font-size="10.5" fill="#3a3a3a">勾画自带的精确文字（不经识别）</text>
-<rect x="640" y="250" width="556" height="58" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
-<text x="654" y="274" text-anchor="start" font-size="12" font-weight="bold" fill="#1a1a1a">转写/校对文本框</text>
-<text x="654" y="294" text-anchor="start" font-size="10.5" fill="#3a3a3a">缺省填 text ?? draft；改即存（失焦落盘）</text>
-<rect x="640" y="316" width="556" height="58" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
-<text x="654" y="340" text-anchor="start" font-size="12" font-weight="bold" fill="#1a1a1a">  ↳ 行首标记自动定样式</text>
-<text x="654" y="360" text-anchor="start" font-size="10.5" fill="#3a3a3a">## 大标题 · ### 小标题 · 1. 编号 · - 圆点 · 口 / - [ ] 复选框（= 设备内置样式）</text>
-<rect x="640" y="382" width="556" height="58" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
-<text x="654" y="406" text-anchor="start" font-size="12" font-weight="bold" fill="#1a1a1a">去处图标按钮（循环）</text>
-<text x="654" y="426" text-anchor="start" font-size="10.5" fill="#3a3a3a">设备笔记本 → Obsidian → 两处（缺省两处）</text>
-<rect x="640" y="448" width="556" height="58" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
-<text x="654" y="472" text-anchor="start" font-size="12" font-weight="bold" fill="#1a1a1a">卡片头徽章</text>
-<text x="654" y="492" text-anchor="start" font-size="10.5" fill="#3a3a3a">页码/小节 · 样式 · 同步（只显示本条去处的）· 状态</text>
-<rect x="640" y="514" width="556" height="58" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
-<text x="654" y="538" text-anchor="start" font-size="12" font-weight="bold" fill="#1a1a1a">问 AI 区</text>
-<text x="654" y="558" text-anchor="start" font-size="10.5" fill="#3a3a3a">勾「问AI」+ 问题框 + 提问；回答直接显示，不折叠</text>
-<rect x="640" y="580" width="556" height="58" rx="10" fill="#fdf1ec" stroke="#c0602d" stroke-width="1.6"/>
-<text x="654" y="604" text-anchor="start" font-size="12" font-weight="bold" fill="#1a1a1a">两个独立按钮</text>
-<text x="654" y="624" text-anchor="start" font-size="10.5" fill="#3a3a3a">「重新转写」（失败时红色“转写失败”）· 「不要了」（→回收站）</text>
-<text x="918" y="660" text-anchor="middle" font-size="10.5" fill="#555">点「重新转写」/「提问」：原地显示“转写中… → ✓ token 入X出Y”，停留 3 s 再重画</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 600" font-family="Noto Sans SC, Noto Sans CJK SC, PingFang SC, sans-serif">
+<rect width="100%" height="100%" fill="#FFFFFF"/>
+<defs><marker id="op-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#64748B"/></marker><marker id="op-arr-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EF4444"/></marker><marker id="op-arr-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#10B981"/></marker><marker id="op-arr-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2563EB"/></marker></defs>
+<text x="600.0" y="36" font-size="18" fill="#1F2937" font-weight="bold" text-anchor="middle">「笔记」页的布局</text>
+<text x="600.0" y="60" font-size="12" fill="#6B7280" text-anchor="middle">页面代码在 gateway/ui/notes.js 的 renderNotes；目标：屏幕上同一时刻最多只有一章的内容</text>
+<rect x="20" y="84" width="560" height="76" rx="8" fill="#EFF6FF" stroke="#2563EB" stroke-width="1.5"/>
+<text x="34" y="106" font-size="13" fill="#1F2937" font-weight="bold">顶部：选书 · 「重扫」 · 搜索框</text>
+<text x="34" y="126" font-size="12" fill="#1F2937">子视图：浏览 · 整理 · 回收站 · 导入 md 文档</text>
+<text x="34" y="144" font-size="12" fill="#6B7280">（导入 md 默认隐藏，由「管理 → 实验室」开关控制）</text>
+<rect x="20" y="182" width="560" height="104" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="34" y="204" font-size="13" fill="#1F2937" font-weight="bold">「整理」第一层：未导出 / 已导出</text>
+<text x="34" y="224" font-size="12" fill="#1F2937">一章归哪边只看“推送过没有”（everExported）</text>
+<text x="34" y="242" font-size="12" fill="#1F2937">推送过就稳定留在「已导出」；之后又改了，章头徽章 ✓ 变 …</text>
+<text x="34" y="260" font-size="12" fill="#1F2937">没有章的条目（未归章）永远在「未导出」、没有推送按钮</text>
+<rect x="20" y="308" width="560" height="86" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="34" y="330" font-size="13" fill="#1F2937" font-weight="bold">第二层：章节标签</text>
+<text x="34" y="350" font-size="12" fill="#1F2937">只列当前 tab 下有条目的章；点哪章只显示哪章</text>
+<text x="34" y="368" font-size="12" fill="#1F2937">编辑不会把画面甩到别的章；点 tab 或推送成功后才跳下一章</text>
+<rect x="20" y="416" width="560" height="104" rx="8" fill="#ECFDF5" stroke="#10B981" stroke-width="1.5"/>
+<text x="34" y="438" font-size="13" fill="#1F2937" font-weight="bold">章头</text>
+<text x="34" y="458" font-size="12" fill="#1F2937">章名 · 条数 · 同步徽章（设备笔记本 / Obsidian，✓ = 与当前内容一致）</text>
+<text x="34" y="476" font-size="12" fill="#1F2937">「推送本章」：按每条的去处生成笔记本、导出 md</text>
+<text x="34" y="494" font-size="12" fill="#1F2937">md 下载链接在提示里给（避免被浏览器当弹窗拦）</text>
+<path d="M300,160 L300,180" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#op-arr)"/>
+<path d="M300,286 L300,306" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#op-arr)"/>
+<path d="M300,394 L300,414" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#op-arr)"/>
+<rect x="610" y="84" width="570" height="490" rx="8" fill="none" stroke="#CBD5E1" stroke-width="1.5" stroke-dasharray="6 4"/>
+<text x="626" y="106" font-size="13" fill="#1F2937" font-weight="bold">条目卡片（每条一张）</text>
+<rect x="626" y="120" width="538" height="62" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="640" y="142" font-size="13" fill="#1F2937" font-weight="bold">卡片头</text>
+<text x="640" y="162" font-size="12" fill="#1F2937">页码 · 小节 · 样式 · 本条去处的同步徽章 · 状态</text>
+<rect x="626" y="192" width="538" height="62" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="640" y="214" font-size="13" fill="#1F2937" font-weight="bold">裁图 + 勾画原文</text>
+<text x="640" y="234" font-size="12" fill="#1F2937">手写的灰度裁图（纯勾画没有）；原文来自 .rm，不经识别</text>
+<rect x="626" y="264" width="538" height="62" rx="8" fill="#EFF6FF" stroke="#2563EB" stroke-width="1.5"/>
+<text x="640" y="286" font-size="13" fill="#1F2937" font-weight="bold">文本框</text>
+<text x="640" y="306" font-size="12" fill="#1F2937">显示“定稿，没有就用最新草稿”；失焦即保存；行首标记定样式</text>
+<rect x="626" y="336" width="538" height="62" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="640" y="358" font-size="13" fill="#1F2937" font-weight="bold">去处按钮（循环）</text>
+<text x="640" y="378" font-size="12" fill="#1F2937">设备笔记本 → Obsidian → 两处（缺省两处）</text>
+<rect x="626" y="408" width="538" height="62" rx="8" fill="#ECFDF5" stroke="#10B981" stroke-width="1.5"/>
+<text x="640" y="430" font-size="13" fill="#1F2937" font-weight="bold">问 AI 区</text>
+<text x="640" y="450" font-size="12" fill="#1F2937">勾「问 AI」+ 问题框 +「提问」；回答直接显示</text>
+<rect x="626" y="480" width="538" height="62" rx="8" fill="#FEF2F2" stroke="#EF4444" stroke-width="1.5"/>
+<text x="640" y="502" font-size="13" fill="#1F2937" font-weight="bold">「重新转写」·「不要了」</text>
+<text x="640" y="522" font-size="12" fill="#1F2937">转写失败时卡片标红、按钮显示“转写失败”；不要了 → 回收站</text>
+<text x="20" y="548" font-size="12" fill="#6B7280">「浏览」只列 Mined，按页分组、最近变动的页在前，每条「转入笔记」「不需要」；</text>
+<text x="20" y="568" font-size="12" fill="#6B7280">「回收站」列三种终态的内容，每条「恢复」，另有「全部恢复」「清空回收站」（都要确认）。</text>
 </svg>
