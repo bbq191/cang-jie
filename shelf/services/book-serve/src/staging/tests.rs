@@ -582,6 +582,30 @@ pub(crate) fn fake_xochitl(lib: std::path::PathBuf) -> String {
     addr
 }
 
+/// 模拟 `shelf-mkdir-agent.qmd`：长轮询拉待办，每项在书库里写一份 `CollectionType` 的 `.metadata`（`parent`＝项的上级），
+/// 等价于真机 `Library.createCollection(parent, name)` 落盘的结果。`only_root` 为真时只建根下的（模拟某一级建不出来）。
+/// 返回它建过的（上级, 名字）记录；`stop` 置真后退出。
+pub(crate) fn spawn_agent(q: Arc<MkdirQueue>, lib: PathBuf, only_root: bool, stop: Arc<std::sync::atomic::AtomicBool>) -> Arc<std::sync::Mutex<Vec<(String, String)>>> {
+    let made = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let m2 = made.clone();
+    std::thread::spawn(move || {
+        static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+        while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+            let (items, _) = q.pending_wait(std::time::Duration::from_millis(100)).unwrap();
+            for it in items {
+                if only_root && !it.parent.is_empty() {
+                    continue;
+                }
+                let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let uuid = format!("f{n:07x}-0000-4000-8000-000000000000");
+                std::fs::write(lib.join(format!("{uuid}.metadata")), format!(r#"{{"type":"CollectionType","visibleName":"{}","parent":"{}"}}"#, it.name, it.parent)).unwrap();
+                m2.lock().unwrap().push((it.parent, it.name));
+            }
+        }
+    });
+    made
+}
+
 /// 体积门压到 100 字节，逼所有书都走"超限"分支；书库目录是真目录 + 假 xochitl 服务。
 fn oversized_staging(t: &tempfile::TempDir) -> (Staging, std::path::PathBuf) {
     let lib = t.path().join("xochitl");
@@ -819,4 +843,33 @@ fn low_space_threshold_is_strict_and_unknown_is_not_low() {
     assert!(low_space(Some(LOW_SPACE_BYTES - 1)));
     assert!(!low_space(Some(LOW_SPACE_BYTES)));
     assert!(!low_space(None));
+}
+
+/// 回归（2026-10-10，审计 X-1）：网页「加入」的文件夹是单段名字，在**书库根正下方**找 / 建，跟直接导入按层解析是同一套。
+/// 此前按名字在全库任意层找：书库里只有「漫画/卷01」时选"卷01"，书落进了「漫画」下面那个子文件夹；普通上传和大文件通道都一样。
+#[test]
+fn deliver_folder_resolves_at_root_not_same_named_subfolder() {
+    for oversized in [false, true] {
+        let t = tempfile::tempdir().unwrap();
+        let lib = t.path().join("xochitl");
+        std::fs::create_dir_all(&lib).unwrap();
+        let (top, nested) = ("aaaaaaaa-0000-4000-8000-000000000001", "aaaaaaaa-0000-4000-8000-000000000002");
+        std::fs::write(lib.join(format!("{top}.metadata")), r#"{"type":"CollectionType","visibleName":"漫画","parent":""}"#).unwrap();
+        std::fs::write(lib.join(format!("{nested}.metadata")), format!(r#"{{"type":"CollectionType","visibleName":"卷01","parent":"{top}"}}"#)).unwrap();
+        let x = Arc::new(Xochitl::new(&fake_xochitl(lib.clone()), &lib, 10));
+        let s = Staging::new(t.path().join("staging"), x, if oversized { 100 } else { 1 << 20 });
+        s.ensure().unwrap();
+        let opf = r#"<package version="2.0"><metadata><dc:title>书</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>"#;
+        let container = r#"<container><rootfiles><rootfile full-path="content.opf"/></rootfiles></container>"#;
+        s.stage_new("书.epub", &mini_epub(&[("META-INF/container.xml", container), ("content.opf", opf), ("c1.xhtml", &"字".repeat(100))])).unwrap();
+        let q = Arc::new(MkdirQueue::new(&t.path().join("state"), &lib));
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let made = spawn_agent(q.clone(), lib.clone(), false, stop.clone());
+        s.deliver("书.epub", "卷01", &q).unwrap();
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        let root = rmsvc_core::xochitl::find_child_folder(&lib, "", "卷01").expect("应在根下建出「卷01」");
+        assert_eq!(*made.lock().unwrap(), [(String::new(), "卷01".to_string())], "oversized={oversized}");
+        let doc = std::fs::read_dir(&lib).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).find_map(|n| n.strip_suffix(".epub").map(str::to_string)).expect("书已加入");
+        assert_eq!(rmsvc_core::xochitl::parent_folder_of(&lib, &doc), Some(root), "书落进根下的「卷01」，不是「漫画/卷01」（oversized={oversized}）");
+    }
 }

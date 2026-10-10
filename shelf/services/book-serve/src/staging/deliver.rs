@@ -2,8 +2,7 @@
 use super::*;
 
 /// 落库前等待「建文件夹」代理真的建出来目标文件夹的上限——`shelf-mkdir-agent.qmd` 现为长轮询
-/// （入队即刻响应，旧版是 8 秒一次 Timer 轮询），20 秒足够留出建夹 + 落盘的余量；等不到不算错误，`ensure_folder` 会原样放行，交给
-/// `Xochitl::upload` 现有的"找不到就落书库根"兜底（改动前就有的行为，不是新错误）。
+/// （入队即刻响应，旧版是 8 秒一次 Timer 轮询），20 秒足够留出建夹 + 落盘的余量；等不到不算错误，`ensure_folder` 返回根，书落书库根。
 pub(crate) const FOLDER_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 /// 大文件通道投 EPUB 后等占位 `.content` 写出 pageCount 的上限与防抖（见 `try_deliver_direct`）。
 const PLACEHOLDER_PAGES_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
@@ -29,14 +28,12 @@ impl Staging {
     pub fn deliver(&self, name: &str, folder: &str, mkdir: &MkdirQueue) -> Result<DeliverOutcome, String> {
         let (ct, p) = self.deliverable(name)?;
         let size = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
-        let folder = folder.trim();
-        self.ensure_folder(folder, mkdir);
+        let folder_uuid = self.ensure_folder(folder.trim(), mkdir);
         if self.native_limit > 0 && size > self.native_limit {
             // 超限：走大文件通道（2026-09-20 用户要求突破上传限制，真机验证 PDF 154MB/EPUB 153MB 可行）——
             // 占位文档 + 磁盘上替换成真文件。本机没有 xochitl 书库目录（非设备环境）、超过 `MAX_DIRECT_BYTES`
             // 或造占位失败才拒绝。**不再按卷拆分**（2026-09-30 用户定移除；此前 EPUB 漫画按 NCX、PDF 按书签拆成
             // 若干份分别上传，作为大文件通道之后的回退）。
-            let folder_uuid = if folder.is_empty() { String::new() } else { self.xochitl.find_folder(folder).unwrap_or_default() };
             if let Some(outcome) = self.try_deliver_direct(name, &p, size, &folder_uuid)? {
                 return Ok(outcome);
             }
@@ -53,7 +50,7 @@ impl Staging {
                 comic_margins: book.as_mut().and_then(|b| b.reader_margins()),
             }
         });
-        let message = match self.xochitl.upload_file(&p, name, ct.mime(), folder)? {
+        let message = match self.xochitl.upload_file_into(&p, name, ct.mime(), &folder_uuid)? {
             Delivery::Delivered(_) => format!("已加入 xochitl《{name}》"),
             Delivery::LikelyDelivered(_) => format!("已加入 xochitl《{name}》（设备处理较慢，稍候刷新书库）"),
         };
@@ -69,7 +66,7 @@ impl Staging {
 
     /// 母版库这本书走大文件通道（见 [`Self::upload_large`]）并记好落库/渲染记录：成功 `Ok(Some)`；条件不满足 → `Ok(None)`，
     /// 调用方整本拒绝；占位已上传之后才出的错 → `Err`（不再退回拒绝，否则书库里会留下半成品占位）。
-    /// `folder_uuid` 是目标文件夹的 uuid（空串＝根；按名字找不到也是根，同 `upload_file` 的兜底）。
+    /// `folder_uuid` 是目标文件夹的 uuid（空串＝根，见 [`Self::ensure_folder`]）。
     fn try_deliver_direct(&self, name: &str, p: &Path, size: u64, folder_uuid: &str) -> Result<Option<DeliverOutcome>, String> {
         let Some(up) = self.upload_large(p, name, folder_uuid)? else { return Ok(None) };
         let _ = self.mark_delivered(name);
@@ -123,27 +120,22 @@ impl Staging {
         Ok(Some(LargeUpload { uuid, pages }))
     }
 
-    /// 落库前确保目标文件夹真的存在（2026-09-19，用户反馈"文件夹里写了名字依然不会创建文件夹"）：
-    /// 已经存在（或本来就是空串＝书库根）直接放行；不存在就往 `mkdir` 队列扔一个"建文件夹"请求，
-    /// 同步等 `shelf-mkdir-agent.qmd`（MainView 注入，长轮询 `/mkdir/pending?wait=`，唯一合法的建文件夹路径，
-    /// 外部进程不能直接写 xochitl 书库的 `.metadata`）真的建出来再放行。等不到就超时放弃——不是
-    /// 新错误，[`rmsvc_core::xochitl::Xochitl::upload`] 本来就有"文件夹名找不到就落书库根"的
-    /// best-effort 兜底，改动前就是这个行为，这里只是尽量把"真建出来"这条更好的结果多等一会。
-    pub(crate) fn ensure_folder(&self, folder: &str, mkdir: &MkdirQueue) {
-        if folder.is_empty() || self.xochitl.find_folder(folder).is_some() {
-            return;
+    /// 落库的目标文件夹（网页「加入 xochitl → 文件夹」，单段名字）→ uuid（空串＝书库根）。在**书库根正下方**按名字找，
+    /// 没有就经建文件夹队列请 `shelf-mkdir-agent.qmd` 在根下建、等它真建出来（[`Self::ensure_folder_path`] 的单段情形，
+    /// 最多 [`FOLDER_WAIT_TIMEOUT`]）；等不到就落书库根（2026-09-19 起的行为，不算错误）。名字里的 `/` 是普通字符（《乱马1/2》），不拆。
+    ///
+    /// 2026-10-10 改（审计 X-1）：此前按名字在**全库任意层**找（`Xochitl::find_folder`）再按名字上传，10-07 起直接导入会建出
+    /// 「漫画/卷01」「小说/卷01」这种不同上级下的同名子文件夹，网页选"卷01"时书可能落进某个子文件夹（取 `read_dir` 先扫到的）。
+    /// 现在与直接导入同一套按层解析，上传按 uuid 指定文件夹。
+    pub(crate) fn ensure_folder(&self, folder: &str, mkdir: &MkdirQueue) -> String {
+        if folder.is_empty() {
+            return String::new();
         }
-        // `Ok(0)` = 两次查询之间刚被建出来了，不用等；`Err` = 名字不合法（目前只剩"空"）。
-        if !matches!(mkdir.add(folder), Ok(n) if n > 0) {
-            return;
-        }
-        // `wait_for` 先挂监听再查一次：入队到挂上监听之间代理已经建好的，也不会白等满 20 秒。
-        let lib_dir = self.xochitl.library_dir();
-        rmsvc_core::fswatch::wait_for(lib_dir, render_check::DEBOUNCE, FOLDER_WAIT_TIMEOUT, || self.xochitl.find_folder(folder));
+        self.ensure_folder_path(&[folder], mkdir, FOLDER_WAIT_TIMEOUT).0
     }
 
     /// 按层确保多级文件夹（2026-10-07，直接导入用）：从书库根往下，每一级在上一级正下方按名字找（[`rmsvc_core::xochitl::find_child_folder`]），
-    /// 没有就入队请代理在上一级里建（`MkdirQueue::add_in`，代理调 `Library.createCollection(上一级 uuid, 名字)`），同 [`Self::ensure_folder`]
+    /// 没有就入队请代理在上一级里建（`MkdirQueue::add_in`，代理调 `Library.createCollection(上一级 uuid, 名字)`），
     /// 等它真建出来（每一级最多 `wait`，线上是 [`FOLDER_WAIT_TIMEOUT`]）。某一级等不到 / 入不了队就**停在已经有的那一级**，不往别处落。
     /// 返回（最里层拿到的文件夹 uuid，空串＝根；一共拿到了几级）。`segments` 由调用方拆好（不含空段）。
     pub(crate) fn ensure_folder_path(&self, segments: &[&str], mkdir: &MkdirQueue, wait: std::time::Duration) -> (String, usize) {
@@ -152,7 +144,7 @@ impl Staging {
         for (depth, seg) in segments.iter().enumerate() {
             let find = || self.xochitl.find_child_folder(&parent, seg);
             let found = find().or_else(|| match mkdir.add_in(&parent, seg) {
-                // 两次查询之间刚被建出来了（同 ensure_folder 的 `Ok(0)`）
+                // 两次查询之间刚被建出来了
                 Ok(0) => find(),
                 Ok(_) => rmsvc_core::fswatch::wait_for(lib_dir, render_check::DEBOUNCE, wait, find),
                 Err(e) => {

@@ -61,6 +61,12 @@ pub struct InboxOutcome {
     pub message: String,
 }
 
+/// 书库根下的活文件夹名（去重排序）。
+fn root_folders(lib: &std::path::Path) -> Vec<String> {
+    let names: std::collections::BTreeSet<String> = rmsvc_core::xochitl::live_entries(lib).into_iter().filter(|(_, m)| m.is_folder() && m.parent.is_empty()).map(|(_, m)| m.visible_name).collect();
+    names.into_iter().collect()
+}
+
 impl State {
     pub fn new(paths: &Paths) -> State {
         let cfg = BookConfig::load(paths);
@@ -123,9 +129,11 @@ impl State {
     fn compute_status(&self) -> serde_json::Value {
         serde_json::json!({
             "ok": true,
-            // 原生书库里真实存在的文件夹名（去重排序），给网页「加入原生书库 → 文件夹」下拉候选用——
+            // 原生书库**根下**真实存在的文件夹名（去重排序），给网页「加入原生书库 → 文件夹」下拉候选用——
             // 2026-09-19 取代原来写死的「书库/批注/自定义」三选一预设（`annotFolder` 已删）。
-            "xochitlFolders": rmsvc_core::xochitl::list_folders(self.xochitl.library_dir()),
+            // 2026-10-10 起只列根下的：落库按名字只在书库根正下方找 / 建（`Staging::ensure_folder`），列出子文件夹的名字，
+            // 选了它反而会在根下另建一个同名文件夹。
+            "xochitlFolders": root_folders(self.xochitl.library_dir()),
             // 2026-10-07 删掉网页从来没读过的三项：`uploadReachable`（xochitl 不在时每次白等 3 秒探活）、
             // `nativeUploadLimitBytes`（有大文件通道后不再灰掉超限书）、`spool`（inbox 待处理/失败计数）。
         })
@@ -225,6 +233,8 @@ mod tests {
         assert_eq!(st.status()["xochitlFolders"], serde_json::json!([]));
         // 设备上新建了文件夹：TTL 内仍是缓存的旧值（不重读全部 .metadata）
         std::fs::write(lib.join("f1.metadata"), r#"{"type":"CollectionType","visibleName":"漫画","parent":""}"#).unwrap();
+        // 子文件夹不列（落库只在根下按名字找，见 root_folders）
+        std::fs::write(lib.join("f2.metadata"), r#"{"type":"CollectionType","visibleName":"卷01","parent":"f1"}"#).unwrap();
         assert_eq!(st.status()["xochitlFolders"], serde_json::json!([]), "TTL 内命中缓存");
         st.invalidate_status();
         let s = st.status();

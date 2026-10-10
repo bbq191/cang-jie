@@ -375,7 +375,7 @@ fn receive(body: &mut dyn Read, declared_len: Option<usize>, dest: &Path) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::staging::tests::{fake_xochitl, mini_epub};
+    use crate::staging::tests::{fake_xochitl, mini_epub, spawn_agent};
 
     const U: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
@@ -423,30 +423,6 @@ mod tests {
         assert_ne!(d.uuid, d3.uuid);
         assert_eq!(std::fs::read_dir(t.path().join("import-tmp")).unwrap().count(), 0, "临时文件用完就删");
         assert!(!t.path().join("staging").exists() || std::fs::read_dir(t.path().join("staging")).unwrap().count() == 0, "不进母版库");
-    }
-
-    /// 模拟 `shelf-mkdir-agent.qmd`：长轮询拉待办，每项在书库里写一份 `CollectionType` 的 `.metadata`（`parent`＝项的上级），
-    /// 等价于真机 `Library.createCollection(parent, name)` 落盘的结果。`only_root` 为真时只建根下的（模拟某一级建不出来）。
-    /// 返回它建过的（上级, 名字）记录；`stop` 置真后退出。
-    fn spawn_agent(q: Arc<MkdirQueue>, lib: PathBuf, only_root: bool, stop: Arc<std::sync::atomic::AtomicBool>) -> Arc<std::sync::Mutex<Vec<(String, String)>>> {
-        let made = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let m2 = made.clone();
-        std::thread::spawn(move || {
-            static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
-            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
-                let (items, _) = q.pending_wait(Duration::from_millis(100)).unwrap();
-                for it in items {
-                    if only_root && !it.parent.is_empty() {
-                        continue;
-                    }
-                    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    let uuid = format!("f{n:07x}-0000-4000-8000-000000000000");
-                    std::fs::write(lib.join(format!("{uuid}.metadata")), format!(r#"{{"type":"CollectionType","visibleName":"{}","parent":"{}"}}"#, it.name, it.parent)).unwrap();
-                    m2.lock().unwrap().push((it.parent, it.name));
-                }
-            }
-        });
-        made
     }
 
     /// 书库里（上级, 名字）的活文件夹 uuid。
