@@ -2,7 +2,8 @@ CC ?= gcc
 AARCH64_CC ?= aarch64-linux-gnu-gcc
 
 # 不用 enhance/shared 的特征码扫描 / trampoline：本扩展改的是 xochitl 导入表的一格，不 patch 指令（见 src/ui_font.c 头注）。
-CFLAGS_COMMON = -std=gnu17 -Wall -Wextra -g -ffile-prefix-map=$(CURDIR)=.
+# EXTRA_CFLAGS：CI 传 -Werror（交叉编译零警告门槛）；平常为空，产物与不加时逐字节相同
+CFLAGS_COMMON = -std=gnu17 -Wall -Wextra -g -ffile-prefix-map=$(CURDIR)=. $(EXTRA_CFLAGS)
 
 .PHONY: aarch64 test clean
 
