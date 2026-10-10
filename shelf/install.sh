@@ -25,9 +25,14 @@
 #   2. 旧二进制/单元/qmd 备份进 ~/cangjie-backups/shelf-<时间>/（保留最近 5 份，见 devlib.sh）；
 #   3. 二进制/qmd 一律 cp→暂存→rename 原子替换（不在运行中进程的 inode 上原地写）；
 #   4. /usr 写入在带 trap 的 rw 窗口里，失败/中断也恢复 ro；
-#   5. 只重启"内容有变化或没在跑"的服务，重复跑不打扰正在用的服务。
+#   5. 只重启"内容有变化或没在跑"的服务，重复跑不打扰正在用的服务；
+#   6. 中途失败/被打断后重跑即收敛（2026-10-10）：在跑的进程还是被替换掉的旧二进制（/proc/<pid>/exe 带 "(deleted)"）
+#      也重启；qmd 换上一份就当场记待生效标记，不等到最后；上次中断留下的 .<名>.new.<pid> 暂存文件由 devlib 回收。
 # ═══════════════════════════════════════════════════════════════════════════
 set -eu
+# 生成的目录/文件权限不随调用方的 umask 走（调用方 umask 000 时 ~/.local/bin、备份目录会变成全局可写——
+# root 跑的服务二进制就在里面）。密钥类文件由各服务自己按 0600 写（gateway.json、TLS 私钥）。
+umask 022
 
 usage() {
     cat <<'USAGE_EOF'
@@ -157,7 +162,12 @@ if [ -f "$SRC/uninstall.sh" ]; then
     cj_safe_replace "$SRC/uninstall.sh" "$BIN_DIR/$SHELF_UNINSTALL_BIN" "$BIN_DIR" 755 || { echo "!! 写 shelf-uninstall 失败"; exit 1; }
 fi
 echo "-- 二进制已落 $BIN_DIR"
-if [ -n "$PASSWORD" ]; then "$BIN_DIR/gateway" passwd "$PASSWORD"; fi
+if [ -n "$PASSWORD" ]; then
+    "$BIN_DIR/gateway" passwd "$PASSWORD"
+    # gateway passwd 只改配置文件，运行中的网关要重启才读到新密码（它自己的提示也这么说）；
+    # 旧版只在二进制有变化时才重启网关，重装时只改密码就一直不生效（2026-10-10）
+    CHANGED="$CHANGED gateway"
+fi
 
 # ── 3. systemd（写 /usr rootfs；dm-verity 门；带 trap 的 rw 窗口）──
 UNITS_CHANGED=""
@@ -204,7 +214,7 @@ else
         fi
     done
     if [ "$need" = "1" ]; then
-        cj_with_rootfs_rw write_units || { echo "!! 写 /usr 单元失败（rootfs 已恢复 ro；二进制已更新，单元未完成）。备份在 ${BK:-（本次无需备份）}"; exit 1; }
+        cj_with_rootfs_rw write_units || { echo "!! 写 /usr 单元失败（rootfs 已恢复 ro；二进制已更新，单元未完成）。修好原因后重跑本脚本即可收敛。备份在 ${BK:-（本次无需备份）}"; exit 1; }
         systemctl daemon-reload
         echo "-- 单元已写入 /usr（shelf.target；单个服务可 systemctl disable --now <svc>）"
     else
@@ -215,14 +225,23 @@ else
         if [ -f "$BIN_DIR/$lb" ]; then bk_keep "$BIN_DIR/$lb"; rm -f "$BIN_DIR/$lb"; echo "-- 已清旧命名遗留 $lb"; fi
     done
 fi
-# 只重启"二进制或单元变了，或当前没在跑"的服务——且该服务的单元文件确实在 /usr 里（verity 跳过写单元时，
-# 之前装过的单元照样要重启才能载入新二进制；根本没有单元的服务 systemctl restart 也只会报错，不去碰）
+# 只重启"二进制或单元变了，或当前没在跑，或在跑的还是被替换掉的旧二进制"的服务——且该服务的单元文件确实在 /usr 里
+# （verity 跳过写单元时，之前装过的单元照样要重启才能载入新二进制；根本没有单元的服务 systemctl restart 也只会报错，不去碰）。
+# "旧二进制"：上一轮换上了新二进制却没走到这里（写单元失败退出、ssh 断开），重跑时二进制已相同、CHANGED 为空，
+# 旧版就再也不重启它，服务一直跑旧版直到设备重启（2026-10-10）。原子替换是 rename，旧 inode 被删，
+# /proc/<MainPID>/exe 读出来以 " (deleted)" 结尾。
+runs_stale_exe() {   # SVC：其主进程跑的是已被替换（删除）的文件
+    rs_pid="$(systemctl show "$1" -p MainPID --value 2>/dev/null || true)"
+    case "$rs_pid" in ""|0) return 1 ;; esac
+    case "$(readlink "$CJ_PROC/$rs_pid/exe" 2>/dev/null)" in *" (deleted)") return 0 ;; *) return 1 ;; esac
+}
 if [ "$DO_SYSTEMD" = "1" ] && [ -d "$SRC/systemd" ]; then
     for s in $SEL; do
         svc="$(shelf_svc_of "$s")"
         [ -f "$SYSD/$svc.service" ] || continue
         st="$(systemctl is-active "$svc" 2>/dev/null || true)"
-        if [ "$st" != "active" ] || case " $CHANGED $UNITS_CHANGED " in *" $s "*) true ;; *) false ;; esac; then
+        if [ "$st" != "active" ] || case " $CHANGED $UNITS_CHANGED " in *" $s "*) true ;; *) false ;; esac \
+            || runs_stale_exe "$svc"; then
             systemctl restart "$svc.service" 2>/dev/null || true
         fi
     done
@@ -243,6 +262,18 @@ fi
 
 # ── 3c. qt-resource-rebuilder qmd（qrr 目录在才装；被替换的旧文件备份进 $BK，不在 qrr 目录里留 .bak）──
 QMD_CHANGED=0   # qmd 真的被改动（新装/内容变化/清旧遗留）——只有这时才需要重启 xochitl 才生效
+# qmd_put SRC NAME：备份（内容不同才备份）→ 原子替换 → 真换了就**当场**记待生效标记。
+# 旧版等全部 qmd 写完才记：中途某个写失败（磁盘满等）退出时前面已换的 qmd 没有标记，重跑时它们已与载荷相同、
+# 不再算"改动"，xovi-apply 判"无需生效"，换上的 qmd 要等到哪天设备重启才生效（2026-10-10）。
+qmd_mark() {
+    if [ "$QMD_CHANGED" = "0" ]; then cj_pending_mark shelf-qmd || true; fi
+    QMD_CHANGED=1
+}
+qmd_put() {
+    bk_keep_if_differs "$1" "$QRR/$2"
+    cj_safe_replace "$1" "$QRR/$2" "$CJ_STAGE_DIR" 644 || { echo "!! 写 $2 失败（已换上的 qmd 已记待生效标记；修好原因后重跑即可）"; exit 1; }
+    if [ "$CJ_REPLACED" = "1" ]; then qmd_mark; fi
+}
 if [ -d "$QRR" ] && [ -d "$SRC/xovi" ]; then
     if sel_has font; then
         # 固件按 os-release 的 IMG_VERSION 主次号挑 qmd（3.27 与 3.28 的 FormatFont.qml 结构不同）。
@@ -253,9 +284,7 @@ if [ -d "$QRR" ] && [ -d "$SRC/xovi" ]; then
         echo "-- 固件 $FWV（IMG_VERSION）"
         Q="font-menu-dynamic.qmd"; [ "$FWV" = "3.27" ] && Q="font-menu-dynamic-3.27.qmd"
         if [ -f "$SRC/xovi/$Q" ]; then
-            bk_keep_if_differs "$SRC/xovi/$Q" "$QRR/font-menu-dynamic.qmd"
-            cj_safe_replace "$SRC/xovi/$Q" "$QRR/font-menu-dynamic.qmd" "$CJ_STAGE_DIR" 644 || { echo "!! 写字体菜单 qmd 失败"; exit 1; }
-            if [ "$CJ_REPLACED" = "1" ]; then QMD_CHANGED=1; fi
+            qmd_put "$SRC/xovi/$Q" font-menu-dynamic.qmd
             echo "-- 字体菜单 qmd（$Q）已放 $QRR/"
         else
             echo "-- 载荷无 xovi/$Q，跳过字体菜单 qmd"
@@ -265,9 +294,7 @@ if [ -d "$QRR" ] && [ -d "$SRC/xovi" ]; then
             [ "$q" = "font-menu-dynamic.qmd" ] && continue
             if [ "$FWV" = "3.27" ]; then echo "-- 固件 3.27：跳过 $q（锚点按 3.28 核对）"; continue; fi
             if [ -f "$SRC/xovi/$q" ]; then
-                bk_keep_if_differs "$SRC/xovi/$q" "$QRR/$q"
-                cj_safe_replace "$SRC/xovi/$q" "$QRR/$q" "$CJ_STAGE_DIR" 644 || { echo "!! 写 $q 失败"; exit 1; }
-                if [ "$CJ_REPLACED" = "1" ]; then QMD_CHANGED=1; fi
+                qmd_put "$SRC/xovi/$q" "$q"
                 echo "-- qmd $q 已放 $QRR/（3.28 锚点）"
             fi
         done
@@ -278,23 +305,21 @@ if [ -d "$QRR" ] && [ -d "$SRC/xovi" ]; then
         # 漫画页边距代理、原地替换后找回阅读位置的代理（都是 DocumentView 注入）、阅读器单击翻页（DocumentView/DeviceSceneView 注入）
         for q in $(shelf_svc_qmds book); do
             if [ -f "$SRC/xovi/$q" ]; then
-                bk_keep_if_differs "$SRC/xovi/$q" "$QRR/$q"
-                cj_safe_replace "$SRC/xovi/$q" "$QRR/$q" "$CJ_STAGE_DIR" 644 || { echo "!! 写 $q 失败"; exit 1; }
-                if [ "$CJ_REPLACED" = "1" ]; then QMD_CHANGED=1; fi
+                qmd_put "$SRC/xovi/$q" "$q"
                 echo "-- qmd $q 已放 $QRR/（3.28 锚点）"
             fi
         done
     fi
     # 旧版本遗留的变体名
     for lq in $SHELF_LEGACY_QMDS; do
-        if [ -e "$QRR/$lq" ]; then rm -f "$QRR/$lq"; QMD_CHANGED=1; fi
+        if [ -e "$QRR/$lq" ]; then rm -f "$QRR/$lq"; qmd_mark; fi
     done
     cj_stage_cleanup
 else
     echo "-- （无 qt-resource-rebuilder 目录或载荷无 xovi/，跳过字体菜单/界面字体/回收站/建夹/漫画页边距/阅读位置/阅读器翻页 qmd；字体仍可用 fontconfig 装入）"
 fi
 if [ "$QMD_CHANGED" = "1" ]; then
-    cj_pending_mark shelf-qmd || true   # 让 packaging/deploy-xovi-apply.sh 知道有 qmd 待生效
+    # 待生效标记已在 qmd_put / qmd_mark 里当场记过（让 packaging/deploy-xovi-apply.sh 知道有 qmd 待生效）
     # ⚠ qmd 只落盘，要 xochitl 重新启动才注入。2026-09-25 起统一靠整机重启生效（packaging/deploy-xovi-apply.sh，
     #   内部 devlib.sh 的 cj_xochitl_apply）：单独 restart xochitl 有概率在它退出时崩溃并触发整机重启（见 devlib.sh 头注 H3）。
     #   ⚠ 绝不在 xovi 已生效时跑 xovi/start：它会让运行中的 xochitl SEGV → 整机自动重启（2026-09-20 真机事故）。
