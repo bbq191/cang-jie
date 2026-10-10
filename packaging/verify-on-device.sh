@@ -611,9 +611,12 @@ collect_host_flight() {
 }
 
 # ═════════════════════════════ 主流程 ═════════════════════════════
-WORK="$(mktemp -d)"   # 本机临时目录，只放下面三个文件；收尾逐个删再 rmdir（不递归删目录）
+# 本机临时目录，只放下面三个文件；收尾逐个删再 rmdir（不递归删目录）。登记给 lib.sh 的 cj_cleanup，并挂上
+# INT/TERM/HUP（2026-10-10：旧版只挂 EXIT——bash/dash 收到 TERM/HUP 默认直接退出、不跑 EXIT trap，目录留在 /tmp）
+cj_traps
+cj_mktemp -d; WORK=$CJ_TMP
 DUMP="$WORK/dump.txt"; ITEMS="$WORK/items.txt"; : > "$ITEMS"
-trap 'rm -f "$DUMP" "$ITEMS" "$WORK/err.txt"; rmdir "$WORK" 2>/dev/null || true' EXIT
+cj_tmp_register "$DUMP"; cj_tmp_register "$ITEMS"; cj_tmp_register "$WORK/err.txt"
 if [ -n "$FROM" ]; then
     cp "$FROM" "$DUMP"
     dh="$(awk -F'\t' '$1 == "HOST" { print $2; exit }' "$DUMP")"   # 采集时记下的真实主机；旧 dump 没有就用参数

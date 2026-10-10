@@ -33,6 +33,10 @@
 # **整机重启**（reboot）：2026-09-25 起查明停止 xochitl 本身就有概率在退出途中崩溃（devlib.sh 头注 H3），
 # 跟摘没摘 .so 无关；xovi 已生效时也**不要** xovi/start。
 #
+# 中途失败 / 断线 / 被打断（2026-10-10）：某步失败照常记账、继续卸后面的；设备连不上了就停（其余记"未执行"），
+# 连回来后重跑同一条命令——每一步都是"有就删、没有就跳过"，重复跑不报错。不做"回滚"（把卸掉的再装回去）：
+# 卸载的中间态本来就是可再次卸载的状态，回装反而要再开 rw 窗口、再动 extensions.d。
+#
 # 用法：./uninstall-all.sh [host] [--purge] [--dry-run] [--skip a,b,...]
 #   host      默认 10.11.99.1（USB）
 #   --dry-run 只在本机打印将执行的卸载步骤，不连设备、不删任何东西
@@ -65,10 +69,8 @@ parse_step_args "$@"
 if [ "$DRY" = "1" ]; then
     echo "═══ dry-run：只打印计划，不连设备（目标 root@$HOST，purge=$PURGE）═══"
 else
-    require_device
-    trap 'device_awake_release' EXIT
-    trap 'exit 130' INT TERM HUP
-    device_awake_hold   # 卸载期间别让设备自动休眠（带超时的唤醒锁，见 lib.sh）
+    cj_traps                # 退出/被打断时：放唤醒锁、删本机临时文件（lib.sh）
+    require_device --hold   # 连通检查同一次往返拿唤醒锁：卸载期间别让设备自动休眠（带超时，见 lib.sh）
 fi
 
 # 卸一个 /usr 单元 + 清它的推送载荷目录。$1=单元名 $2=载荷目录名（$HOME 下）其余=载荷目录里的已知文件（先文件后子目录）
@@ -149,6 +151,10 @@ if [ -e "$CJ_HOME/.local/bin/gateway" ]; then
     echo "-- 书架二进制仍在（卸载未彻底完成，见上）——保留 shelf-pkg 载荷，可写后重跑本脚本"
     exit 0
 fi
+# shelf-pkg.tar.new：deploy.sh 推送中途被打断时留下的整包 tar（约 20MB，2026-10-10 补；只删常规文件）
+if [ -f "$CJ_HOME/shelf-pkg.tar.new" ] && [ ! -L "$CJ_HOME/shelf-pkg.tar.new" ]; then
+    rm -f "$CJ_HOME/shelf-pkg.tar.new"; echo "-- 已删推送中断留下的 shelf-pkg.tar.new"
+fi
 # shelf-pkg / shelf-pkg.new 是 deploy.sh 推来的载荷（固定路径、必须是真目录且含 shelf/ 载荷标记才删）
 for d in "$CJ_HOME/shelf-pkg" "$CJ_HOME/shelf-pkg.new"; do
     [ -d "$d" ] || continue
@@ -160,14 +166,22 @@ DEVICE_SCRIPT
 
 # 通用收尾：暂存目录里只有本项目的中转文件，清掉（不在 STEP_ORDER 里、不计入"已卸载"清单）。
 # koreader-sidebar-entry.qmd / cangjie-icons.rcc 是已退役的 sidebar-entry 部署中断时可能留下的暂存件
+# 同一次往返顺手放掉部署唤醒锁（2026-10-10，省收尾那一次 ssh；打印 CJ-AWAKE-RELEASED 后本机不再去放）
 cleanup_staging() {
-    dev_script <<'DEVICE_SCRIPT'
+    cs_out="$(dev_script "$(awake_release_arg)" <<'DEVICE_SCRIPT'
 set -eu
+REL="$1"
 for f in "$CJ_STAGE_DIR"/.*.new.* "$CJ_STAGE_DIR"/koreader-sidebar-entry.qmd "$CJ_STAGE_DIR"/cangjie-icons.rcc; do
-    [ -f "$f" ] && rm -f "$f"
+    if [ -f "$f" ]; then rm -f "$f"; fi
 done
 cj_stage_cleanup
+if [ "$REL" != - ] && [ -w "$REL" ] && echo cangjie-deploy > "$REL" 2>/dev/null; then echo CJ-AWAKE-RELEASED; fi
 DEVICE_SCRIPT
+)" || { [ -z "$cs_out" ] || printf '%s\n' "$cs_out"; return 1; }
+    if printf '%s\n' "$cs_out" | grep -q '^CJ-AWAKE-RELEASED$' && [ -n "${CJ_AWAKE_REBOOTED_FILE:-}" ]; then
+        echo released > "$CJ_AWAKE_REBOOTED_FILE"
+    fi
+    [ -z "$cs_out" ] || printf '%s\n' "$cs_out" | grep -v '^CJ-AWAKE-RELEASED$' || true
 }
 
 # 逆序执行 install-all 的步骤表；配置覆写/纯动作步骤没有卸载语义，跳过
@@ -178,7 +192,7 @@ for step in $REV; do
     fn="uninstall_$(echo "$step" | tr '-' '_')"
     run_step "$step" "$fn"
 done
-[ "$DRY" = "1" ] || cleanup_staging || true
+[ "$DRY" = "1" ] || [ "$CJ_DEVICE_LOST" = 1 ] || cleanup_staging || true
 
 echo
 echo "═══════════════════════════════════════════════════════════"

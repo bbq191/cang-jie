@@ -42,6 +42,14 @@
 #   --dry-run     只在本机打印将执行的步骤，不连设备、不执行任何东西
 #   --skip        逗号分隔，跳过指定步骤（可选值见 lib.sh STEP_ORDER）
 # 装前依次：固件安全门（sha256 白名单）→ 设备预检（root/磁盘空间/xovi·qrr·dm-verity 现状，只读）。
+#
+# 中途失败 / 断线 / 被打断（2026-10-10）：
+#   · 某步失败：照常记账、继续装后面互不相干的步骤，但**最后不整机重启**（xovi-apply 记"前置条件不满足"）——落盘了的
+#     改动留着待生效标记/待换入区，修好后重跑 install-all 时随最后一步一起生效，或手动 sh deploy-xovi-apply.sh；
+#     不自动回滚已装好的步骤：各步骤自身是原子的（暂存→校验→换位、rw 窗口带 trap），回滚要再碰一次 /usr 与
+#     extensions.d，比停在"可重跑"的状态更危险。
+#   · 设备连不上了：后面的步骤不再执行（记"未执行"），设备回来后重跑同一条命令。
+#   · Ctrl-C / 终端关闭 / kill：当前子步骤跑完（或随之中止）后退出 130/129/143；本机临时文件清掉，唤醒锁放掉。
 # ═══════════════════════════════════════════════════════════════════════════
 set -eu
 cd "$(dirname "$0")"
@@ -68,16 +76,15 @@ parse_step_args "$@"
 if [ "$DRY" = "1" ]; then
     echo "═══ dry-run：只打印计划，不连设备（目标 root@$HOST）═══"
 else
+    cj_traps   # 退出/被打断时：放唤醒锁、删本机临时文件（lib.sh）
     require_device
     export CJ_DEVICE_OK="$HOST"   # 各步骤脚本不再各自重复做连通检查（见 lib.sh 的 require_device）
-    fw_gate "$FORCE" || exit 1
-    preflight_device || exit 1
-    # 整轮装期间别让设备自动休眠（带超时的唤醒锁，见 lib.sh；最后一步整机重启时锁随之消失）
-    trap 'device_awake_release' EXIT
-    trap 'exit 130' INT TERM HUP
-    device_awake_hold
+    # 固件安全门 + 只读预检 + 整轮唤醒锁（别让设备在两次 ssh 之间自动休眠；带超时，最后一步整机重启时锁随之消失）
+    # 同一次往返（lib.sh 的 preflight_device）
+    preflight_device "$FORCE" || exit 1
 fi
 
+APPLY_HELD=0
 for step in $STEP_ORDER; do
     script="$(step_script "$step")"
     [ -f "$script" ] || { echo "!! 步骤表里的 $step 没有对应脚本 $script"; exit 1; }
@@ -94,14 +101,24 @@ for step in $STEP_ORDER; do
             fi
             run_step "清理已移除:$rstep" "uninstall_$(echo "$rstep" | tr '-' '_')"
         done
-        if ! skip_has xovi-apply && [ "$DRY" = "0" ]; then
+        if [ -n "$FAILED" ] && ! skip_has xovi-apply && [ "$CJ_DEVICE_LOST" = 0 ]; then
+            # 有步骤失败时不整机重启：已落盘的改动留着待生效（标记在 /run、待换入 .so 在 /home），修好后重跑一起生效
+            echo; echo "═══ $step ═══"
+            echo "-- 前面有步骤失败（$FAILED），这轮不让改动生效、不整机重启"
+            APPLY_HELD=1
+            NOTAPPL="$NOTAPPL
+   $step：前面有步骤失败，没整机重启——修好后重跑 install-all（会顺带生效），或现在就 sh deploy-xovi-apply.sh $HOST"
+            continue
+        fi
+        if ! skip_has xovi-apply && [ "$DRY" = "0" ] && [ "$CJ_DEVICE_LOST" = 0 ]; then
             echo
             echo "⚠ 下一步会检查是否需要让改动生效（有待生效改动才整机重启，约 1 分钟：打断阅读/书写）。完全不想重启：Ctrl-C，或重跑时加 --skip xovi-apply。"
         fi
+        # CJ_AWAKE_RELEASE=1：最后一步不整机重启时由它在同一次往返里放掉唤醒锁（省收尾那一次 ssh）
         if [ "$FORCE_APPLY" = "1" ]; then
-            run_step "$step" sh "$script" "$HOST" --force
+            run_step "$step" env CJ_AWAKE_RELEASE=1 sh "$script" "$HOST" --force
         else
-            run_step "$step" sh "$script" "$HOST"
+            run_step "$step" env CJ_AWAKE_RELEASE=1 sh "$script" "$HOST"
         fi
     else
         run_step "$step" sh "$script" "$HOST"
@@ -111,7 +128,7 @@ done
 echo
 echo "═══════════════════════════════════════════════════════════"
 print_step_summary 已安装
-if skip_has xovi-apply && [ "$DRY" = "0" ]; then
+if { skip_has xovi-apply || [ "$APPLY_HELD" = 1 ] || word_in xovi-apply "$NOTRUN"; } && [ "$DRY" = "0" ]; then
     echo "⚠ 跳过了 xovi-apply：本轮若有 xovi 扩展/qmd 落盘改动，要等整机重启才生效——方便时设备上 reboot，或电脑上 sh deploy-xovi-apply.sh $HOST"
 fi
 echo "─── 不在本脚本范围内，需要手动处理 ───"

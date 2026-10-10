@@ -1026,7 +1026,7 @@ check "chrony-cn 不带 devlib.sh 直接跑 → 退出 1、提示拼 devlib.sh�
 # 连接次数（2026-09-25 合批）：推送一次 ssh 建目录 + 每文件一次 scp + 一次 ssh 取全部 md5
 new_sandbox; : > "$CJ_SIM_LOG"
 ( cd "$PKG" && CJ_SKIP_BUILD=1 DEFER_XOVI_START=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >/dev/null 2>&1; rc=$?
-check "hl-snap 部署：4 次 ssh（连通检查/建目录/取 md5/安装）+ 4 次 scp（旧版 13 次 ssh）" test "$rc" -eq 0 -a "$(count_log '^ssh')" = 4 -a "$(count_log '^scp')" = 4
+check "hl-snap 部署：3 次 ssh（连通检查/比对/复核并安装，2026-10-10 比对与安装合并）+ 4 次 scp（旧版 13 次 ssh）" test "$rc" -eq 0 -a "$(count_log '^ssh')" = 3 -a "$(count_log '^scp')" = 4
 new_sandbox; SOP="$R/home/root/.cangjie-stage"; mkdir -p "$SOP"; echo keep > "$SOP/battop.new"; : > "$CJ_SIM_LOG"
 ( cd "$PKG" && CJ_SIM_SCP_CORRUPT=hl-snap.so CJ_SKIP_BUILD=1 DEFER_XOVI_START=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
 check "合批推送：只有 md5 对不上的那个文件被删，其余已校验的暂存文件保留、没进入安装" test "$rc" -ne 0 -a ! -e "$R/home/root/hl-snap/hl-snap.so" -a -f "$R/home/root/hl-snap/deploy/install.sh" -a -n "$(grep 'md5 对不上：hl-snap.so' "$R/out.txt")" -a -z "$(grep "^ssh sh '.*/deploy/install.sh" "$CJ_SIM_LOG")"
@@ -1100,7 +1100,7 @@ new_sandbox; export CJ_SKIP_BUILD=1
 ( cd "$PKG" && DEFER_XOVI_START=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >/dev/null 2>&1
 : > "$CJ_SIM_LOG"
 ( cd "$PKG" && DEFER_XOVI_START=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
-check "hl-snap 重复部署（载荷没变）：不再 scp，3 次 ssh（连通/建目录+取 md5/安装），不做二次 md5 复核" test "$rc" -eq 0 -a "$(count_log '^scp')" = 0 -a "$(count_log '^ssh')" = 3 -a "$(grep -c '未变，不重传' "$R/out.txt")" = 4
+check "hl-snap 重复部署（载荷没变）：不再 scp，2 次 ssh（连通/比对并安装），不做二次 md5 复核" test "$rc" -eq 0 -a "$(count_log '^scp')" = 0 -a "$(count_log '^ssh')" = 2 -a "$(grep -c '未变，不重传' "$R/out.txt")" = 4
 echo tampered >> "$R/home/root/hl-snap/deploy/devlib.sh"; : > "$CJ_SIM_LOG"
 ( cd "$PKG" && DEFER_XOVI_START=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
 check "hl-snap 部署：设备上暂存的某个文件被改过 → 只重传它、复核后装" test "$rc" -eq 0 -a "$(count_log '^scp')" = 1 -a -n "$(grep 'md5 一致：devlib.sh' "$R/out.txt")" -a "$(md5sum < "$R/home/root/hl-snap/deploy/devlib.sh")" = "$(md5sum < "$PKG/devlib.sh")"
@@ -1209,7 +1209,8 @@ export CJ_SKIP_BUILD=1 SHELF_NO_BUILD=1 CJ_ALLOWLIST_LOCAL="$R/allow.local.txt"
 xovi_live on; : > "$CJ_SIM_LOG"
 ( cd "$PKG" && run sh install-all.sh 127.0.0.1 --force --skip chrony-cn,timezone-cn ) >"$R/out.txt" 2>&1; rc=$?
 check "唤醒锁：install-all 整轮只拿一次，锁带超时（到点内核自动放，host 中断也不会让设备永远不睡）" test "$rc" -eq 0 -a "$(count_log 'wake_lock')" = 1 -a "$(cat "$R/sys/power/wake_lock")" = "cangjie-deploy 1200000000000"
-check "唤醒锁：最后一步整机重启了 → 锁随重启消失，不再连设备去放" test "$(count_log 'wake_unlock')" = 0
+# 2026-10-10 起放锁并进最后一步的设备端脚本（命令行里带着放锁接口路径），所以看实际效果：放锁接口没被写过
+check "唤醒锁：最后一步整机重启了 → 锁随重启消失，不再去放（放锁接口没被写）" test ! -s "$R/sys/power/wake_unlock" -a "$(count_log 'cangjie-deploy > .*wake_unlock')" = 0
 : > "$CJ_SIM_LOG"
 ( cd "$PKG" && run sh install-all.sh 127.0.0.1 --skip chrony-cn,timezone-cn ) >"$R/out.txt" 2>&1; rc=$?
 check "唤醒锁：没重启的一轮 → 结束时放一次（子脚本不提前放）" test "$rc" -eq 0 -a "$(count_log 'wake_lock')" = 1 -a "$(count_log 'wake_unlock')" = 1 -a "$(cat "$R/sys/power/wake_unlock")" = "cangjie-deploy"
@@ -1387,6 +1388,9 @@ check "wifi-watch 上网探测：WiFi 关了（读不到 carrier）→ 删掉状
 
 # shellcheck source=packaging/tests/sim_dev.sh
 . "$HERE/sim_dev.sh"   # 设备端安装/卸载脚本加固（2026-10-10）
+# shellcheck disable=SC1091
+. "$HERE/sim_host.sh"   # 主机端编排加固：中断/断线/回滚/临时文件/ssh 往返（2026-10-10）
+
 # 守卫：真实 HOME 下不该出现任何测试产物
 GUARD_AFTER="$(guard_sig)"
 check "真实 HOME 未被测试触碰（shelf/cangjie-backups/.stage/载荷目录等：无新增、无删除、原有的 mtime 不变）" test "$GUARD_BEFORE" = "$GUARD_AFTER"

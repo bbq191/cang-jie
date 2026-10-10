@@ -76,8 +76,8 @@ sh uninstall-all.sh <host> --skip chrony-boot-wakelock,wifi-watch,xovi-persist,h
 ### 装前检查（任何一项不过，一个步骤都不执行）
 
 1. **`require_device`**：`ssh true` 能否连通（`BatchMode`，`CJ_SSH_TIMEOUT` 秒超时）。不通就打印 ssh 原始报错 + 中文排查步骤（休眠/没插 USB、IP 不对、host key 变了、没配免密），退出 1。单独跑各 `deploy-*.sh` 也先过这一关；在 `install-all.sh` 里只查一次，通过后导出 `CJ_DEVICE_OK=<host>`，后面各步骤见到它就不再重复连（2026-09-25 起，省约 10 次 ssh）。
-2. **`fw_gate` 固件安全门**：见「固件安全门」。
-3. **`preflight_device`**（只读）：必须是 root、`/home/root` 可写；`/home` 剩余空间 < 50MB（`CJ_MIN_FREE_KB`）拒装、< 200MB（`CJ_WARN_FREE_KB`）警告。另外**只报告不拦截**：xovi / qt-resource-rebuilder 有无、dm-verity 是否激活、xovi 是否已在 xochitl 里生效——缺了由对应步骤自己报错或跳过。
+2. **`fw_gate` 固件安全门**：见「固件安全门」。哈希只认 64 位十六进制（10-10 起；设备回了别的输出时旧版会把它当哈希，加 `--force` 还会写进本机白名单）。
+3. **`preflight_device`**（只读）：10-10 起与固件门、拿部署唤醒锁**并成一次 ssh**（设备端先报 xochitl 的 sha256，再预检，全过才写锁；本机据哈希过固件门后再打印预检结果；原先三次往返）。必须是 root、`/home/root` 可写；`/home` 剩余空间 < 50MB（`CJ_MIN_FREE_KB`）拒装、< 200MB（`CJ_WARN_FREE_KB`）警告。另外**只报告不拦截**：xovi / qt-resource-rebuilder 有无、dm-verity 是否激活、xovi 是否已在 xochitl 里生效——缺了由对应步骤自己报错或跳过。
 
 `--dry-run` 不做以上任何检查，只在本机走一遍步骤表，每步打印 `[dry-run] 将执行：<命令>`。
 
@@ -87,7 +87,7 @@ sh uninstall-all.sh <host> --skip chrony-boot-wakelock,wifi-watch,xovi-persist,h
 |---|---|---|
 | 设备端脚本整组传输 | `lib.sh` 的 `dev_pipe` 把整段设备端脚本包成 `{ …; } </dev/null` 再经 `ssh sh -s` 送上去；`dev_script`（拼上 `devlib.sh`）走它；`chrony-cn` / `timezone-cn` 10-10 起也经 `dev_script` 送（要用库里的 `cj_etc_lower_edit`），手动跑写成 `cat packaging/devlib.sh packaging/chrony-cn.sh \| ssh root@<host> sh -s` | shell 要读到配对的 `}` 才开始执行：传输断在半截只会是语法错误、**一条都不执行**，不会"前半截已执行"。组内标准输入是 `/dev/null`，读 stdin 的子命令不会再把后面没执行的脚本当输入吃掉 |
 | ssh 保活 | `CJ_SSH_OPTS` 加 `ServerAliveInterval=5`、`ServerAliveCountMax=3` | 连上之后设备休眠、拔线、WiFi 掉了，TCP 收不到断开通知，旧版 ssh/scp 会无限挂着；现在约 15 秒判定断线并报错。设备端命令长时间不输出（装书架、等重启）不受影响 |
-| 部署期唤醒锁 | 顶层编排者（`install-all` / `uninstall-all` / 单独跑的 `deploy.sh`）开始时 `device_awake_hold` 往 `/sys/power/wake_lock` 写一把名为 `cangjie-deploy`、**带超时**的锁（`CJ_AWAKE_SECS`=1200 秒），结束时 `device_awake_release` 放掉；被编排的子脚本见到 `CJ_AWAKE_HELD` 就不再各拿各放 | 设备在两次 ssh 之间自动休眠。到点内核自动释放，电脑被 Ctrl-C、断网、崩掉，设备最多多醒 20 分钟；最后一步整机重启时锁随之消失，脚本不再连回去放。设备没有该接口时什么都不做；`CJ_AWAKE=0` 关掉 |
+| 部署期唤醒锁（10-10 起拿/放都并进别的往返） | 顶层编排者（`install-all` / `uninstall-all` / 单独跑的 `deploy.sh`）开始时 `device_awake_hold` 往 `/sys/power/wake_lock` 写一把名为 `cangjie-deploy`、**带超时**的锁（`CJ_AWAKE_SECS`=1200 秒），结束时 `device_awake_release` 放掉；被编排的子脚本见到 `CJ_AWAKE_HELD` 就不再各拿各放 | 设备在两次 ssh 之间自动休眠。到点内核自动释放，电脑被 Ctrl-C、断网、崩掉，设备最多多醒 20 分钟；最后一步整机重启时锁随之消失，脚本不再连回去放。设备没有该接口时什么都不做；`CJ_AWAKE=0` 关掉。10-10 起：`install-all` 在预检那次往返里拿、`uninstall-all` 在连通检查那次往返里拿（`require_device --hold`）；放锁由最后一个设备端脚本顺手做（`xovi-apply` 不重启的出口、`uninstall-all` 的暂存清理，打印 `CJ-AWAKE-RELEASED`），本机不再单独连一次；设备已判定连不上时不去放（到点自动释放） |
 
 ### 收尾汇总（四栏，`install-all` / `uninstall-all` 共用 `print_step_summary`）
 
@@ -97,8 +97,11 @@ sh uninstall-all.sh <host> --skip chrony-boot-wakelock,wifi-watch,xovi-persist,h
 | 已跳过（--skip） | 命令行点名跳过，根本没跑 |
 | 已跳过（前置条件不满足，非失败） | 步骤脚本调了 `step_skipped "<原因>"` 后退出 0，汇总写明原因。目前有一处：`deploy-usr-unit.sh`（dm-verity 激活且该 `/usr` 单元**从没装过**，涉及 2、4、5 三步）。09-30 前还有 `battop`（已移除） |
 | 失败 | 步骤脚本退出非 0 |
+| 未执行（设备连不上） | 10-10 起：某步失败后再探一次连通，连不上就不再执行后面的步骤（旧版每步各等一次 ssh 超时、各记一次失败）。汇总提示"设备连回来后重跑同一条命令" |
 
 dm-verity 激活、但单元早已装好且内容没变时，如实报"已是最新，未动 /usr"并记"已安装"（10-09 起；以前也报成"跳过写 /usr"）。
+
+**有步骤失败时不整机重启**（10-10 起）：`install-all` 前面任一步失败，最后的 `xovi-apply` 不执行，记进"前置条件不满足"并说明原因——已落盘的改动留着待生效标记（`/run`）/ 待换入区（`/home`），修好后重跑 `install-all` 时一起生效，或手动 `sh deploy-xovi-apply.sh`。**不做自动回滚**：每一步本身是原子的（暂存 → 校验 → 换位、rw 窗口带 trap），停下来的状态就是"可再跑一遍"的状态；回滚要再开一次 rw 窗口、再动 `extensions.d`，比失败本身更危险。被 Ctrl-C / 终端关闭 / kill 时，当前子步骤结束后退出 130 / 129 / 143，本机临时文件全部清掉、唤醒锁放掉（lib.sh 的 `cj_traps`）。
 
 注意：**"步骤内部跳过一部分"仍记"已安装"**——shelf 缺 qt-resource-rebuilder 只跳过 qmd、`timezone-cn` 缺 zoneinfo、`xovi-apply` 设备没装 xovi 且无待生效改动。这些要看步骤自己打印的那一行。
 
@@ -197,7 +200,7 @@ sh verify-on-device.sh --from d.txt        # 不连设备，离线重判存下�
 |---|---|
 | `removal.sh` | 摘除 xovi 扩展（`remove_xovi_extension`）与已移除功能的清理（`uninstall_battop`、`uninstall_handwriting_stroke`），`install-all` 的自动清理与 `uninstall-all` 共用（2026-09-30 起） |
 | `install-all.sh` / `uninstall-all.sh` | 统一安装/卸载编排；步骤表来自 `lib.sh`。卸载对每个非"配置覆写/纯动作"步骤都必须有 `uninstall_<步骤名>` 函数（测试会核对），按步骤表逆序执行 |
-| `lib.sh` | **host 侧**共用库：`rssh`/`rssh_in`/`rscp`（统一 `BatchMode` + `ConnectTimeout`，设备休眠时快速失败而不是卡死）、`shquote`（安全拼远端命令行）、`dev_pipe`/`dev_script`（把设备端脚本整组包好经 `ssh sh -s` 送上设备执行，见「连接与传输的三道保护」）、`device_awake_hold`/`_release`（部署期唤醒锁）、`push_verified`（一批文件 scp 到暂存路径后逐个 md5 对拍，不对就删那个暂存文件并失败；一次 ssh 建目录并取暂存路径上已有文件的 md5 → 只 scp 内容变了的文件 → 有上传才再一次 ssh 复核 md5。2026-09-30 起相同文件不重传）、载荷清单 `step_payload`/`step_payload_dir`（部署推送与卸载清理共用）、步骤表 `STEP_ORDER`/`STEP_DEFER`/`STEP_RETIRED`/`STEP_RETIRED_AUTOCLEAN`/`STEP_CONFIG_ONLY`、`uninstall_only_skip`、参数解析 `parse_step_args`/`host_arg`、`require_device`、`fw_gate`、`preflight_device`、`run_step`（含 `--dry-run` 与四栏记账）、`print_step_summary`、`step_skipped`、`run_apply`/`wait_reboot_and_verify` |
+| `lib.sh` | **host 侧**共用库：`rssh`/`rssh_in`/`rscp`（统一 `BatchMode` + `ConnectTimeout`，设备休眠时快速失败而不是卡死）、`shquote`（安全拼远端命令行）、`dev_pipe`/`dev_script`（把设备端脚本整组包好经 `ssh sh -s` 送上设备执行，见「连接与传输的三道保护」）、`cj_traps`/`cj_mktemp`（本机临时文件登记 + EXIT/INT/TERM/HUP 统一收尾，10-10）、`device_awake_hold`/`_release`（部署期唤醒锁）、`pv_set`/`pv_exec`（一批文件推到暂存路径、逐个 md5 对拍后才跑安装命令；不对就删那个暂存文件并失败，安装一条都不执行。10-10 起比对与安装同一次 ssh：没变化一次往返装完，有变化只 scp 变了的文件再一次往返"复核+安装"；旧名 `push_verified`）、`push_tar_verified`（书架整包，10-10 起设备上已是同一份载荷就不重传）、载荷清单 `step_payload`/`step_payload_dir`（部署推送与卸载清理共用）、步骤表 `STEP_ORDER`/`STEP_DEFER`/`STEP_RETIRED`/`STEP_RETIRED_AUTOCLEAN`/`STEP_CONFIG_ONLY`、`uninstall_only_skip`、参数解析 `parse_step_args`/`host_arg`、`require_device`、`fw_gate`、`preflight_device`、`run_step`（含 `--dry-run` 与四栏记账）、`print_step_summary`、`step_skipped`、`run_apply`/`wait_reboot_and_verify` |
 | `devlib.sh` | **设备侧**共用库（POSIX sh，兼容 busybox）：rootfs 读写窗口（remount rw 后无论成败、被信号打断都恢复 ro，含 ssh 断连的 SIGPIPE）、`cj_safe_replace` 原子替换（不在运行中进程已映射的 inode 上原地写）、备份与轮转、`cj_backup_if_differs`、`/usr` 单元的安装/删除（先过 dm-verity 门）、待生效标记 `cj_pending_mark`/`_list`/`_clear` 与 `cj_apply_needed`、待换入区 `cj_so_stage`/`_unstage`/`_commit`、`cj_xochitl_apply`/`cj_xochitl_health` |
 | `deploy-usr-unit.sh` | 把一个 systemd 单元装进设备 `/usr` 的统一部署器；`deploy-chrony-boot-wakelock.sh` / `deploy-xovi-persist.sh` / `deploy-wifi-watch.sh` 是它的薄包装 |
 | `deploy-xovi-ext.sh` + `xovi-ext-install.sh` | 装一个独立 xovi 扩展：host 侧构建+推送 / 设备侧安装流程。`deploy-hl-snap.sh`、`deploy-ui-font.sh` 是薄包装（`deploy-xovi-ext.sh hw-stroke` 报"已移除"退出 2）；各扩展的 `deploy/install.sh` 只剩数据（名字、配置键、`EXT_MAPTAG`＝`maps` 里确认已加载用的正则，带 `.so` 免得同名目录或配置文件被误算）并 source `xovi-ext-install.sh` |
@@ -246,6 +249,8 @@ sh verify-on-device.sh --from d.txt        # 不连设备，离线重判存下�
 | `DEFER_XOVI_START=1` | — | host（`install-all` 自动设） | hl-snap / ui-font 只落盘不生效 |
 | `CJ_DEVICE_OK` · `CJ_AWAKE_HELD` | — | host（编排者自动设） | 已通过连通检查的 host（各步骤的 `require_device` 见到同一 host 直接放行）· 唤醒锁已由编排者持有。手动别设 |
 | `SHELF_NO_BUILD=1` · `CJ_SKIP_BUILD=1` · `XOVI_DIR` | — | host | 跳过或指定构建产物（见各脚本 `-h`） |
+| `SHELF_FORCE_PUSH=1` | — | host（`deploy.sh`） | 设备上已是同一份书架载荷也照样重传（10-10 起缺省不重传） |
+| `CJ_AWAKE_RELEASE=1` | — | host（`install-all` 给最后一步自动设） | `deploy-xovi-apply.sh` 不整机重启时顺手放上层的唤醒锁。手动别设 |
 | `CJ_PENDING_DIR` / `CJ_PENDING_FALLBACK` | `/run/cangjie-pending-apply` / `~/.cangjie-stage/pending-apply` | 设备 | 待生效标记目录 / `/run` 写不了时的退路 |
 | `CJ_SO_PENDING_DIR` | `~/.cangjie-stage/so-pending` | 设备 | 待换入的扩展 `.so` |
 | `CJ_APPLY_GRACE` / `CJ_HEALTH_SLEEP` | 5 / 5 | 设备 | 生效前宽限秒数 / 走 `xovi/start` 后等多久再做健康检查 |
@@ -331,7 +336,8 @@ shellcheck --severity=warning --shell=sh packaging/tests/stubs/*   # 测试桩�
 - shelf：安装幂等、缺载荷不留半成品、rw 窗口失败恢复 ro、只重启有变化的服务、verity 下的两种分支；卸载与安装清单对称；`deploy.sh` 的密码特殊字符、换位、推送前核对、密码文件兜底清理；`shelf_select`。
 - 编排：整轮 `install-all` → `uninstall-all` 对称；参数解析、`--dry-run`、`-h`、设备不可达、磁盘预检、四栏汇总；卸载载荷清理的保守性。
 - `chrony-cn` / `timezone-cn`：非 overlay 与 verity 路径；overlay 路径只测"写底层失败 → 报错退出、不说已改、最后恢复 ro"（改写成功那一支只能真机验证）。`chrony-boot-wakelock` 收到 TERM 后几秒内退出并放锁。`xovi-reenable` 的 `ExecCondition` 三种情形。
-- ssh 往返次数：`hl-snap` 首次部署 4 次 ssh + 4 次 scp（旧版 13 次 ssh），载荷没变的重复部署 3 次 ssh + 0 次 scp（2026-09-30）；整轮 `install-all` 只一次 `ssh true`；合批推送时只删 md5 对不上的那个暂存文件。
+- ssh 往返次数：`hl-snap` 首次部署 3 次 ssh + 4 次 scp（旧版 13 次 ssh，09-30 为 4 次），载荷没变的重复部署 2 次 ssh + 0 次 scp（09-30 为 3 次）；整轮 `install-all` 只一次 `ssh true`；合批推送时只删 md5 对不上的那个暂存文件。10-10：整轮 `install-all` 首装 17 次 ssh（原 24）、无变化重跑 12 次且不传任何文件（原 20 次 + 每次重推约 20MB 书架载荷）、`uninstall-all` 11 次（原 13）。
+- 主机端编排加固（10-10，`tests/sim_host.sh`）：TERM/INT/HUP 打断 `install-all`/`deploy-hl-snap`/`deploy.sh`/`verify-on-device` 后退出码对应信号、本机 `TMPDIR` 里不留临时文件、中断后重跑与一次装完的文件树一致；设备中途断线时只再探一次连通、其余步骤记"未执行"、重连后重跑补齐（`install-all` 与 `uninstall-all`）；有步骤失败时不整机重启、修好后重跑才生效；固件门拒收非 sha256 输出；`deploy-usr-unit` 在 rw 窗口里写失败或远端 shell 收到 HUP 都以 ro 收尾、重跑可恢复；书架 tar 属主 0/0、权限不随 umask、没变不重传、`SHELF_FORCE_PUSH`；密码与安装同一次连接；卸载清掉推送中断留下的 `shelf-pkg.tar.new`；`dev_script` 组内 `umask 022`；`lib.sh` 被 source 不改调用方的选项/trap/环境；`shelf/build.sh` 不做 host release 构建。
 - 移除 battop / hw-stroke（09-30）：旧设备上两样的残留经 `uninstall-all`（只留这两步）清干净、`hl-snap` 与 `reading-qol.json` 不动、不停/不重启 xochitl、记待生效标记；`install-all` 自动清并只整机重启一次、再部署不再动；`--skip handwriting-stroke`；xovi 未生效时不记标记；dm-verity 下保留 battop 目录；battop 目录是符号链接时拒绝删；verify 报 ⚠ 并给清理命令；退役步骤都有卸载函数、不再有安装脚本映射。
 - 设备端加固（10-10，`tests/sim_dev.sh`）：两个 rw 窗口在"remount rw 刚成功"时被 TERM 仍恢复 ro、绑定点是符号链接时拒绝、暂存残留回收、shelf 重跑重启仍跑旧二进制的服务（及反例：跑的就是当前二进制则不重启）、只改密码也重启网关、qmd 写到一半失败已记标记、`umask 000` 下 shelf/hl-snap/chrony/timezone 生成文件不全局可写、chrony 不跟随 `/tmp` 下预置的符号链接、改 `/etc` 视图失败如实退出非 0。
 - 第六轮审计补的分支（10-09）：设备端脚本整组传输（断在半截不执行、子命令不吃脚本）、唤醒锁的拿/放与"被编排时不重复拿"、没有 xovi 也没有 `xovi/start` 时报错不重启、单元只缺 `.wants` 链接时不重复备份、dm-verity 下单元已最新如实报告、shelf 卸载删 qmd 记 `shelf-qmd` 标记、verify 的侧栏清理命令由步骤表算出。
@@ -390,6 +396,8 @@ shellcheck --severity=warning --shell=sh packaging/tests/stubs/*   # 测试桩�
 ### 没有真机验证（只有本机模拟或代码审查）
 
 - **2026-10-10 设备端加固（全部只有本机模拟）**：rw 窗口先挂 trap 再 remount、绑定点符号链接守卫、暂存残留回收、`/proc/<pid>/exe` 带 `(deleted)` 时重启服务（**需真机确认 busybox `readlink` 读 `/proc/<pid>/exe` 的输出带 ` (deleted)` 后缀**）、qmd 当场记标记、只改密码重启网关、`umask 022`、chrony 不经 `/tmp` 中转直接从绑定点同步 overlay 视图。
+- **2026-10-10 主机端编排加固（仅本机模拟）**：预检/固件门/拿锁并成一次往返、放锁并进最后一个设备端脚本、比对暂存 md5 与安装同一次往返（`pv_exec`）、书架载荷确定性打包与"同一份不重传"、密码与安装同一次连接、断线即停与"未执行"栏、有失败不整机重启、信号收尾与临时文件清理、`dev_script` 组内 `umask 022`、`build.sh` 去掉 host release 构建。真机要核：① 连续跑两遍 `install-all`，第二遍输出"已是同一份载荷，不重传"、整轮无 scp；② `deploy.sh` 在设备端 ssh 提前退出（不读 stdin）时 OpenSSH/dropbear 返回 0；③ busybox tar 能解 `--format=gnu`、属主 0/0 的载荷；④ 拔线/休眠模拟断线，确认停下并提示重跑；⑤ `ssh root@设备 ls -ln /home/root/shelf-pkg/shelf` 属主为 0。
+
 - **2026-10-09 第六轮审计的脚本改动中没在真机走到的分支**：断在半截不执行、ssh 断线判定、唤醒锁到点自动释放、无 xovi 时报错不重启、单元只缺链接不重复备份、dm-verity 下"已是最新"、`xovi/start` 路径健康检查核对 ui-font、shelf 卸载记 `shelf-qmd` 标记。只有本机模拟（371 项）与代码审查。正常路径（整组传输、保活、拿放唤醒锁、按 `hl-snap.so` / `ui-font.so` 判加载、合并后的汇总）随 10-09 两轮真机 `install-all` 跑过，见上表。
 
 - **生效判定的"不重启"一侧**：`xovi-apply` 无标记时跳过、`--force-apply` / `--force`、单独部署无变化不重启。
