@@ -366,7 +366,7 @@ impl Entry {
         Ok(())
     }
 
-    /// 用户在浏览器文本框里直接改字（PATCH `text`）：跟转写草稿写回时（`transcribe-serve::worker`）
+    /// 用户在浏览器文本框里直接改字（PATCH `text`）：跟转写草稿写回时（[`Entry::accept_draft`]）
     /// 走的是同一套 `crate::marker::split_leading_marker` 规则——行首 `-`/`1.`/`口`/`##`/`### ` 都认，
     /// 不需要再给一个手动选样式的下拉框（整理区第二轮反馈点 1，2026-09-08：「文本规则由 md 符号对标至
     /// rm 笔记符号＝手写识别符号」）。识别到分区/小节标记覆盖 `subhead`；识别到样式标记覆盖 `style` 并把
