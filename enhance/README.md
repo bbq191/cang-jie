@@ -35,7 +35,8 @@
 - 路由（经网关前缀 `/api/fonts`）：`GET /` 按家族归组的清单 · `POST /` 上传（multipart，多文件）· `DELETE /{family}` · `GET /status` · `PUT /config {emboldenCjkFallback}`（中文回退字体加粗开关，fontconfig 实时生效）· `GET /events`；界面字体 `GET /ui` · `POST /ui` · `DELETE /ui/{family}` · `PUT /ui/select {sans, serif}`。
 - 落点：字体装进 fontconfig 用户字体目录 `~/.local/share/fonts/`（界面字体在子目录 `shelf-ui/`），字体菜单读 `~/.local/share/shelf/fonts.json`，回退规则写 `~/.config/fontconfig/fonts.conf`。
 - 代码头注：`font-serve/src/main.rs`（路由）、`src/store.rs`（扫描与 fc-cache）、`src/ui.rs`（界面字体）。原理在 [`../shelf/docs/reMarkable书架白皮书.md`](../shelf/docs/reMarkable书架白皮书.md) 的字体章节（第 F 章、§03k、§03bd）。
-- host 测试：`cd font-serve && cargo test`（13 项，2026-10-09 实跑；wallpaper-serve 12 项）。
+- 错误码（10-10 起）：没有这个字体家族 404、选没装的界面字体 400、删字体文件 / 重写索引 / 存选择失败 500（此前一律 400）。
+- host 测试：`cd font-serve && cargo test`（16 项，2026-10-10 实跑；wallpaper-serve 16 项）。
 
 ## 构建与部署
 
