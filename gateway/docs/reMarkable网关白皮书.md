@@ -1,7 +1,7 @@
 # reMarkable 设备端网关（gateway）白皮书
 
 > **读者与用途**：维护网关，或想弄清“登录怎么判、请求怎么转、批量怎么排队续跑、网页什么时候取数”的人。入口文档（构建、部署、接口速查）见 [`../README.md`](../README.md)；共用基座（HTTP、TLS、鉴权原语）见 [`rmsvc-core` 白皮书](../../rmsvc-core/docs/reMarkable设备端Web服务基座白皮书.md)；整体位置见 [`../../docs/OVERVIEW.md`](../../docs/OVERVIEW.md)。
-> 所有数字和行为以 **2026-10-09** 的代码为准（`gateway/src`、`gateway/ui`、`rmsvc-core/src`）。
+> 所有数字和行为以 **2026-10-10** 的代码为准（`gateway/src`、`gateway/ui`、`rmsvc-core/src`）。
 
 ## 给新读者
 
@@ -29,7 +29,7 @@
 
 **已经没有的东西**（别再找）：KOReader 相关的代理段、批量动作与网页入口（2026-09-29 设备卸载 KOReader、WeRead、appload，09-30 撤）；电池刺客与手写优化开关（09-30）；设备端「优化」、抓网文、原 PDF 备份（2026-10-07 书架不再优化书，书在电脑上用 [sheng-ren](https://github.com/bbq191/sheng-ren) 优化好再传）；并发/内存闸门 `budget.rs` 与 `/api/budget/*`、日漫翻页开关（10-07 稍后）；`/api/manage` 里没人读的 `installable`/`hasWeb`（10-09）。下文提到它们时都带日期、标“已移除”。
 
-## 现状（2026-10-09）
+## 现状（2026-10-10）
 
 **术语**
 
@@ -57,8 +57,8 @@
 | 代理超时 | 只有空闲超时：连接 3 秒、读 900 秒、写 120 秒，不设总时长；进程内共用一个 ureq Agent | `proxy.rs::agent` |
 | 代理应答流式转发 | 200 且带长度，又是下载（带 `Content-Disposition`）或 > 256KB → 边读边发；其余读完再回 | `proxy.rs::STREAM_MIN_BYTES` |
 | systemd | `CPUWeight=20`、`MemoryMax=192M`、`Nice=5` | `systemd/gateway.service` |
-| 测试 | Rust 62 个（`cargo test`）；前端 4 个 node 测试文件共 13 项（locales 4 / lowspace 3 / net 3 / xss 3，`node --test gateway/ui/test/*.test.mjs`）+ 1 个手动跑的浏览器冒烟（`smoke.puppeteer.mjs`，要设 `PUPPETEER_NODE_MODULES`） | 2026-10-09 开发机实跑；clippy 无告警 |
-| 语言包 | `zh-CN.json` / `en-US.json` 各 480 个 key；`locales.test.mjs` 钉住中英键集合与 `{占位符}` 一致、`app.js` 里字面量 `T()` 键都在、没有死键 | `ui/locales/`、`ui/test/locales.test.mjs` |
+| 测试 | Rust 73 个（`cargo test`，含各自有接口的线上格式快照）；前端 6 个 node 测试文件共 19 项（core 4 / locales 4 / lowspace 2 / net 4 / scripts 2 / xss 3，`node --test gateway/ui/test/*.test.mjs`）+ 1 个手动跑的浏览器冒烟（`smoke.puppeteer.mjs`，要设 `PUPPETEER_NODE_MODULES`） | 2026-10-10 开发机实跑；clippy 无告警 |
+| 语言包 | `zh-CN.json` / `en-US.json` 各 483 个 key；`locales.test.mjs` 钉住中英键集合与 `{占位符}` 一致、页面脚本里字面量 `T()` 键都在、没有死键；动态拼接的键（`ota.reason.<码>` 等）由 Rust 测试 `ui::tests::dynamic_i18n_keys_cover_every_backend_value` 遍历后端取值集合核对（§5.3） | `ui/locales/`、`ui/test/locales.test.mjs`、`src/ui.rs` |
 
 **真机验证状态**（按批次；每批要手测什么见 §09）
 
@@ -71,6 +71,7 @@
 | 09-25 设备健康 / OTA 横幅 / 清理（§06b）与第四轮审计（按事件来源减少重取、上传器/笔记保存修复、对话框骨架） | 已部署；页面经真实登录只读走查。真 OTA 后横幅、两类清理的删除按钮没在真机上做过 |
 | 09-30 第五轮审计（撤 KOReader/WeRead/appload、Basic 认证缓存、全部中止补漏、事件流断线退避）与移除电池刺客 / 手写优化 | 已部署（09-30 14:10、15:23），部署自检通过；功能待手测 |
 | 10-07 书架不再优化书、稍后的清理（删闸门、批量队列旧兼容、日漫翻页）、代码审查修复（代理空闲超时、批量只认 `ok`、`waitingService`、`registry_wake`、`parse_maps` 共用） | 已部署（10-07 13:02；15:54 并整机重启），部署自检 36✓ 1⚠（刚开机）0✗；功能未真机手测 |
+| **10-10 重构第一阶段**（网页脚本拆成 8 个源文件、编译期拼回；接口 DTO 化 + 线上格式快照；系统增强开关表驱动 + `toggles`；母版库/笔记改用后端下发的 `title`/`series`/`done`/`live`；清理接口失败项 `{name,message}` + `partial`；`format:"other"` 不再显示成 EPUB；事件 area/kind 常量表；笔记页 `refreshGate`、`liveStream`） | host：`cargo test` 73 个、node 19 项、浏览器冒烟通过，clippy 无告警；**未部署**（依赖 book-serve 的 `title`/`series`/`done` 与 ink-serve 的 `live` 一起上机，见 §09） |
 | **10-09 第六轮审计**（确认框 Enter 误判、认证配置锁 poison、`/api/services` 带 `seg`、`/api/manage` 删冗余键、`lowSpace` 优先读后端、页面隐藏不取数、搜索“已撤销”跳回收站、清空回收站后的 `/books/undefined`、卸载失败提示被整页重载冲掉、待换入不列半成品；后端改用 rmsvc-core 的 proc/config/http 工具）及同日审计后续（批量 `names` 改用 `opt_str_list`、网页发单价用 `inputPer1k`/`outputPer1k`） | host：`cargo test` 62 个、node 13 项、浏览器冒烟通过，clippy 无告警；**已部署**（第六轮 10-09 13:48 `install-all`，整机重启后部署自检 38✓ 1⚠ 0✗；审计后续随下一次部署上机）；**功能未在真机手测** |
 
 ## 01｜登录与安全
@@ -156,8 +157,26 @@
 - **原则**（用户 2026-09-06 定）：不轮询、不监听全盘、日志写入不触发。事件只来自服务代码里的变更点，加上注册表目录的 inotify。
 - **汇聚**：`events::spawn` 为 `MODULES` 里有 `/events` 的每个服务起一条线程，跑基座的 `events::follow`（服务没起就等注册表 inotify；连上用 `?ka=120`，两分钟一次心跳；断线 3 秒→60 秒指数退避；对方回 404 就长等 10 分钟），返回总线（2026-10-07 审查修复删了只包一层的 `Hub` 结构）。收到的事件补上 `"svc":"<seg>"` 后发进网关总线。另一条线程阻塞在基座的 `events::registry_wake` 上（订阅线程等服务上线用的同一条 inotify 监听，防抖 300ms），服务上下线时发 `{"area":"manage"}`；此前网关自己另起一条 inotify 监听同一个目录（防抖 500ms），每次注册表变化唤醒两个线程。
 - **网关自己也发**：`batch.rs` 每次落盘都经 `events::notify_books()` 发 `{"area":"books","kind":"batch"}`（不带 `svc`，以此和 book-serve 自己的事件区分）。网页收到这类事件只重取 `/api/batch/status` 一个接口（2026-10-07 稍后起；此前闸门还发 `budget`，网页多取 `/api/budget/status`）；book-serve 的 `staging` 事件 09-25 起也不再全量刷新，前端各 tab 按事件来源取多少见 §5.1。批量运行时也不再每 3 秒轮询。
-- **反过来驱动批量队列**：book-serve 发来的 `books` 事件还会唤醒批量 worker 里“等这本书处理完再取下一本”的等待（`books_wake`，见 §4.3；2026-10-07 稍后前唤醒的是闸门里等着还名额的线程）。
+- **反过来驱动批量队列**：book-serve 发来的 `books` 事件还会唤醒批量 worker 里“等这本书处理完再取下一本”的等待（`books_wake`，见 §4.3；2026-10-07 稍后前唤醒的是闸门里等着还名额的线程）。“哪个服务的事件要叫醒谁”写在 `MODULES` 的 `wake` 字段里（目前只有 book-serve 一行）；2026-10-10 前是汇聚循环里写死 `seg == "books"`。
 - **浏览器侧**：`new EventSource('/api/events?ka=60')`，60 秒一次心跳。收到事件只刷新对应区域；不在前台的 tab 只记“待刷”。页面隐藏超过 60 秒就主动断开 SSE（锁屏的手机不再让设备为它保活），重新可见时重连，重连成功后补刷当前 tab，断开期间的事件不会漏掉效果。前端完整的取数时机见 §5.1 的图。
+- **事件 area/kind 总表**（2026-10-10 全仓 `rg 'publish(' ` 收集；网页所有事件分支只认 `ui/core.js` 的 `EV` 常量表，网关自己发的两种在 `events.rs` 是常量，`ui.rs` 的测试核对 `EV` 表里有它们；**各服务侧仍是字符串字面量**，改名时两边都要动，第二阶段再收）：
+
+  | area | kind | 谁发（file:line） | 什么时候 | 网页怎么处理 |
+  |---|---|---|---|---|
+  | `books` | `staging` | book-serve `api.rs:57,70,162,174`、`service_state.rs:178`、`staging/deliver.rs:202` | 母版库条目变了（入库、忙态开始/结束、落库结果） | 传书：`LEVEL.LIST`（母版库列表 + 批量状态） |
+  | `books` | `render` | book-serve `render_check.rs:38`（`publish_with`，带 `name`/`status`/`pages`） | 渲染自检出结果 | 传书：`LEVEL.LIST` |
+  | `books` | `mkdir` / `trash` | book-serve `api.rs:119,127` / `api.rs:103,109` | 建文件夹队列、回收站队列变化 | 传书：`LEVEL.FULL` |
+  | `books` | `inbox` / `import` | book-serve `service_state.rs:176` / `api.rs:225` | inbox 有新文件 / 直接导入完成 | 传书：`LEVEL.FULL` |
+  | `books` | `agent-failed` | book-serve `agent_failures.rs:45,58` | 设备端代理连试 5 次仍没做成 | 全站：重取 `/api/books/agent-failures` 更新横幅（与哪个 tab 无关） |
+  | `books` | `batch`（**不带** `svc`） | 网关 `batch.rs::persist` → `events::notify_books` | 批量队列状态每变一次 | 传书：`LEVEL.QUEUE`（只取 `/api/batch/status`） |
+  | `manage` | `services`（不带 `svc`） | 网关 `events.rs::spawn`（注册表 inotify） | 服务上下线 | 查 `/api/services`，tab 集合变了整页重载；否则刷管理台 |
+  | `notes` | `entries` | ink-serve `main.rs:67,85,226` | 条目库变了（摄取、改字、浏览态动作、恢复、清空回收站） | 笔记：整页刷新；自己刚重取过（`refreshGate` 闸门 ②）则不理 |
+  | `notes` | `transcribe` | transcribe-serve `main.rs:66,145` | 一轮转写结果变了 / 改了配置 | 笔记：整页刷新 |
+  | `notes` | `notebooks` | note-serve `main.rs:132` | 生成笔记本 / 导出 md 后同步状态变了 | 笔记：只重取同步状态（`syncOnly`） |
+  | `fonts` | `fonts` / `ui` / `config` | font-serve `main.rs:85,121` / `96,106,115` / `127` | 阅读字体池 / 界面字体 / 加粗开关变化 | 其他：只刷字体子面板 |
+  | `wallpapers` | `pool` | wallpaper-serve `main.rs:114,122,129,134`、`wake.rs:79` | 壁纸池或当前壁纸变化（含每次休眠轮换） | 其他：只刷壁纸子面板 |
+
+  网页按 **area** 找 tab（`secByArea`），不是按 `svc`：ink-serve 与 transcribe-serve 都发 `area:"notes"`，能落到「笔记」tab 只因为 note-serve 的 seg 恰好也叫 `notes`（FE-6，第二阶段让 `MODULES` 管事件路由）。
 - **浏览器放弃重连时**（09-30）：WiFi 掉线这类断开 EventSource 会自己重连；但连上时回的不是 200（网关重启后内存里的会话全没了 → 401，并发满 → 503），它会直接进 `CLOSED`、再也不重试——此前页面就此静默失去实时刷新。现在进 `CLOSED` 时先查一次 `/api/session`（401 由 `j()` 带去登录页），其余情况按 5 秒起、翻倍、封顶 5 分钟退避重开；页面隐藏时不重试，重新可见时照常重连。
 
 ## 04｜批量队列（闸门 2026-10-07 删除）
@@ -184,7 +203,7 @@
 - **接口**：`POST /api/batch {action: deliver, names?: [...], all?: true, folder?}` → `{queued, skipped}`；`GET /api/batch/status`（`running`、`waitingService`、`action`、`total`、`done`、`current`、`queued`〔前 200 个〕、`failed[]`）；`POST /api/batch/stop` → `{cleared}`。
   - `waitingService`（2026-10-07 审查修复新增）：网关重启后恢复出来的队列正在等 book-serve 起来，网页据此显示“等 book-serve 就绪”，而不是像已完成或卡住。
   - `action` 由当前那本 / 队首那本推出；都没有但有上一轮结果时是 `deliver`，从没跑过是 `null`。原来单独存的 `action` 与 `queuedCount` 删了（动作只剩一种；`queuedCount` 网页不读），旧 `batch.json` 里的 `action` 字段读回时忽略。
-- **资格**（和界面底部栏按钮同一套）：加入 xochitl = EPUB/PDF。`action` 只认 `deliver`：`koreader` 09-30 移除、`optimize` 2026-10-07 移除，再传都回 400“action 只能是 deliver”。不适用的和重复入队的计入 `skipped`（`all:true` 时不适用的是预期筛选，不计）。
+- **资格**（和界面底部栏按钮同一套）：加入 xochitl = `rmsvc_core::formats::NATIVE_EXTS`（EPUB/PDF；2026-10-10 前在这里另写一份）。`action` 只认 `deliver`：`koreader` 09-30 移除、`optimize` 2026-10-07 移除，再传都回 400“action 只能是 deliver”。不适用的和重复入队的计入 `skipped`（`all:true` 时不适用的是预期筛选，不计）。
 - **一轮的计数**：从空闲开始的一次入队开新一轮，`done`/`failed` 清零，`total` 按队列里**实际有多少本**算——`resume` 等不到 book-serve 放弃时，旧队列留在内存里没有 worker，下一次入队会连它们一起跑（09-25；此前 `total` 只算这次入队的数量，进度会显示成“5/2”）。已经在跑时再入队，累加进同一轮。
 - **执行**：后台 worker 线程**一次一本**。每本直连 book-serve 的 `POST /staging/deliver`（2026-10-07 稍后前要先过闸门）；再 `poll_until_settled` 等到这本 `busy=false`（事件驱动：`books_wake` 唤醒，至多 30 秒兜底查一次；两次 `GET /staging` 至少隔 5 秒〔`MIN_REQUERY`〕；**连续** 6 次查询失败才放弃等待〔`MAX_POLL_FAILURES`〕，失败之间隔 5 秒；最长 1 小时），然后从**判定处理完的那份列表**里读这本的 `delivered.deliver` 判成败，不再另取一次。网页的「加入 xochitl」只走这条队列，所以同一时刻最多一本书在投。每本书只建一个 book-serve 客户端（提交与查询共用）。
 - **成败只认 `ok`**（2026-10-07 审查修复）：`delivered.deliver.status` 是 `ok` 才记成功；是 `failed` 记失败、带 book-serve 写的原因；其余情况——等满 1 小时、连续 6 次查不到 book-serve、条目途中消失（被删或改名）、状态还是 `pending`——**一律记失败**，原因写“没等到结果（书架服务超时、不可达，或这本书已不在母版库），请到 xochitl 书库里核对”。此前只认 `failed`，这几种结果不明的都被记成成功。代价：书其实加进去了、只是网关没看到结果时，会多一条“失败”，所以提示让人去书库里核对，而不是让人重加。worker 用 `catch_unwind` 兜住 panic，只让这一本失败（release 是 `panic="unwind"`）。
@@ -196,10 +215,20 @@
 
 ### 5.1 怎么打包、怎么组织
 
-- `ui/index.html`、`style.css`、`app.js`、`auth.css` 在编译期 `include_str!` 进二进制，拼成**一个零外链的单文件页面**；格式白名单从 `rmsvc_core::formats` 注入（母版库现在只收 EPUB/PDF），网页 `accept` 和服务端上传门同源。
+- `ui/index.html`、`style.css`、脚本、`auth.css` 在编译期 `include_str!` 进二进制，拼成**一个零外链的单文件页面**；格式白名单从 `rmsvc_core::formats` 注入（母版库现在只收 EPUB/PDF），网页 `accept`、格式徽章、格式筛选项和服务端上传门同源。
+- **脚本拆成 8 个源文件**（2026-10-10，原来是 1516 行的 `app.js` 一个文件）：`ui.rs` 的 `APP_JS` 用 `concat!(include_str!(…))` 按固定顺序首尾相接拼回**同一个** `<script>`——页面仍是单文件、不多一个请求，运行时与拆分前只差顶层定义的先后（拆分那次提交核过：拼接产物与原文件的非空行多重集合相同，只多了 `onUsb`、`toastHost` 两处为"加载时不碰 DOM"做的改动）。都是经典脚本、共用一个全局作用域，不是 ES 模块。
+
+  | 顺序 | 文件 | 内容 | 加载时 |
+  |---|---|---|---|
+  | 1 | `core.js` | 纯逻辑：`esc`/格式化、`T()` 与语言包、`EXT`（`__EXTS__` 占位）、`j()`/`sendT()` 取数、`coalesce`、事件常量表 `EV`、笔记页刷新闸门 `refreshGate` | 只定义；调用时也不碰 DOM，node 测试整文件加载 |
+  | 2 | `dom.js` | `el`/`btn`/toast/对话框/上传器/二级标签、SSE 连接管理 `liveStream` | 只定义 |
+  | 3–7 | `transfer.js` `notes.js` `assets.js` `manage.js` `health.js` | 传书 / 笔记 / 其他（字体、壁纸）/ 管理（含模型卡片、系统增强开关）/ 设备健康与页头横幅 | 只定义 |
+  | 8 | `app.js` | 启动代码：取语言包、建 tab、开 SSE | **唯一有副作用的文件**，必须最后 |
+
+  约束：顶层 `const` 只能引用排在前面的文件里的名字（函数声明会提升，不受限）。`ui/test/scripts.test.mjs` 兜住两条：拼接产物整体能解析（含两文件重复定义同名顶层 `const`）、前 7 个文件在没有 `document`/`location` 的环境里加载不抛错；`ui.rs` 的测试核对拆分前的全部顶层名字在拼接产物里恰好定义一次。CI 的 `node --check gateway/ui/app.js` 现在只查启动文件，其余靠前一条测试。将来要改成真正的 ES 模块（`<script type="module">` + `/ui/js/*.js`），文件已经按"只定义不执行"写好，代价是首开多 7 个请求（设备每次都要唤醒 CPU），暂不做。
 - **顶层标签**：传书（入库 / 母版库）· 笔记（浏览 / 整理 / 回收站 / 导入 md〔实验室开关打开才显示〕）· 其他（xochitl 字体 / 壁纸，按注册表里有哪些服务动态出现；KOReader 子标签〔字体/词典上传〕09-30 已移除）· 管理（基石与模块 / 设备健康〔09-25〕/ 模型管理 / 系统增强 / 实验室；「电池刺客」子标签〔battop 在跑才显示〕09-30 随 battop 移除）。
 - **i18n**：`ui/locales/{zh-CN,en-US}.json` 各 480 个 key（2026-10-09；09-30 为 513，10-07 删优化/闸门相关后到 468），`GET /ui/locales/{lang}` 下发，不认识的语言落中文。英文界面不混全角标点：括号、“名称：值”、列表分隔符分别走 `common.paren`/`common.labelValue`/`common.listSep`（2026-10-07 审查修复）；`<html lang>` 跟着界面语言切换。后端直接吐给前端的字符串（如 `MODULES.label`）绕过了翻译管线，前端优先查 `manage.modules.label.<seg>`，语言包里没有才用后端的中文（注意 `T()` 缺 key 时返回 key 本身，不能写成 `T(k)||兜底`，09-24 修过这个永远不生效的兜底）。
-- **安全**：外部数据（文件名、书名、转写、AI 回答、服务端错误）插入 `innerHTML` 前统一经 `esc()` 转义（09-20 修存储型 XSS；09-30 又补了笔记页两处服务端字段，`xss.test.mjs` 扫 `app.js` 里插进 HTML 的 `${…}` 是否都过了 `esc()`）。
+- **安全**：外部数据（文件名、书名、转写、AI 回答、服务端错误）插入 `innerHTML` 前统一经 `esc()` 转义（09-20 修存储型 XSS；09-30 又补了笔记页两处服务端字段，`xss.test.mjs` 扫全部 `ui/*.js` 里插进 HTML 的 `${…}` 是否都过了 `esc()`）。
 - **什么时候取数**：各 tab **第一次切过去才渲染**（渲染本身取一次数据），之后切回来只刷新；打开页面的请求从 33 个降到 7 个，逛完四个 tab 从 69 降到 35（09-24 第三轮审计）。管理页一次刷新并行取三个接口，`/api/enhance/status` 只取一次，结果也传给系统增强/实验室的各开关。每个区块（顶层 tab、「其他」里的子面板）的刷新都经 `refreshSec` 按区块各自 `coalesce`，同一区块同一时刻最多一个刷新在飞。
 
   ![网页什么时候向网关要数据](diagrams/ui-refresh.svg)
@@ -214,7 +243,10 @@
   | 其他 | 字体 / 壁纸任一服务 | 只刷发事件那个服务的子面板（各 2～3 个）；认不出来源退回整块刷新 | 当时连 KOReader 三块一起刷，约 7 个 |
   | 笔记 | 笔记四服务的事件 | 照常重取，但不再查 `/api/enhance/status`（切回 tab 时才查「导入 md」开关）；**焦点在本 tab 的输入框里时先不重画**，失焦后补一次；「整理」页切章节/导出标签不再每次查转写失败清单（09-30）。2026-10-07 审查修复：自己的动作刚重取过整本书时，紧跟着的 `entries` 事件不再重复整页刷新；`notebooks` 事件只重取同步状态 | 每条事件都查一次 enhance 状态；重画会把光标连同输入框换掉 |
 
-  母版库三档走同一个 `coalesce`，`need` 记“下一轮至少取到哪一档”、取最大值，不会出现旧的全量结果盖掉新的排队状态。
+  母版库三档（`transfer.js` 的 `LEVEL.QUEUE`/`LIST`/`FULL`，2026-10-10 前是裸数字 1/2/3）走同一个 `coalesce`，`need` 记“下一轮至少取到哪一档”、取最大值，不会出现旧的全量结果盖掉新的排队状态。
+
+- **笔记页的刷新闸门 `refreshGate`**（2026-10-10，`core.js`）：原来 `renderNotes` 闭包里六组互相影响的时序标志（`holdRefreshUntil/HOLD_BUSY/lingerThen`、`selfQuietUntil`、`wantImport/wantList/wantForce`、`deferred`…）收成一个对象，**机制与条件都没变**，只是显式化：① **hold**——推送本章 / 重新转写 / 提问的请求在跑（挡 10 分钟兜底）或结果提示停留中（再挡 3 秒），SSE 触发的刷新（含只刷同步状态的那条）一律挡掉，用户自己换书、清空回收站是 force 不挡；被挡的那轮 force 消耗、`list`/`checkImport` 留给下一轮。② **quiet**——自己的动作刚重取过整本书，重取期间与之后 1 秒内的 `entries` 事件不理。③ **editing**——焦点在本 tab 的输入框里时事件只记一笔，失焦补一次。`gate.st` 记着各道闸的状态与最近一次判定（`last`，如 `hold:busy`），出问题时在浏览器控制台看它。时长常量在 `NOTE_GATE`；`core.test.mjs` 用注入的时钟逐条钉住。
+- **事件流 `liveStream({url,onEvent,onReopen,onVisible,onState})`**（2026-10-10，`dom.js`）：原来启动代码里七个变量表达"连接中/已打开/隐藏/退避"，收成一个函数，行为照旧（§03 最后两条）；启动代码只管"重连/变可见后补查服务集合、补刷当前 tab"和事件分发。
 
 - **界面规则**（09-24 截图走查后定下，改样式时别破坏）：
   - 触屏设备（`@media (pointer:coarse)`）上按钮、页头链接、语言下拉、开关的可点区域撑到约 40px（原来 29～32px，勾选框只有 17px）；只撑热区不放大字号，桌面鼠标不受影响。
@@ -239,22 +271,30 @@
   - 母版库“剩余空间不足”优先读 book-serve 给的 `lowSpace`（剩余 <300MiB，阈值由后端定），旧后端没有这个字段时退回前端按 `freeBytes` 判（`lowspace.test.mjs`）。
   - 去重：401/403 去向抽成 `authRedirect()`（`j()` 与上传器共用）、笔记条目接口 `entryApi()`/`entryAct()`、“重新转写/提问”合成 `callModel()`、`xoviBadge()`、`statusName()`；管理页刷新走 `coalesce`。
 - **断网兜底**（09-24）：`fetch` 在设备休眠、WiFi 断开、网关重启时会直接抛 `TypeError`，之前没接住，开关一直灰着、按钮没反应。现在统一的 `j()` 把它转成“网络连接失败”提示；401 跳登录、403 跳改密码。
-- **测试**：`ui/test/net.test.mjs`（断网兜底、401/403 去向）、`xss.test.mjs`（转义）、`locales.test.mjs`（语言包一致，09-30）、`lowspace.test.mjs`（低空间判据，10-09）、`smoke.puppeteer.mjs`（冒烟：SSE 断开/重连、搜索防抖、不再请求 `/api/koreader/*` 等）；CI 跑 `node --check` 和四个 `*.test.mjs`（node 内置测试，零 npm 依赖，共 13 项）；浏览器冒烟不进 CI，本地手跑：`PUPPETEER_NODE_MODULES=<含 puppeteer 的 node_modules 目录> node gateway/ui/test/smoke.puppeteer.mjs`（09-24 起覆盖“排队事件不触发全量刷新”，09-25 补了按事件来源重取、笔记输入中不重画、「其他」只刷发事件的子面板、对话框键盘/点击行为等断言）。人眼走查工具见 [`../tools/screenshot-walkthrough/README.md`](../tools/screenshot-walkthrough/README.md)。
+- **测试**：2026-10-10 起 node 测试经 `ui/test/load.mjs` **整文件加载**源文件（按 `ui.rs` 的拼接顺序，在 vm 上下文里跑），不再用正则从 `app.js` 里抠单个函数再 `new Function`（函数换个排版测试就坏）。`ui/test/core.test.mjs`（格式徽章、`refreshGate`，10-10）、`scripts.test.mjs`（拼接产物可解析、非启动文件无加载期副作用，10-10）、`net.test.mjs`（断网兜底、401/403 去向）、`xss.test.mjs`（转义）、`locales.test.mjs`（语言包一致，09-30）、`lowspace.test.mjs`（低空间判据，10-09）、`smoke.puppeteer.mjs`（冒烟：SSE 断开/重连、搜索防抖、不再请求 `/api/koreader/*` 等）；CI 跑 `node --check gateway/ui/app.js` 和全部 `*.test.mjs`（node 内置测试，零 npm 依赖，共 19 项）；浏览器冒烟不进 CI，本地手跑：`PUPPETEER_NODE_MODULES=<含 puppeteer 的 node_modules 目录> node gateway/ui/test/smoke.puppeteer.mjs`（09-24 起覆盖“排队事件不触发全量刷新”，09-25 补了按事件来源重取、笔记输入中不重画、「其他」只刷发事件的子面板、对话框键盘/点击行为等断言；10-10 补了 `format:"other"` 徽章、`title`/`series`/`done` 显示与筛选计数、底栏按钮动词、系统增强开关按 `toggles` 渲染、清理部分失败提示；冒烟里的假数据同步带上了 `title`/`series`/`done`/`live`）。人眼走查工具见 [`../tools/screenshot-walkthrough/README.md`](../tools/screenshot-walkthrough/README.md)。
 
-### 5.2 母版库页（`app.js` 的 `renderTransfer`/`stgRow`，`style.css` 的 `.stg-*`）
+### 5.2 母版库页（`transfer.js` 的 `renderTransfer`/`stgRow`，`style.css` 的 `.stg-*`）
 
 09-20 按用户汇总的要求重做（推翻了“每行一个主按钮 + ⋯ 菜单、PC 两列”的第一版），之后别加回单条按钮：
 
 1. **加入位置**：一个常驻的 xochitl 文件夹下拉，带“＋ 新建文件夹…”（09-29 前旁边还有一个 KOReader 下拉，已移除）。选了“＋ 新建文件夹…”却没点创建就点加入，会先提示，不再悄悄落到书库根；新建框开着时刷新不会把下拉跳回旧值（2026-10-07 审查修复）。新建走 book-serve 的建文件夹队列：xochitl 里的 QML 代理 `shelf-mkdir-agent.qmd` 用长轮询 `GET /mkdir/pending?wait=290` 等着（09-24 前 25 秒；09-22 前是 8 秒一次定时拉），有人入队就立刻建。界面**不等它建好**（09-30）：记住的名字先补进下拉，加入 xochitl 时 book-serve 自己会等文件夹出现（`deliver.rs::ensure_folder`），建好后的 `mkdir` 事件把它换成真实列表里的那一项；此前前端每 2 秒查一次、最多 12 次，按钮跟着卡 24 秒。
-2. **搜书名**：输入框带建议（系列名 + 每本书名）。清爽书名去掉下载站 `-- 作者 -- hash` 尾巴，完整名在提示里。
-3. **行内只显示**书名、类型、大小、状态、进度，**没有任何按钮**（2026-10-07 稍后删了只在闸门排队时出现的“取消排队”，它随闸门一起没了；页头“⏳ 排队 N 本 · 处理中 M 本”同日删）。已经在加入的书没有能中途停的步骤，不给“停止”（2026-10-07 前处理中的优化可以停）。徽章：格式、大小、落库记录（晚于母版修改时间标“旧”）、渲染自检（只显示页数；10-07 稍后删了“⚠ 只渲染 N 页 / 预期≈M”，旧的 warn 记录也按页数显示）、失败或“被重启打断”；优化等级与“PDF 来源”徽章 2026-10-07 删除。处理中的进度条只有不确定态（`renderBusy`，百分比分支 10-07 稍后删）。
-4. **所有操作在勾选后的底部操作栏**，分三行（09-24 排布）：第一行“已选 N 本 / 清除选择”；第二行主操作“加入 xochitl”（“加入 KOReader”09-30 移除、“优化”2026-10-07 移除），按钮上的小角标是“可处理数”，0 就置灰；第三行“下载原件 / 改名 / 删除”（多选时只剩删除，靠右一格）。窄屏（≤34em）去掉“加入”前缀，≤22.5em 再缩字号；按钮不折行、等高。批量运行时底部栏显示进度 + 全部中止，**同时**照样能对勾选的书操作（2026-10-07 审查修复；此前运行中只剩进度）；上一轮结果点「收起」后记在本机浏览器（服务端会一直保存上一轮结果，不记的话每次打开都弹回来）；网关重启后队列在等 book-serve 时显示“等 book-serve 就绪”（`waitingService`），不再显示成已完成。选中的书全在处理中时删除按钮置灰并说明原因。
-5. **PC 和手机同一套单列布局**；真分页（每页 25/50/100，PC 页码，手机上一页/下一页）；“全选当前筛选”。筛选：全部 / 未加入 / 已加入，各带数量，**默认「未加入」**；「未加入」是「已加入」的补集（2026-10-07 审查修复起，正在处理、加入失败的书也归「未加入」，此前两头都不算，三个计数加不拢），外加格式过滤（只有 EPUB / PDF；10-07 稍后删了永远为空的「其它」）（2026-10-07 起；此前是 全部 / 待优化 / 已优化 / 已完成 + “隐藏已完成”开关，那个开关跟「未加入」重复，删掉；浏览器里记着的旧“已优化”筛选回落到「未加入」）。
+2. **搜书名**：输入框带建议（系列名）。行内显示清爽书名（去掉扩展名与下载站 `-- 作者 -- hash` 尾巴），完整名在提示里。显示名 `title`、搜索建议分组名 `series`（title 再取第一个 "-" 之前，用户 2026-09-20 指定）都由 book-serve 在每个母版库条目上给出（2026-10-10 起；此前前端 `stgClean`/`stgTitle` 各写一份规则）。批量底栏里“正在处理 / 失败”的书名只有文件名，在当前列表里查得到就显示它的 `title`，查不到（已删或改名）显示原文件名。
+3. **行内只显示**书名、类型（白名单格式按 `EXT.book` 显示；book-serve 对格式收窄前留下的旧文件报 `format:"other"`，徽章显示文件真实扩展名——2026-10-10 前这里写死“不是 PDF 就是 EPUB”，残留的 CBZ 也标成 EPUB）、大小、状态、进度，**没有任何按钮**（2026-10-07 稍后删了只在闸门排队时出现的“取消排队”，它随闸门一起没了；页头“⏳ 排队 N 本 · 处理中 M 本”同日删）。已经在加入的书没有能中途停的步骤，不给“停止”（2026-10-07 前处理中的优化可以停）。徽章：格式、大小、落库记录（晚于母版修改时间标“旧”）、渲染自检（只显示页数；10-07 稍后删了“⚠ 只渲染 N 页 / 预期≈M”，旧的 warn 记录也按页数显示）、失败或“被重启打断”；优化等级与“PDF 来源”徽章 2026-10-07 删除。处理中的进度条只有不确定态（`renderBusy`，百分比分支 10-07 稍后删）。
+4. **所有操作在勾选后的底部操作栏**，分三行（09-24 排布）：第一行“已选 N 本 / 清除选择”；第二行主操作“加入 xochitl”（“加入 KOReader”09-30 移除、“优化”2026-10-07 移除），按钮上的小角标是“可处理数”，0 就置灰；第三行“下载原件 / 改名 / 删除”（多选时只剩删除，靠右一格）。窄屏（≤34em）去掉“加入”前缀（动词与宾语是两个语言包键 `stg.bar.deliverVerb`/`stg.bar.deliverObject`，2026-10-10 前用正则从整句译文里切 `加入 |Add to `，改文案或加语言即失效），≤22.5em 再缩字号；按钮不折行、等高。批量运行时底部栏显示进度 + 全部中止，**同时**照样能对勾选的书操作（2026-10-07 审查修复；此前运行中只剩进度）；上一轮结果点「收起」后记在本机浏览器（服务端会一直保存上一轮结果，不记的话每次打开都弹回来）；网关重启后队列在等 book-serve 时显示“等 book-serve 就绪”（`waitingService`），不再显示成已完成。选中的书全在处理中时删除按钮置灰并说明原因。
+5. **PC 和手机同一套单列布局**；真分页（每页 25/50/100，PC 页码，手机上一页/下一页）；“全选当前筛选”。筛选：全部 / 未加入 / 已加入，各带数量，**默认「未加入」**；「未加入」是「已加入」的补集（2026-10-07 审查修复起，正在处理、加入失败的书也归「未加入」，此前两头都不算，三个计数加不拢），外加格式过滤（选项由 `EXT.book` 生成，即 EPUB / PDF；10-07 稍后删了永远为空的「其它」）（2026-10-07 起；此前是 全部 / 待优化 / 已优化 / 已完成 + “隐藏已完成”开关，那个开关跟「未加入」重复，删掉；浏览器里记着的旧“已优化”筛选回落到「未加入」）。
 6. **验证方式**：无头浏览器在 320/360/390/414/1024/1280 宽下逐状态量 `scrollWidth`，无横向溢出、无截字。真实触屏交互未验证。
 
-7. **“已完成”只认加入过 xochitl**（09-30）：「已加入」筛选（10-07 前叫「已完成」，另有同判据的“隐藏已完成”开关，10-07 删）看的是 `delivered.native`；10-07 前 EPUB 还要“优化过”才算完成。设备卸掉 KOReader 后，以前只加入过 KOReader 的书不在任何阅读器里，会回到“待处理”；徽章也只显示“已加入 xochitl”，不再有“已加入KO”。
+7. **“已完成”只认加入过 xochitl**（09-30）：「已加入」筛选（10-07 前叫「已完成」，另有同判据的“隐藏已完成”开关，10-07 删）看 book-serve 给的 `done`（2026-10-10 起由后端算：不在处理中、最近一次加入没失败、`delivered.native` 有值；此前前端 `isBookDone` 镜像同一规则）；10-07 前 EPUB 还要“优化过”才算完成。设备卸掉 KOReader 后，以前只加入过 KOReader 的书不在任何阅读器里，会回到“待处理”；徽章也只显示“已加入 xochitl”，不再有“已加入KO”。
 
 原件下载、改名、笔记全文搜索这些 09-23/24 新功能，业务逻辑在 book-serve / note-serve，网关只是页面宿主，细节见书架与笔记白皮书（同期的“原 PDF 备份”面板 2026-10-07 随 PDF 转换一起删除）。（同期的“导入 KOReader 批注”按钮 09-30 已从网页移除；ink 侧接口同日也已从仓库删除，见笔记白皮书第 9 章。）
+
+### 5.3 前后端契约（2026-10-10 重构第一阶段）
+
+- **网关自有接口一律 DTO**：`batch::Status`/`Enqueued`、`manage` 的 `ManageStatus`/`Services`/`Foundation`/`ActionDone`、`enhance::Status`、`device::health::Health`、`device` 的 `CleanupList`/`CleanupDeleted`、`auth` 的 `Session`/`LoggedIn`/`PasswordChanged` 都是 `#[derive(Serialize)] #[serde(rename_all="camelCase")]` 结构体（照 `ota::Check` 的写法），不再 `json!` 现拼。改之前先给每个接口写了线上格式快照测试（`wire_snapshot_*`），改完逐字段相同。唯一的可见差异是**键序**：`json!` 按字母序输出，结构体按字段声明序，JSON 语义相同、网页不看键序。留着 `json!` 的只有不是网关应答的地方：转发给 book-serve 的请求体（`batch.rs::run_one`）、`/api/device/wifi`（原样转发 wifi-watch 写的文件，字段由那个脚本定）、事件补 `svc` 失败时的兜底、页面注入的格式白名单。
+- **"失败项"形状**：批量队列 `failed[]` 与清理接口 `failed[]` 都是 `{name, message}`（`wire::Failed`）。清理接口 2026-10-10 前是 `{name, error}`，并用 200 应答里的 `ok:false` 表示部分失败——与基座错误信封 `{ok:false, message}` 撞名；现在 200 应答不带 `ok`，部分失败（含全部失败）标 `partial:true`，`ok:false` 只来自错误信封（请求本身被拒）。笔记"推送本章"的 `Failed{error}` 在 note-serve，第二阶段再统一。
+- **后端下发派生字段，前端不再镜像规则**：母版库条目的 `title`/`series`/`done`（book-serve）、笔记条目的 `live`（ink-serve，`= Status::is_live_for_projection()`，只在 HTTP 应答里、不写进条目库文件）、系统增强开关的 `toggles[].loaded`（网关，§06）。网页直接用，删掉了 `stgClean`/`stgTitle`/`isBookDone` 和"活条目"状态名单；不写兼容旧后端的回退（各服务总是一起部署）。
+- **动态 i18n 键有测试**：网页里拼接出来的键（`ota.reason.<码>`、`ota.recovery.<值>`、`stg.batch.<动作>`、`wifi.banner.<状态>`、`agentfail.<种类>`、`manage.modules.label.<seg>`）由 `src/ui.rs` 的 `dynamic_i18n_keys_cover_every_backend_value` 遍历后端取值集合、断言两份语言包都有。取值直接来自 Rust 常量：OTA 判据与恢复方式 2026-10-10 收成枚举 `ota::Reason`/`Recovery`（线上值不变，`""` 仍表示不需要恢复）、批量动作 `batch::Action::ALL`、`MODULES`。网关里没有源头的两组就地列出并注明出处：WiFi 横幅状态 `portal`/`none`（`packaging/wifi-watch/wifi-watch.sh` 的 `probe()`）、代理失败种类 `trash`/`mkdir`（book-serve `trash.rs:96`、`mkdir.rs:151`）——book-serve 把种类收成枚举后应改为直接引用。同一个测试还核对网页 `TOGGLE_UI` 给 `TOGGLES` 的每个键都配了文案、`EV` 表含网关自发事件的取值。
+- **条目字段读蛇形、写驼峰（现状，不改）**：笔记条目 `notecore::model::Entry` 既是 HTTP 应答也是**条目库的落盘格式**，字段按 Rust 默认的蛇形序列化（`page_index`、`chapter_title`、`ask_ai`），网页读的就是这些名字（`notes.js` 里 `e.page_index`）；改名会让设备上已有的条目库读不回来（要加 `serde(alias)` 并迁移），收益只是命名统一，所以不动。而网页**写**条目走 ink-serve 的 `POST …/entries/{id}`，那是手解的请求体，收驼峰（`askAi`、`destination`、`text`，`ink-serve/src/main.rs` 的字段补丁处），与网关其余接口的驼峰约定一致。全文搜索的 `Hit`（`ink-serve/src/search.rs`）是纯应答 DTO，按惯例驼峰（`pageIndex`、`chapterTitle`）——所以同一页面里 `e.page_index` 与 `h.pageIndex` 并存是有意的：前者是落盘格式的原样转出，后者是专门的应答结构。新增条目字段时沿用蛇形；新增纯应答结构用驼峰。
 
 ## 06｜系统增强接口（`src/enhance/`）
 
@@ -262,10 +302,19 @@
 
 | 接口 | 作用 |
 |---|---|
-| `GET /api/enhance/status` | 返回三个开关 `hlSnapCjk`、`notesImportMdEnabled`、`tapPageTurn`，以及 `loaded`（扩展是否真的加载进 xochitl）。09-30 前还返回 `hwStrokeEnabled` 与 battop 状态，10-07 前还有 `comicMinMargin`，10-07 稍后删了 `rtlPageTurn` |
-| `PUT /api/enhance/qol` | body 里出现哪个布尔键就改哪个：`hlSnapCjk`、`notesImportMdEnabled`、`tapPageTurn`；一个都没有回 400（已移除的 `hwStrokeEnabled`、`comicMinMargin`、`rtlPageTurn` 单独传也回 400） |
+| `GET /api/enhance/status` | `toggles:[{key, on, kind, loaded}]`（2026-10-10 起，见下）；保留原来的三个顶层布尔 `hlSnapCjk`、`notesImportMdEnabled`（笔记页还在读）、`tapPageTurn`，以及 `loaded`（扩展映射与 qmd 载入的原始扫描结果，「基石」一行用它列"生效的扩展"）。09-30 前还返回 `hwStrokeEnabled` 与 battop 状态，10-07 前还有 `comicMinMargin`，10-07 稍后删了 `rtlPageTurn` |
+| `PUT /api/enhance/qol` | body 里出现 `TOGGLES` 里哪个键的布尔值就改哪个；一个都没有回 400（已移除的 `hwStrokeEnabled`、`comicMinMargin`、`rtlPageTurn` 单独传也回 400）。应答同 `GET /api/enhance/status` |
 | ~~`POST /api/enhance/battop/{start\|stop}`~~、~~`GET /api/enhance/battop/summary`~~ | 电池刺客的启停与数据，**2026-09-30 随 battop 一起移除**（`src/enhance/battop.rs` 已删） |
 
+- **开关表 `TOGGLES`**（2026-10-10，`enhance/mod.rs`）：每行 = `reading-qol.json` 里的键名、缺省值、承载产物（`Extension("hl-snap.so")` / `Patch("reader-page-turn.qmd")` / `Web`）。读（`Qol::on`）、写（`set_qol` 认哪些键）、`toggles` 都从它派生；加一个开关 = 表里一行 + 网页 `manage.js` 的 `TOGGLE_UI` 一行文案（键 → 所在子标签与 i18n 键），网页**不再认识任何 `.so`/`.qmd` 文件名**（此前写死在前端徽章判定里，后端的三个键名分散在 6 处）。
+
+  | key | 缺省 | 产物 | `kind` |
+  |---|---|---|---|
+  | `hlSnapCjk` | 开 | `hl-snap.so`（xovi 扩展） | `extension` |
+  | `tapPageTurn` | 关 | `reader-page-turn.qmd`（qmd 补丁） | `patch` |
+  | `notesImportMdEnabled` | 关 | 无（只影响网页） | `web` |
+
+  `loaded` 由网关判定（`enhance::load_state`，语义逐字移植自原来网页里的徽章逻辑，单测逐条钉住）：找不到 xochitl 主进程 → `unknown`；扩展映射了 → `on`，否则 `off`；补丁已载入 → `on`，文件比进程新 → `pending`（待整机重启），否则 `off`；`web` 为 `null`。网页按 `kind` 选徽章说明文字、按 `loaded` 选徽章；卡片由 `TOGGLE_UI` 循环生成（单击翻页的“已加载”徽章从标题旁挪到了开关旁，与另外两张卡一致）。
 - **开关存哪**：`~/.local/share/cangjie-ime/reading-qol.json`（与设备原生设置页、langhook C hook 共用）。写法是“整份读进来、只覆盖要改的键、其余原样写回”，进程内串行化，所以不认识的键不会丢。
 - **缺省值**：`hlSnapCjk` 缺省开（荧光笔汉字吸附）；`notesImportMdEnabled` 缺省关（新功能要手动去实验室打开）；漫画页边距开关 `comicMinMargin` 2026-10-07 删除（带 sheng-ren 页边距标记的漫画一律设页边距 1），旧文件里的这个键原样保留、无人再读；`tapPageTurn`（单击翻页）缺省关 = xochitl 原生行为，由 `reader-page-turn.qmd` 每次打开书时读，切换后下次打开书生效（细节见系统增强线白皮书 §03i）。`rtlPageTurn`（日漫翻页规则）2026-10-07 稍后删除（书架不管翻页方向，xochitl 里日漫一律从左往右），旧键原样留在文件里、无人再读。已移除的手写优化（09-30）原有派生开关 `hwStrokeEnabled`（`hwStrokeNibMinRatio < 1.0` 就算开）；旧设备文件里的 `hwStroke*` 键按上一条规则原样保留，无害。
 - **页面位置**：荧光笔吸附、阅读器单击翻页在「管理 → 系统增强」（「日漫翻页规则」开关 2026-10-07 稍后删除）；导入 md 在「管理 → 实验室」（「漫画页边距最小化」卡片 2026-10-07 删除）。2026-09-30 移除：「系统增强」里的电池刺客开关卡片、battop 在跑时才出现的「电池刺客」子标签、实验室里的手写笔迹优化开关。
@@ -287,7 +336,7 @@
 | `GET /api/device/ota[?fresh=1]` | 页头横幅：`{needsReinstall, reasons, missingUnits, recovery, firmware}`；缓存 30 秒 |
 | `GET /api/device/wifi` | 页头"WiFi 上不了外网"横幅（2026-09-28）：读 `wifi-watch` 连上新网络时探测写下的 `$XDG_STATE_HOME/shelf/wifi-connectivity.json`，`{ssid, state: ok\|portal\|none, code, at}`；文件不在（WiFi 关着 / 没探过）→ `{state:"unknown"}`。只读一个小文件，不缓存 |
 | `GET /api/device/cleanup` | 可清理的遗留文件 + xochitl 书库里的 EPUB/PDF（只读） |
-| `POST /api/device/cleanup/delete {area, names}` | 逐个删除遗留文件，逐项回报成败 |
+| `POST /api/device/cleanup/delete {area, names}` | 逐个删除遗留文件，逐项回报：`{deleted, failed:[{name,message}], partial}`（2026-10-10 起；此前失败项是 `{name,error}`、部分失败用 200 里的 `ok:false`，见 §5.3） |
 
 **设备健康（`health.rs`）**：只在用户切到这个子标签、或点「刷新」时采集，不跟管理页的 SSE 刷新走，也没有任何定时器。一次采集只 fork **两个**子进程——一个 `systemctl show -p … <全部单元>`（xochitl、`xovi-reenable`、gateway 加 `MODULES` 里的 7 个服务），一个 `journalctl -b -1`——其余都是读 `/proc` 和 `stat`：
 
@@ -317,7 +366,7 @@
 **遗留清理（`cleanup.rs`）**：
 
 - **`~/.local/state/shelf/books/done/`**：09-03 早期直投流程的遗留目录。全仓 grep 过 `rs/sh/qmd/js/py/lua`，没有任何代码读写 `books/done`。网关列出里面的普通文件（不递归，符号链接和子目录不列），用户勾选、二次确认后逐个删除。
-- **删除的安全规则**（仓库出过清理时 `rm -rf` 掉用户漫画目录的事故）：前端只能传清理区代码（`books-done`）和文件名，不能传路径；名字必须是单段（拒绝空、`.`、`..`、含 `/` `\` NUL）；清理目录本身不能是符号链接；目标不能是符号链接、必须是普通文件；两边 `canonicalize` 后目标的父目录必须恰好是清理目录；只用 `remove_file`，从不整目录删。测试覆盖了 `..`、`../兄弟文件`、子目录里的文件、绝对路径、指向外面的符号链接、被换成符号链接的清理目录、未知清理区，全部拒绝且文件原样还在；删除类测试把 HOME 和全部 XDG 变量指到临时目录，并断言真实 HOME 下同名目录前后一致。
+- **删除的安全规则**（仓库出过清理时 `rm -rf` 掉用户漫画目录的事故）：前端只能传清理区代码（`books-done`）和文件名，不能传路径；名字必须是单段（拒绝空、`.`、`..`、含 `/` `\` NUL；有意不用基座的 `fs::plain_name`——它拒绝 `.` 开头的名字，而这里要清的就包括早期直投留下的边车 `.<书名>.delivered`）；清理目录本身不能是符号链接；目标不能是符号链接、必须是普通文件；两边 `canonicalize` 后目标的父目录必须恰好是清理目录；只用 `remove_file`，从不整目录删。测试覆盖了 `..`、`../兄弟文件`、子目录里的文件、绝对路径、指向外面的符号链接、被换成符号链接的清理目录、未知清理区，全部拒绝且文件原样还在；删除类测试把 HOME 和全部 XDG 变量指到临时目录，并断言真实 HOME 下同名目录前后一致。
 - **xochitl 书库里的旧版重复副本**（书架白皮书真机待办第 8 条）：以前按卷拆分投进去的分卷（分卷投递 2026-09-30 已移除，不会再产生新的），书名来自原书目录（如"第01卷"），跟新版整本的书名对不上，**没有精确的识别规则**，所以不自动挑、不预先勾。网关只读列出书库里活的 EPUB/PDF（手写笔记本不列），标出"同名 ×N"供人工核对；勾选后前端逐本调 book-serve 已有的 `POST /api/books/trash/add {uuid,name}` 排进队列；xochitl 里常驻的回收站代理 `shelf-trash-agent.qmd`（注入 `MainView`，长轮询 `GET /trash/pending?wait=290`）取走后按 id 调 xochitl 自己的 `LibraryController.moveEntriesToTrash`，几秒内进回收站、可恢复（09-25 重写；旧版用 `selectionMoveToTrash`，要等书库视图变化、只认当前文件夹，网页入队后不执行）。**网关不直接删、不改 xochitl 目录里的任何文件**。回收站代理没载入 xochitl 或 xochitl 没在跑时，页面会提示"排进队列要等它生效"。
 
 ## 07｜构建、部署与 systemd
@@ -363,6 +412,7 @@
 
 **待办**（逐批手测清单；书架那边对应的条目在书架白皮书附录 §05）
 
+- **10-10 重构第一阶段（未部署；须与 book-serve 的 `title`/`series`/`done`、ink-serve 的 `live` 同批上机，否则母版库书名会显示成完整文件名、搜索建议为空、「已加入」计数为 0，笔记「整理」为空）**：母版库书名、搜索建议、三个筛选计数与部署前一致；残留的非 EPUB/PDF 文件徽章显示真实扩展名；勾一本书后底栏「加入 xochitl」按钮在手机窄屏去掉“加入”；「管理 → 系统增强/实验室」三张开关卡片齐全、勾选状态正确、“已加载 / 待重启 / 网页功能”徽章与整机重启前后一致；「设备健康 → 清理」删除部分失败时提示列出原因；笔记页推送本章 / 重新转写 / 提问的结果提示仍停留约 3 秒不被冲掉、打字时后台事件不打断、失焦后补刷；页面切到后台 60 秒以上再切回，实时刷新恢复（页头圆点转绿）；`GET /api/enhance/status` 带 `toggles`。
 - **10-09 第六轮审计与审计后续（已部署，功能未手测）**：确认框里 Tab 到「否」按 Enter 不执行；清空回收站后笔记页正常；「模型管理」改单价保存后刷新数值不变；页面切到后台再切回、期间装/卸一个服务，标签页集合跟着变；管理台卸载失败时错误提示留得住；母版库剩余空间告急时标红；设备健康“待换入”不列半成品；`GET /api/services` 每项带 `seg`。
 - **10-07 三批（书架不再优化书、清理、代码审查修复；已部署，功能未手测）**：母版库只剩「加入 xochitl」、行内没有按钮、筛选 全部 / 未加入 / 已加入 计数加得拢、格式筛选只有 EPUB/PDF；批量多本照常一本本跑、结果不明记失败并提示去书库核对、网关重启后底部栏显示“等 book-serve 就绪”并续跑；`/api/budget/*` 回 404；「系统增强」只剩「单击翻页」一个翻页开关，单独 `PUT {"rtlPageTurn":true}` 回 400；笔记页事件刷新不跳章、编辑中不丢字、「推送本章」链接能打开；慢网下大文件超过 15 分钟不被截断；换 `xovi.so` 后不误报 OTA 横幅。书架白皮书附录 §05 #22、#23。
 - **09-30 第五轮审计（已部署，功能待手测）**：网关重启后开着的网页能自己回登录页或恢复实时刷新；「全部中止」点在一本刚开始时这本确实不跑；带 Basic 头的脚本连续请求时网关 CPU 不再每次尖峰；母版库全量刷新为 3 个请求。
