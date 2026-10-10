@@ -136,6 +136,9 @@ pub struct Ink {
     pub crop: String,
 }
 
+/// 每条条目保留的转写草稿份数（最新在前），见 [`Entry::accept_draft`]。
+pub const MAX_DRAFTS: usize = 10;
+
 /// 转写草稿（可多次，最新在前）。
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Draft {
@@ -232,9 +235,16 @@ impl Entry {
     /// `Draft`，不无条件降成 `Pending`。此前「不需要」→ 回收站恢复（`Skipped` 永远回 `Mined`，文本/草稿都还在）→
     /// 再点「转入笔记」，会得到一条带着定稿文字却标着"待转写"的 `Pending` 条目（草稿指纹对得上时转写也不会再来
     /// 把它推进 `Draft`，永远卡在"待转写"）；对已经在 `Draft`/`Reviewed` 的条目重复调用同理会把状态降级。
+    ///
+    /// **终态一律拒绝**（2026-10-10）：此前只拒 `Revoked`/`Archived`，已「不需要」(`Skipped`) 的条目能直接被
+    /// `/request`/`/archive` 拉走，绕开回收站「恢复」（`Skipped` 该回 `Mined`）。对同一终态重复点（连点两下
+    /// 「不需要」）算无改动，不报错。
     pub fn set_triage(&mut self, target: Status, now: u64) -> Result<(), String> {
-        if matches!(self.status, Status::Revoked | Status::Archived) {
-            return Err("这条已撤销/已删除，不能再操作".into());
+        if self.is_terminal() {
+            if self.status == target {
+                return Ok(());
+            }
+            return Err("这条已跳过/撤销/删除，不能再操作，请先在回收站里恢复".into());
         }
         let target = match target {
             Status::Pending if self.text.is_some() => Status::Reviewed,
@@ -280,6 +290,79 @@ impl Entry {
             Status::Mined
         };
         self.updated = now;
+        Ok(())
+    }
+
+    /// 转写结果写回成一份新草稿（transcribe-serve 经 ink-serve `POST …/draft` 送来**原文**）。条目状态转移的
+    /// 规则全在这里（NT-1，2026-10-10）——此前"剥行首标记"由 transcribe 决定（只在样式还是正文时剥）、"样式采不采纳"
+    /// 由 ink-serve 决定，拆在两个服务里：没定稿的条目首次转写得 `- 查作者` → 样式变圆点；补笔再转写时样式已不是
+    /// 正文、transcribe 就不剥了，新草稿原样是 `- 查作者`，设备笔记本出现"圆点 + `- `"、导出 md 成了 `- - 查作者`。
+    /// 现在：
+    /// - 行首标记**一律**剥掉（笔记本样式自带项目符号/编号，草稿正文里再留一份就重复）；
+    /// - 认出的样式只是建议：还没有定稿文字时采纳；已经有人校对过的文字时不动样式——补笔触发的再转写不能把
+    ///   用户定稿那条的圆点/编号改掉（增量规则"校对文本永不被覆盖"，样式是它的一部分；2026-09-25 第四轮审计）；
+    /// - 没有定稿文字时状态落 `Draft`，有定稿文字时状态不动（草稿只作建议）；
+    /// - 草稿只留最近 [`MAX_DRAFTS`] 份（最新在前）。
+    ///
+    /// 终态条目（跳过/撤销/删除）拒绝，要先在回收站恢复。
+    pub fn accept_draft(&mut self, raw_text: &str, backend: &str, hash: &str, now: u64) -> Result<(), String> {
+        self.refuse_terminal()?;
+        let (marker, text) = crate::marker::split_leading_marker(raw_text);
+        if self.text.is_none() {
+            if let Some(crate::marker::Marker::Style(s)) = marker {
+                self.style = s;
+            }
+            self.status = Status::Draft;
+        }
+        self.drafts.insert(0, Draft { text, backend: backend.to_string(), at: now, hash: hash.to_string() });
+        // 草稿只留最近几份：每补几笔/每点一次「重新转写」都会加一份，不设上限条目库会一直长，每次写回都要重写整本。
+        self.drafts.truncate(MAX_DRAFTS);
+        self.updated = now;
+        Ok(())
+    }
+
+    /// AI 回答写回（mind-serve 经 ink-serve `POST …/answer` 送来）。不改状态；终态条目拒绝。
+    pub fn accept_answer(&mut self, answer: Answer, now: u64) -> Result<(), String> {
+        self.refuse_terminal()?;
+        self.answer = Some(answer);
+        self.updated = now;
+        Ok(())
+    }
+
+    /// 笔画/勾画从书页上没了，或整本书进了回收站/被删：活条目转 `Revoked`（不物理删，留痕）。**终态条目不动**——
+    /// `Skipped`/`Archived` 被改判成 `Revoked` 的话，`restore()` 会走错分支（`Skipped` 该固定回 `Mined`）。
+    /// 返回是否真的撤销了（调用方计数）。
+    pub fn revoke(&mut self, now: u64) -> bool {
+        if self.is_terminal() {
+            return false;
+        }
+        self.status = Status::Revoked;
+        self.updated = now;
+        true
+    }
+
+    /// 摄取时笔画/勾画又回来了（xochitl 里撤销了擦除、书从回收站恢复）：`Revoked` 条目复活。落点按已有内容倒推，
+    /// 但**不**像回收站「恢复」那样把只有手写的条目推进 `Pending`——自动复活不代表用户要求转写，回到 `Mined`
+    /// 让用户在「浏览」里重新决定。不是 `Revoked` 的条目不动，返回是否真的复活了。
+    pub fn revive(&mut self, now: u64) -> bool {
+        if self.status != Status::Revoked {
+            return false;
+        }
+        self.status = if self.text.is_some() {
+            Status::Reviewed
+        } else if !self.drafts.is_empty() {
+            Status::Draft
+        } else {
+            Status::Mined
+        };
+        self.updated = now;
+        true
+    }
+
+    fn refuse_terminal(&self) -> Result<(), String> {
+        if self.is_terminal() {
+            return Err("这条已跳过/撤销/删除，不能再改，请先在回收站里恢复".to_string());
+        }
         Ok(())
     }
 
@@ -398,8 +481,18 @@ mod tests {
 
         e.status = Status::Revoked;
         let err = e.set_triage(Status::Pending, 30).unwrap_err();
-        assert!(err.contains("已撤销"));
+        assert!(err.contains("撤销"));
         assert_eq!(e.status, Status::Revoked, "拒绝后状态不变");
+    }
+
+    /// 已「不需要」的条目不能绕开回收站直接转入笔记/归档；重复点「不需要」是无改动。
+    #[test]
+    fn set_triage_refuses_skipped_except_repeating_skip() {
+        let mut e: Entry = serde_json::from_str(r#"{"id":"e","page":"p","page_index":0,"created":0,"updated":0,"status":"skipped"}"#).unwrap();
+        assert!(e.set_triage(Status::Pending, 5).is_err());
+        assert!(e.set_triage(Status::Archived, 5).is_err());
+        assert_eq!(e.set_triage(Status::Skipped, 5), Ok(()));
+        assert_eq!((e.status, e.updated), (Status::Skipped, 0), "拒绝/重复都不动状态和时间");
     }
 
     /// 纯勾画条目（`ink: None`）没有手写可转写：转入笔记直接落定成 `Reviewed`，不经过
@@ -457,7 +550,7 @@ mod tests {
         e.set_triage(Status::Archived, 5).unwrap();
         assert_eq!((e.status, e.updated), (Status::Archived, 5));
         let err = e.set_triage(Status::Pending, 10).unwrap_err();
-        assert!(err.contains("已删除"), "{err}");
+        assert!(err.contains("删除"), "{err}");
         assert_eq!(e.status, Status::Archived, "拒绝后状态不变");
     }
 
@@ -553,6 +646,49 @@ mod tests {
         e.drafts.push(Draft { text: "草稿".into(), backend: "b".into(), at: 0, hash: "h".into() });
         e.apply_marked_text("  ", 9);
         assert_eq!((e.text.as_deref(), e.status), (None, Status::Draft), "有草稿时清空文本退回 Draft 而不是 Pending");
+    }
+
+    /// NT-1 回归（2026-10-10）：草稿正文一律剥行首标记——条目样式已经不是正文后再转写，`- ` 也不能留在草稿里
+    /// （此前由 transcribe 决定剥不剥、只在样式是正文时剥，补笔再转写后出现"圆点 + `- `"、导出 `- - 查作者`）。
+    #[test]
+    fn accept_draft_always_strips_marker_and_style_is_only_a_suggestion() {
+        let mut e: Entry = serde_json::from_str(r#"{"id":"e","page":"p","page_index":0,"created":0,"updated":0,"status":"pending"}"#).unwrap();
+        e.accept_draft("- 查作者", "qwen3-vl-plus", "h1", 5).unwrap();
+        assert_eq!((e.style, e.status, e.drafts[0].text.as_str(), e.updated), (Style::Bullet, Status::Draft, "查作者", 5));
+        e.accept_draft("- 查作者", "qwen3-vl-plus", "h2", 6).unwrap();
+        assert_eq!((e.style, e.display_text()), (Style::Bullet, Some("查作者")), "样式已是圆点，再转写照样剥");
+        assert_eq!(e.drafts[0], Draft { text: "查作者".into(), backend: "qwen3-vl-plus".into(), at: 6, hash: "h2".into() });
+
+        // 有定稿文字：草稿照收作建议，样式/状态/定稿都不动。
+        e.apply_marked_text("我定稿的正文", 7);
+        e.style = Style::Body;
+        e.accept_draft("1. 背诵", "b", "h3", 8).unwrap();
+        assert_eq!((e.style, e.status, e.text.as_deref(), e.drafts[0].text.as_str()), (Style::Body, Status::Reviewed, Some("我定稿的正文"), "背诵"));
+
+        for i in 0..MAX_DRAFTS + 3 {
+            e.accept_draft(&format!("第{i}份"), "b", "h", 10 + i as u64).unwrap();
+        }
+        assert_eq!((e.drafts.len(), e.drafts[0].text.as_str()), (MAX_DRAFTS, "第12份"), "只留最近几份，最新在前");
+
+        for s in [Status::Skipped, Status::Revoked, Status::Archived] {
+            e.status = s;
+            assert!(e.accept_draft("x", "b", "h", 99).is_err(), "{s:?} 终态拒绝");
+            assert!(e.accept_answer(Answer { text: "a".into(), backend: "b".into(), at: 1, brief: "q".into() }, 99).is_err());
+        }
+    }
+
+    #[test]
+    fn revoke_skips_terminal_and_revive_falls_back_to_mined() {
+        let mut e: Entry = serde_json::from_str(r#"{"id":"e","page":"p","page_index":0,"created":0,"updated":0,"status":"pending","ink":{"strokes":["1:1"],"bbox":[0,0,1,1],"hash":"h"}}"#).unwrap();
+        assert!(!e.revive(1), "不是 Revoked 不复活");
+        assert!(e.revoke(2));
+        assert_eq!((e.status, e.updated), (Status::Revoked, 2));
+        assert!(!e.revoke(3), "已撤销是终态，不重复撤销");
+        assert!(e.revive(4));
+        assert_eq!((e.status, e.updated), (Status::Mined, 4), "只有手写的自动复活回 Mined（不像恢复那样回 Pending）");
+        e.status = Status::Skipped;
+        assert!(!e.revoke(5), "Skipped 不能被改判成 Revoked");
+        assert_eq!(e.status, Status::Skipped);
     }
 
     #[test]

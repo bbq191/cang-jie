@@ -115,18 +115,6 @@ fn find_by_quote_across_ink(entries: &[Entry], claimed: &[bool], page: &str, d: 
         .map(|(i, _)| i)
 }
 
-/// 复活一条 `Revoked` 条目时落回的状态：按已有内容倒推，但**不**像回收站「恢复」那样把只有手写的条目推进
-/// `Pending`——自动复活不代表用户要求转写，回到 `Mined` 让用户在「浏览」里重新决定。
-fn revived_status(e: &Entry) -> Status {
-    if e.text.is_some() {
-        Status::Reviewed
-    } else if !e.drafts.is_empty() {
-        Status::Draft
-    } else {
-        Status::Mined
-    }
-}
-
 /// 把本页新草稿并入 `entries`（只动本页的条目）。**两条认领路径**：有手写的草稿按笔画指纹/共享笔画
 /// 认领（原逻辑不变）；纯勾画草稿（`ink: None`）没有笔画可比，按勾画自己的 `Quote.id`（`GlyphRange`
 /// 的 CRDT id）认领——2026-09-07 二期真机验证时发现"只勾线不写字"整页被跳过，补的这条路径。
@@ -134,7 +122,7 @@ fn revived_status(e: &Entry) -> Status {
 /// **复活**（2026-09-25 第四轮审计）：认领不到活条目时，再看本页的 `Revoked` 条目——笔画 id 是 CRDT id、不会被
 /// 新笔迹复用，能对上只可能是同一批笔画回来了（xochitl 里撤销了擦除、书从回收站恢复）。此前这种情况会按同样的
 /// (书, 页, 首笔 id) 再建一条**同 id** 的新条目：网页按 id 改字永远改到旧的那条（已撤销、拒绝修改），校对文本也
-/// 留在旧条目里。现在直接复活原条目（状态见 [`revived_status`]），id 不变、校对文本/草稿/回答都在。
+/// 留在旧条目里。现在直接复活原条目（状态见 [`Entry::revive`]），id 不变、校对文本/草稿/回答都在。
 ///
 /// **勾画加 / 去手写仍是同一条**（2026-09-25 用户要求）：纯勾画条目旁边后来补了手写，或者"勾画 + 手写"条目的手写
 /// 被擦掉只剩勾画，按勾画自己的 `Quote.id` 认领原条目（[`find_by_quote_across_ink`]），id、状态、校对文本、样式、
@@ -153,9 +141,7 @@ pub fn merge_page(entries: &mut Vec<Entry>, ctx: &PageCtx, drafts: Vec<PageDraft
             Some(i) => {
                 claimed[i] = true;
                 let e = &mut entries[i];
-                if revived.is_some() {
-                    e.status = revived_status(e);
-                    e.updated = ctx.now;
+                if revived.is_some() && e.revive(ctx.now) {
                     st.revived += 1;
                 }
                 refresh_page_ctx(e, ctx);
@@ -229,15 +215,13 @@ pub fn merge_page(entries: &mut Vec<Entry>, ctx: &PageCtx, drafts: Vec<PageDraft
         // export.rs/三处写入口，唯独漏了这里）：`Skipped`/`Archived` 也是终态，笔画被擦掉不该把它们
         // 悄悄改判成 `Revoked`——那样 `restore()` 会走错分支（`Skipped` 该固定回 `Mined`，被错判成
         // `Revoked` 后会按内容倒推，ink 还在字段里就恢复成 `Pending`，用户明确"不需要"过的内容被拉回
-        // 转写队列）。改用 `is_terminal()` 单一事实源，三态终态一起排除。
+        // 转写队列）。`Entry::revoke` 用 `is_terminal()` 单一事实源，三态终态一起排除。
         //
         // 注意：只改这一处，不改上面 `find_match(.., revoked=false)` 的匹配判据（仍是"非 `Revoked`"）——匹配判据管的是"这
         // 是不是同一份还在原地的内容，别重复建条目"，Skipped/Archived 但笔迹没动过的条目理应继续被
         // 匹配上（保持原状不动），如果连匹配都排除掉，笔迹没变但整页因为别处改动触发重扫时，会给同一份
         // 已经"不需要"过的内容重新生成一条 `Mined`，那是另一个新 bug，不是这里要修的。
-        if !claimed[i] && e.page == ctx.page && !e.is_terminal() && (e.ink.is_some() || e.quote.is_some()) {
-            e.status = Status::Revoked;
-            e.updated = ctx.now;
+        if !claimed[i] && e.page == ctx.page && (e.ink.is_some() || e.quote.is_some()) && e.revoke(ctx.now) {
             st.revoked += 1;
         }
     }
