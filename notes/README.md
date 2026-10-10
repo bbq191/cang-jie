@@ -80,7 +80,7 @@ notes/
 与书架共用交叉编译环境（`rustup target add aarch64-unknown-linux-musl` + aarch64 交叉 gcc），见 [`../shelf/README.md`](../shelf/README.md)「构建 · 部署 · 卸载」。
 
 ```sh
-cd notes && cargo test --workspace      # host：264 过 + 1 忽略（rmv6 29 · epubmap 10 · notecore 75 · notesvc 4 · vendorcfg 29 · ink 32 · transcribe 27 · mind 25 · note 33 另 1 个 ignored；2026-10-10 重构第二阶段后实跑）
+cd notes && cargo test --workspace      # host：265 过 + 1 忽略（rmv6 29 · epubmap 10 · notecore 75 · notesvc 4 · vendorcfg 29 · ink 32 · transcribe 28 · mind 25 · note 33 另 1 个 ignored；2026-10-10 重构第二阶段后实跑）
 cd ../shelf && sh build.sh               # host 测试 + 交叉编译（notes/ 在就一起编）
 cd ../packaging && sh deploy.sh <设备IP> --only ink,transcribe,mind,note   # 只装/更新笔记线（网关总会一起装）；不加 --only 就全装
 ```
