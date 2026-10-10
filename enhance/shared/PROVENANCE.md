@@ -7,7 +7,8 @@
 | `scan.c/.h` | `cj_find_exec_module`：读 `/proc/self/maps`，找到 `/usr/bin/xochitl` 的可执行段（连同被 `mprotect` 切开的续段，见下节） |
 | `pattern.c/.h` | `cj_find_unique_pattern`：在段里搜特征码（目标函数开头 32~40 字节的原始机器码），**必须恰好命中 1 处**。精确匹配先用 `memchr` 跳到首字节候选再整段比较（2026-09-24，16 MB 扫描 39.6 → 3.2 ms，与逐字节循环差分对拍一致） |
 | `trampoline_aarch64.c/.h` | `cj_build_far_jump`：拼一条跳到任意 64 位地址的 ARM64 远跳转（20 字节） |
-| `trampoline_patch.c/.h` | `cj_patch_target`：先从 `/proc/self/maps` 记下目标页原权限 → mprotect 成 RWX → 把开头 20 字节抄进新分配的"调用桩"并接上跳回原函数的远跳转 → 把目标开头改写成跳到 handler → 刷指令缓存 → 原本是 `r-x` 的页恢复成 `r-x`（2026-10-09 起；原本就可写、跨两页权限不一致或查不到时保持 RWX）。任一步失败返回 0、不改任何字节；调用桩分配失败时也把页恢复成原权限（2026-10-09 补）。详见白皮书 §03p「已知风险」#2 |
+| `trampoline_patch.c/.h` | `cj_patch_target`：先从 `/proc/self/maps` 记下目标页原权限 → mprotect 成 RWX → 把开头 20 字节抄进新分配的"调用桩"并接上跳回原函数的远跳转 → 把目标开头改写成跳到 handler → 刷指令缓存 → 原本是 `r-x` 的页恢复成 `r-x`（2026-10-09 起；原本就可写、跨两页权限不一致或查不到时保持 RWX）。任一步失败返回 0、不改任何字节；调用桩分配失败时也把页恢复成原权限（2026-10-09 补）。2026-10-10 起被覆盖的指令里有 PC 相对寻址（`cj_insn_pc_relative`，在 `trampoline_aarch64.c`）也放弃，同样恢复页权限。详见白皮书 §03p「已知风险」#2 |
+| `minijson.c/.h` | `cj_json_get_bool` / `cj_json_get_string`：只读顶层对象里某个键的值（hl-snap 读 `hlSnapCjk`、ui-font 读 `sans`）。2026-10-10 从两个扩展各自的 `strstr` 扫描收进来，以 ui-font 那份的字符串规则为准；符号 hidden，不随 `.so` 导出 |
 | `tests/` | host 单测：`make test` |
 
 ## 多扩展共存：合并被 mprotect 切开的代码段（2026-09-24 修；hw-stroke 09-30 移除后只剩 hl-snap 一个扩展，这个修复仍保留）
