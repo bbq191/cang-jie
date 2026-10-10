@@ -82,7 +82,7 @@ pub struct Request<'a> {
 /// 所以处理函数读到的一定是真实对端地址（不是 `X-Forwarded-For` 这类可伪造的值）。
 pub const REMOTE_IP_HEADER: &str = "X-Rmsvc-Remote-Ip";
 
-/// [`Request::read_small_body`] 的上限（1MB）：JSON 表单这类小请求体（当年还有 KOReader 配置补丁，koreader-serve 2026-09-30 已删）。
+/// [`Request::small_body`] 的上限（1MB）：JSON 表单这类小请求体（当年还有 KOReader 配置补丁，koreader-serve 2026-09-30 已删）。
 pub const SMALL_BODY_MAX: u64 = 1024 * 1024;
 
 /// 按名取头（不区分大小写）——[`Request`] 与 [`GuardRequest`] 共用。
@@ -152,10 +152,6 @@ impl Request<'_> {
     pub fn q_flag(&self, k: &str) -> bool {
         matches!(self.q(k), Some("1") | Some("true"))
     }
-    /// `application/x-www-form-urlencoded` 表单 → map（小 body）；要直接得到 413/400 的用 [`Request::form`]。
-    pub fn form_body(&mut self) -> Result<HashMap<String, String>, String> {
-        self.form().map_err(|e| e.message)
-    }
     pub fn q(&self, k: &str) -> Option<&str> {
         self.query.get(k).map(|s| s.as_str())
     }
@@ -173,12 +169,8 @@ impl Request<'_> {
     /// 小 body（JSON 表单 / 配置补丁）整体读入，上限 [`SMALL_BODY_MAX`]。**超限报错**而不是截断：此前
     /// `take(1MB)` 静默截断，超长的 KOReader 配置补丁会被切成半截再交给合并脚本、JSON 报一句莫名的解析错
     /// （2026-09-24 审计）。多读 1 字节即可判定超限，不必读完整个超长 body。
-    ///
-    /// 返回 `String`、调用方再自己定状态码；要直接得到 413/400 的用 [`Request::small_body`]。
-    pub fn read_small_body(&mut self) -> Result<Vec<u8>, String> {
-        self.small_body().map_err(|e| e.message)
-    }
-    /// 同 [`Request::read_small_body`]，但错误直接是回执：超过 [`SMALL_BODY_MAX`] → 413，读失败（客户端半路断开/读超时）→ 400。
+    /// 超过 [`SMALL_BODY_MAX`] → 413，读失败（客户端半路断开/读超时）→ 400（2026-10-10 删掉了返回 `String` 的
+    /// `read_small_body`/`json_body`/`form_body`，那几个拿不到 413）。
     pub fn small_body(&mut self) -> Result<Vec<u8>, ApiError> {
         let too_big = || ApiError::too_large(format!("请求体超过 {} KB 上限", SMALL_BODY_MAX / 1024));
         if self.content_length.is_some_and(|n| n as u64 > SMALL_BODY_MAX) {
@@ -190,9 +182,6 @@ impl Request<'_> {
             return Err(too_big());
         }
         Ok(v)
-    }
-    pub fn json_body(&mut self) -> Result<serde_json::Value, String> {
-        self.json_value().map_err(|e| e.message)
     }
     /// JSON body → `Value`；超限 413，读失败 / 不是合法 JSON → 400。
     pub fn json_value(&mut self) -> Result<serde_json::Value, ApiError> {
@@ -377,17 +366,17 @@ mod tests {
         let max = SMALL_BODY_MAX as usize;
         let exact = vec![b'a'; max];
         let mut r: &[u8] = &exact;
-        assert_eq!(req_with(&mut r, None).read_small_body().unwrap().len(), max, "恰好上限照收");
+        assert_eq!(req_with(&mut r, None).small_body().unwrap().len(), max, "恰好上限照收");
         let over = vec![b'a'; max + 1];
         let mut r: &[u8] = &over;
-        assert!(req_with(&mut r, None).read_small_body().unwrap_err().contains("上限"), "没有 Content-Length（chunked）也按实际字节判");
+        assert!(req_with(&mut r, None).small_body().unwrap_err().message.contains("上限"), "没有 Content-Length（chunked）也按实际字节判");
         let mut r: &[u8] = b"{}";
-        assert!(req_with(&mut r, Some(max + 1)).read_small_body().is_err(), "声明长度超限直接拒，不读 body");
+        assert!(req_with(&mut r, Some(max + 1)).small_body().is_err(), "声明长度超限直接拒，不读 body");
         let mut r: &[u8] = b"{\"a\":1}";
         assert_eq!(req_with(&mut r, Some(7)).json().unwrap().0["a"], 1, "正常小 body 不受影响");
     }
 
-    /// 返回 `ApiError` 的取 body 辅助：超限 413、坏 JSON 400；旧的返回 `String` 的几个文案不变。
+    /// 取 body 辅助：超限 413、坏 JSON 400。
     #[test]
     fn api_body_helpers_give_413_for_oversize_and_400_for_bad_json() {
         let max = SMALL_BODY_MAX as usize;
@@ -401,12 +390,8 @@ mod tests {
         let mut r: &[u8] = b"{half";
         let e = req_with(&mut r, None).json_value().unwrap_err();
         assert!(e.status == 400 && e.message.starts_with("JSON 解析失败"), "{e:?}");
-        let mut r: &[u8] = b"{half";
-        assert!(req_with(&mut r, None).json_body().unwrap_err().starts_with("JSON 解析失败"), "旧接口文案不变");
         let mut r: &[u8] = b"a=1+2&b=x";
         assert_eq!(req_with(&mut r, None).form().unwrap()["a"], "1 2");
-        let mut r: &[u8] = b"a=1+2";
-        assert_eq!(req_with(&mut r, None).form_body().unwrap()["a"], "1 2");
         assert_eq!((ApiError::new(418, "x").status, ApiError::conflict("x").status, ApiError::too_large("x").status), (418, 409, 413));
         assert_eq!((ApiError::bad_gateway("x").status, ApiError::unavailable("x").status), (502, 503));
     }

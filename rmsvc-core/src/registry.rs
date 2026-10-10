@@ -151,20 +151,10 @@ impl SvcClient {
     fn prefixed(&self, verb: &str, path: &str, e: SvcError) -> String {
         format!("{} {verb} {path}: {}", self.service, e.message)
     }
-    /// GET JSON；错误是带 `<服务> GET <路径>:` 前缀的字符串（状态码丢了）。要按对方状态码回执的用 [`SvcClient::try_get_json`]。
-    pub fn get_json(&self, path: &str) -> Result<serde_json::Value, String> {
-        let service = self.service;
-        let resp = self.agent.get(&format!("{}{path}", self.base()?)).call().map_err(|e| self.prefixed("GET", path, Self::to_svc_error(e)))?;
-        serde_json::from_reader(resp.into_reader()).map_err(|e| format!("{service} {path} 应答不是 JSON: {e}"))
-    }
-    /// GET JSON 并反序列化成 `T`；形状不对的错误带 `<服务> <路径> 应答形状不对:` 前缀。要结构化错误用 [`SvcClient::try_get_typed`]。
-    pub fn get_typed<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, String> {
-        serde_json::from_value(self.get_json(path)?).map_err(|e| format!("{} {path} 应答形状不对: {e}", self.service))
-    }
-    /// 同 [`SvcClient::get_json`] 但返回结构化错误（与 [`SvcClient::try_post_json`] 对称）：对方非 2xx → `status` 是对方的码；
+    /// GET JSON，返回结构化错误（与 [`SvcClient::try_post_json`] 对称）：对方非 2xx → `status` 是对方的码；
     /// 未运行/连不上/超时 → `status: None`；对方回了 2xx 但体不是 JSON → `status` 是那个 2xx（经 `From<SvcError> for ApiError`
     /// 变 502）。`message` 不带前缀，可直接给用户看。此前 GET 侧只有字符串错误，mind-serve 一律当 404、note-serve 一律当 400，
-    /// 连"ink-serve 未运行"也回 400（2026-10-10 审计 CORE-1）。
+    /// 连"ink-serve 未运行"也回 400（2026-10-10 审计 CORE-1）；那两个返回 `String` 的 `get_json`/`get_typed` 第二阶段已删。
     pub fn try_get_json(&self, path: &str) -> Result<serde_json::Value, SvcError> {
         let base = self.base().map_err(|m| SvcError { status: None, message: m })?;
         let resp = self.agent.get(&format!("{base}{path}")).call().map_err(Self::to_svc_error)?;
@@ -308,8 +298,8 @@ mod tests {
         let se = c.try_post_json("/x", &serde_json::json!({})).unwrap_err();
         assert_eq!((se.status, se.message.as_str()), (Some(400), "这本书正在处理中"), "结构化错误不带前缀");
         assert!(!e.contains("status code"), "{e}");
-        let e = c.get_json("/y").unwrap_err();
-        assert!(e.contains("这本书正在处理中"), "{e}");
+        let e = c.try_get_json("/y").unwrap_err();
+        assert_eq!((e.status, e.message.as_str()), (Some(400), "这本书正在处理中"));
         let mut j = info("ok-svc", 2, me);
         j.port = one_shot_server(200, r#"{"queued":3}"#);
         let _g2 = register(&p, &j).unwrap();
@@ -326,8 +316,8 @@ mod tests {
             queued: u32,
         }
         let ok = SvcClient::new(p.clone(), "ok-svc", 5);
-        assert_eq!(ok.get_typed::<Q>("/x").unwrap().queued, 3);
-        assert!(ok.get_typed::<Vec<u8>>("/x").unwrap_err().contains("形状不对"));
+        assert_eq!(ok.try_get_typed::<Q>("/x").unwrap().queued, 3);
+        assert!(ok.try_get_typed::<Vec<u8>>("/x").unwrap_err().message.contains("形状不对"));
         assert_eq!(ok.get_bytes("/x", 1024).unwrap(), br#"{"queued":3}"#);
         assert!(ok.get_bytes("/x", 4).unwrap_err().contains("上限"));
         assert!(SvcClient::new(p, "bad-svc", 5).get_bytes("/x", 1024).unwrap_err().contains("这本书正在处理中"));
@@ -384,7 +374,7 @@ mod tests {
 
     #[test]
     fn enc_percent_encodes_path_segments() {
-        assert_eq!(enc("a b"), crate::multipart::percent_encode("a b"), "就是 percent_encode 的薄封装，不重新发明编码规则");
+        assert_eq!(enc("a b"), crate::http::percent_encode("a b"), "就是 percent_encode 的薄封装，不重新发明编码规则");
     }
 
     #[test]

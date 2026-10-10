@@ -1,5 +1,5 @@
 //! URL 百分号编解码（查询串、路径段、`filename*=`）。2026-10-10 从 `multipart` 搬来：路由、查询串、网关都用，
-//! 放在 multipart 里是历史原因（审计 CORE-9）；`multipart::percent_*` 仍再导出。
+//! 放在 multipart 里是历史原因（审计 CORE-9）。
 
 fn hex_val(c: u8) -> Option<u8> {
     match c {
@@ -56,3 +56,37 @@ pub fn percent_encode(s: &str) -> String {
     o
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn percent_roundtrip() {
+        assert_eq!(percent_encode("a b/中"), "a%20b%2F%E4%B8%AD");
+        assert_eq!(percent_decode(&percent_encode("x=1&y=中 文")), "x=1&y=中 文");
+        assert_eq!(percent_decode_path("C++%20a%2B.ttf"), "C++ a+.ttf", "路径段里 + 不是空格");
+        assert_eq!(percent_decode("C++%2B"), "C  +", "查询串仍按表单语义");
+    }
+
+    /// 回归：`%` 后跟多字节 UTF-8 字符曾在 `&s[i+1..i+3]` 处 panic（切到字符中间）。
+    #[test]
+    fn percent_decode_never_panics_on_non_ascii_or_malformed() {
+        assert_eq!(percent_decode("%aé!"), "%aé!", "非法转义原样保留、不 panic");
+        assert_eq!(percent_decode("%é"), "%é");
+        assert_eq!(percent_decode("中%中文"), "中%中文");
+        assert_eq!(percent_decode("%+1"), "% 1", "`+1` 不是合法 hex，不该被 from_str_radix 式地吞掉");
+        assert_eq!(percent_decode("%4"), "%4");
+        assert_eq!(percent_decode("%41"), "A");
+        assert_eq!(percent_decode("%e4%b8%ad+x"), "中 x");
+        // 穷举：任意由 % 与若干多字节/ASCII 字符拼出的短串都不能 panic
+        let alphabet = ["%", "a", "F", "é", "中", "+", "\u{1F600}"];
+        for x in alphabet {
+            for y in alphabet {
+                for z in alphabet {
+                    let _ = percent_decode(&format!("{x}{y}{z}"));
+                    let _ = percent_decode(&format!("{x}{y}{z}!"));
+                }
+            }
+        }
+    }
+}

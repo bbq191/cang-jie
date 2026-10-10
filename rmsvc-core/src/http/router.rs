@@ -136,8 +136,6 @@ impl Router {
         }
         if let Some((_, r, params)) = best {
             req.params = params;
-            // `?ka=<秒>`：让本请求里创建的 SSE 流用指定心跳（见 `events::parse_keepalive_param`）。
-            let _ka = crate::events::enter_request(crate::events::parse_keepalive_param(req.q("ka")));
             return match (r.handler)(req) {
                 Ok(rep) => rep,
                 Err(e) => e.into(),

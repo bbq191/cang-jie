@@ -316,9 +316,9 @@ fn parse_headers(head: &str) -> (String, Option<String>, Option<String>) {
     (name, filename, ctype)
 }
 
-// 百分号编解码 2026-10-10 搬到 `http::encoding`（路由、查询串、网关跨模块用的是它，不是 multipart 的事）；
-// 这里保留再导出，旧路径 `multipart::percent_*` 照常可用。
-pub use crate::http::{percent_decode, percent_decode_path, percent_encode};
+// 百分号编解码 2026-10-10 搬到 `http::encoding`（路由、查询串、网关跨模块用的是它，不是 multipart 的事），
+// 旧路径 `multipart::percent_*` 的再导出第二阶段已删。
+use crate::http::{percent_decode_path, percent_encode};
 
 /// 下载响应的 `Content-Disposition`：ASCII 兜底名（非 ASCII 与 `"` 换成 `_`）+ RFC 5987 的 UTF-8 真名。
 /// 笔记导出（note-serve）与母版库原件下载（book-serve）共用。
@@ -460,35 +460,9 @@ mod tests {
     }
 
     #[test]
-    fn percent_roundtrip() {
-        assert_eq!(percent_encode("a b/中"), "a%20b%2F%E4%B8%AD");
-        assert_eq!(percent_decode(&percent_encode("x=1&y=中 文")), "x=1&y=中 文");
-        assert_eq!(percent_decode_path("C++%20a%2B.ttf"), "C++ a+.ttf", "路径段里 + 不是空格");
-        assert_eq!(percent_decode("C++%2B"), "C  +", "查询串仍按表单语义");
+    fn filename_star_keeps_plus() {
         let (_, f, _) = parse_headers("Content-Disposition: form-data; name=\"file\"; filename*=UTF-8''C++.epub");
         assert_eq!(f.as_deref(), Some("C++.epub"));
-    }
-
-    /// 回归：`%` 后跟多字节 UTF-8 字符曾在 `&s[i+1..i+3]` 处 panic（切到字符中间）。
-    #[test]
-    fn percent_decode_never_panics_on_non_ascii_or_malformed() {
-        assert_eq!(percent_decode("%aé!"), "%aé!", "非法转义原样保留、不 panic");
-        assert_eq!(percent_decode("%é"), "%é");
-        assert_eq!(percent_decode("中%中文"), "中%中文");
-        assert_eq!(percent_decode("%+1"), "% 1", "`+1` 不是合法 hex，不该被 from_str_radix 式地吞掉");
-        assert_eq!(percent_decode("%4"), "%4");
-        assert_eq!(percent_decode("%41"), "A");
-        assert_eq!(percent_decode("%e4%b8%ad+x"), "中 x");
-        // 穷举：任意由 % 与若干多字节/ASCII 字符拼出的短串都不能 panic
-        let alphabet = ["%", "a", "F", "é", "中", "+", "\u{1F600}"];
-        for x in alphabet {
-            for y in alphabet {
-                for z in alphabet {
-                    let _ = percent_decode(&format!("{x}{y}{z}"));
-                    let _ = percent_decode(&format!("{x}{y}{z}!"));
-                }
-            }
-        }
     }
 
     /// 差分测试：body 里塞满 `\r`、`\n`、`-` 和"差一点就是分隔符"的片段，用不同大小的到达块 + 不同大小的
