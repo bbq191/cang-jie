@@ -10,17 +10,32 @@ pub fn load_or_default<T: DeserializeOwned + Default>(path: &Path) -> T {
 }
 
 /// 同 [`load_or_default`]，但文件**不存在**时把缺省写出一份（供用户改）。
-/// 只在"不存在"时写：损坏文件（存在但解析失败）保留原样、退回缺省，绝不覆盖用户可能想修的内容。
+/// 只在"不存在"时写：损坏文件（存在但读不出 / 解析失败）保留原样、退回缺省，绝不覆盖用户可能想修的内容，并且
+/// **打一行日志 + 另存 `.corrupt` 副本**（[`backup_corrupt`]，只留第一份）——2026-10-10 前这一步只在笔记线的
+/// `notesvc::load_or_seed_logged` 里有，书架 / 字体配置改坏了静默退回缺省、看不出任何迹象（审计 NT-5）。
 /// 写失败忽略（下次再试），不阻塞启动。
 pub fn load_or_seed<T: DeserializeOwned + Default + Serialize>(path: &Path) -> T {
-    match std::fs::read_to_string(path).ok().and_then(|t| serde_json::from_str::<T>(&t).ok()) {
-        Some(c) => c,
-        None => {
+    load_or_seed_checked(path, None).0
+}
+
+/// 同 [`load_or_seed`]，另外返回"文件是否损坏"（调用方据此跳过"启动时落盘一次"，免得把坏文件换成缺省）；
+/// `backup_mode` 是 `.corrupt` 副本的权限（含 key 的配置给 `Some(0o600)`）。整份只读一次。
+pub fn load_or_seed_checked<T: DeserializeOwned + Default + Serialize>(path: &Path, backup_mode: Option<u32>) -> (T, bool) {
+    let parsed = match std::fs::read_to_string(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             let c = T::default();
-            if !path.exists() {
-                let _ = save(path, &c, None);
-            }
-            c
+            let _ = save(path, &c, None);
+            return (c, false);
+        }
+        Err(e) => Err(e.to_string()),
+        Ok(t) => serde_json::from_str::<T>(&t).map_err(|e| e.to_string()),
+    };
+    match parsed {
+        Ok(c) => (c, false),
+        Err(e) => {
+            let bak = backup_corrupt(path, backup_mode);
+            eprintln!("[config] {} 读不出（{e}），按缺省运行、不覆盖原文件{}", path.display(), if bak.is_some() { "（副本在同目录 .corrupt）" } else { "" });
+            (T::default(), true)
         }
     }
 }
@@ -112,5 +127,11 @@ mod tests {
         let c: C = load_or_seed(&p);
         assert_eq!(c, C::default());
         assert_eq!(std::fs::read(&p).unwrap(), b"{ not json", "损坏内容不覆盖");
+        assert_eq!(std::fs::read(t.path().join("c.json.corrupt")).unwrap(), b"{ not json", "损坏时另存副本");
+        std::fs::write(&p, br#"{"a":9}"#).unwrap();
+        assert_eq!(load_or_seed_checked::<C>(&p, None), (C { a: 9, b: "x".into() }, false), "修好后照常读，副本不影响");
+        std::fs::write(&p, b"[").unwrap();
+        assert_eq!(load_or_seed_checked::<C>(&p, None), (C::default(), true));
+        assert_eq!(std::fs::read(t.path().join("c.json.corrupt")).unwrap(), b"{ not json", "只留第一份");
     }
 }

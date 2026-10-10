@@ -100,7 +100,7 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let bind_addr = service::parse_bind(&args, SPEC.default_bind);
     let paths = Paths::from_env();
-    let cfg: IngestConfig = notesvc::load_or_seed_logged("ink-serve", &paths.app_config_dir(APP).join("ink.json"));
+    let cfg: IngestConfig = rmsvc_core::config::load_or_seed(&paths.app_config_dir(APP).join("ink.json"));
     let db = BookDb::new(paths.app_state_dir(APP).join("books"));
     let st = Arc::new(State { paths: paths.clone(), cfg, db, bus: Arc::new(EventBus::new()) });
     if let Err(e) = std::fs::create_dir_all(st.crops_dir()).and_then(|_| st.db.ensure()) {

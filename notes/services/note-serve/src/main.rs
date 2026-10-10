@@ -164,7 +164,7 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let bind_addr = service::parse_bind(&args, SPEC.default_bind);
     let paths = Paths::from_env();
-    let cfg: NoteConfig = notesvc::load_or_seed_logged("note-serve", &paths.app_config_dir(APP).join("note.json"));
+    let cfg: NoteConfig = rmsvc_core::config::load_or_seed(&paths.app_config_dir(APP).join("note.json"));
     let notebooks = NotebookState::new(paths.app_state_dir(APP).join("notebooks"));
     if let Err(e) = notebooks.ensure() {
         eprintln!("[note-serve] 建目录失败: {e}");
