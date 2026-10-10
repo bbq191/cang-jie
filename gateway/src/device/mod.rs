@@ -97,7 +97,7 @@ pub fn cleanup_list(paths: &Paths, _req: &mut Request<'_>) -> ApiResult {
 #[derive(Serialize)]
 struct CleanupDeleted {
     deleted: Vec<String>,
-    failed: Vec<crate::wire::Failed>,
+    failed: Vec<crate::failed::Failed>,
     partial: bool,
 }
 
@@ -110,7 +110,7 @@ pub fn cleanup_delete(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
     }
     let o = cleanup::delete(paths, &area, &names);
     health_cache().invalidate();
-    Ok(Reply::ok(&CleanupDeleted { partial: !o.failed.is_empty(), failed: o.failed.iter().map(|(n, e)| crate::wire::Failed::new(n, e)).collect(), deleted: o.deleted }))
+    Ok(Reply::ok(&CleanupDeleted { partial: !o.failed.is_empty(), failed: o.failed.iter().map(|(n, e)| crate::failed::Failed::new(n, e)).collect(), deleted: o.deleted }))
 }
 
 #[cfg(test)]

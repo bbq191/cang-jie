@@ -73,7 +73,7 @@ src/
   events.rs    事件汇聚（spawn 返回总线；网关自发事件的 area/kind 常量）
   batch.rs     批量队列（含全部中止、等一本处理完的轮询）
   ui.rs        拼装单页 UI、登录页、改密页
-  wire.rs      几个接口共用的应答片段（失败项 {name,message}）
+  failed.rs    几个接口共用的失败项应答片段 {name,message}（跨服务共享的状态值用 rmsvc_core::wire）
   enhance/     系统增强开关（TOGGLES 开关表 / qol / loaded）
   device/      设备健康（health）、OTA 横幅（ota）、遗留清理（cleanup）
 ui/            index.html、style.css、auth.css、locales/、test/，脚本 core/dom/transfer/notes/assets/manage/health/app.js（编译期按 ui.rs 的顺序拼回一个 <script>，见白皮书 §5.1）

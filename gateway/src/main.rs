@@ -12,10 +12,10 @@ mod config;
 mod device;
 mod enhance;
 mod events;
+mod failed;
 mod manage;
 mod proxy;
 mod ui;
-mod wire;
 
 use rmsvc_core::http::{bind, ApiError, Method, Reply, Router, ServeOpts};
 use rmsvc_core::paths::Paths;

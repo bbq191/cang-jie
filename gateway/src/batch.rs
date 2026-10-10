@@ -270,7 +270,7 @@ pub struct Status {
     current: Option<String>,
     /// 排队中的书名（至多 200 个，网页只拿来标"排队中"）。
     queued: Vec<String>,
-    failed: Vec<crate::wire::Failed>,
+    failed: Vec<crate::failed::Failed>,
 }
 
 pub fn status() -> Status {
@@ -283,7 +283,7 @@ pub fn status() -> Status {
         done: st.done,
         current: st.current.as_ref().map(|j| j.name.clone()),
         queued: st.queue.iter().take(200).map(|j| j.name.clone()).collect(),
-        failed: st.failed.iter().map(|(n, m)| crate::wire::Failed::new(n, m)).collect(),
+        failed: st.failed.iter().map(|(n, m)| crate::failed::Failed::new(n, m)).collect(),
     }
 }
 
