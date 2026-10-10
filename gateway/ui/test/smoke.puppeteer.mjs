@@ -2,7 +2,7 @@
 // 用法：PUPPETEER_NODE_MODULES=<含 puppeteer 的 node_modules 目录> node gateway/ui/test/smoke.puppeteer.mjs
 // （本机可用 mermaid-cli 自带的：/…/lib/node_modules/@mermaid-js/mermaid-cli/node_modules/）；
 // 或 PLAYWRIGHT_NODE_MODULES=<含 playwright 的 node_modules 目录>（如 gateway/tools/screenshot-walkthrough/node_modules）。
-// 不起网关：拦截请求直接喂拼好的页面，并在页面里 mock 掉 fetch 与 EventSource，验证：
+// 不起网关：拦截请求直接喂拼好的页面，并在页面里 mock 掉 fetch 与 EventSource（事件照网关汇聚后的样子带 svc/tab），验证：
 //   ① 文件名/错误文案里的 HTML 不会注入 DOM（无 <img>、onerror 不触发）；
 //   ② 10 个 SSE 事件连发被 coalesce 成至多 2 次刷新；网关自身的批量/闸门事件只重取那两个状态，book-serve 的 staging 事件不重取
 //      xochitl 文件夹列表；③ 页面隐藏时不刷新、可见后补刷一次；④ 空闲无轮询；⑤ 确认/输入两种对话框的键盘/点击行为；⑥ 笔记 tab 正在输入时
@@ -104,27 +104,27 @@ out.wifiBanner = await page.evaluate(() => { const b = document.querySelector('#
 await page.evaluate(() => document.querySelector('#wifibanner .btn.x').click());
 out.wifiClosed = await page.evaluate(() => !document.querySelector('#wifibanner'));
 { const a0 = await hits('/api/books/agent-failures'), st0 = await hits();
-  await page.evaluate(() => window.__es[0].onmessage({data: JSON.stringify({area:'books', kind:'agent-failed', svc:'books'})}));
+  await page.evaluate(() => window.__es[0].onmessage({data: JSON.stringify({area:'books', kind:'agent-failed', svc:'books', tab:'books'})}));
   await new Promise(r => setTimeout(r, 300));
   out.failEventHits = [(await hits('/api/books/agent-failures')) - a0, (await hits()) - st0]; }
 await page.evaluate(() => document.querySelector('#agentfail .btn').click());
 await new Promise(r => setTimeout(r, 300));
 out.failAck = [await hits('/api/books/agent-failures/clear'), await page.evaluate(() => !!document.querySelector('#agentfail'))];
 // 事件突发：10 个 book-serve 事件连发 → 合并
-await page.evaluate(() => { for (let i = 0; i < 10; i++) window.__es[0].onmessage({data: JSON.stringify({area:'books', kind:'staging', svc:'books'})}); });
+await page.evaluate(() => { for (let i = 0; i < 10; i++) window.__es[0].onmessage({data: JSON.stringify({area:'books', kind:'staging', svc:'books', tab:'books'})}); });
 await new Promise(r => setTimeout(r, 500));
 out.afterBurst = (await hits()) - out.initialHits;
 out.burstFolders = (await hits('/api/books/status')) - 1; // 首次全量取过 1 次；staging 事件不该再取
 out.koreaderHits = await page.evaluate(() => Object.keys(window.__hits).filter(p => p.startsWith('/api/koreader')).length); // KOReader 已撤：一次都不该请求
 // 网关自身的批量队列事件（不带 svc）：只重取批量状态，不全量刷新
 const s0 = await hits(), b0 = await hits('/api/batch/status');
-await page.evaluate(() => { for (let i = 0; i < 5; i++) window.__es[0].onmessage({data: JSON.stringify({area:'books', kind:'batch'})}); });
+await page.evaluate(() => { for (let i = 0; i < 5; i++) window.__es[0].onmessage({data: JSON.stringify({area:'books', kind:'batch', tab:'books'})}); });
 await new Promise(r => setTimeout(r, 500));
 out.queueEventStagingHits = (await hits()) - s0;
 out.queueEventBatchHits = (await hits('/api/batch/status')) - b0;
 // 隐藏时不刷新
 const h0 = await hits();
-await page.evaluate(() => { window.__hidden = true; window.__es[0].onmessage({data: JSON.stringify({area:'books'})}); });
+await page.evaluate(() => { window.__hidden = true; window.__es[0].onmessage({data: JSON.stringify({area:'books', tab:'books'})}); });
 await new Promise(r => setTimeout(r, 300));
 out.hiddenHits = (await hits()) - h0;
 // 可见后补刷一次
@@ -133,7 +133,7 @@ await new Promise(r => setTimeout(r, 300));
 out.afterVisible = (await hits()) - h0;
 // 服务集合检查（tab 增减要整页重载）：隐藏时 manage 事件不取 /api/services，可见后补查一次
 { const v0 = await hits('/api/services');
-  await page.evaluate(() => { window.__hidden = true; window.__es[0].onmessage({data: JSON.stringify({area:'manage', kind:'services'})}); });
+  await page.evaluate(() => { window.__hidden = true; window.__es[0].onmessage({data: JSON.stringify({area:'manage', kind:'services', tab:'manage'})}); });
   await new Promise(r => setTimeout(r, 300));
   const hiddenSvc = (await hits('/api/services')) - v0;
   await page.evaluate(() => { window.__hidden = false; document.dispatchEvent(new Event('visibilitychange')); });
@@ -184,7 +184,7 @@ await page.evaluate(() => document.querySelectorAll('#tabs button')[1].click());
 await new Promise(r => setTimeout(r, 600));
 const n0 = await hits('/api/ink/books'), e0 = await hits('/api/enhance/status');
 out.noteTa = await page.evaluate(() => { document.querySelector('#nsubnav').children[1].click(); const ta = document.querySelector('textarea.entry-text'); if (!ta) return false; ta.focus(); window.__ta = ta; return true; });
-await page.evaluate(() => window.__es[window.__es.length - 1].onmessage({data: JSON.stringify({area:'notes', kind:'entries', svc:'ink'})}));
+await page.evaluate(() => window.__es[window.__es.length - 1].onmessage({data: JSON.stringify({area:'notes', kind:'entries', svc:'ink', tab:'notes'})}));
 await new Promise(r => setTimeout(r, 400));
 out.noteWhileTyping = (await hits('/api/ink/books')) - n0;
 out.noteFocusKept = await page.evaluate(() => document.activeElement === window.__ta && document.contains(window.__ta));
@@ -211,7 +211,7 @@ out.uiFont = await page.evaluate(() => { const c = document.querySelector('#uisa
   return {sans: c.value, serif: s.value, opts: c.options.length, firstOpt: c.options[0].value, restart: document.querySelector('#uist').style.display !== 'none',
     rows: l.querySelectorAll('li').length, img: l.querySelectorAll('img').length, text: l.textContent}; });
 const f0 = await hits('/api/fonts'), w0 = await hits('/api/wallpapers');
-await page.evaluate(() => window.__es[window.__es.length - 1].onmessage({data: JSON.stringify({area:'wallpapers', kind:'pool', svc:'wallpapers'})}));
+await page.evaluate(() => window.__es[window.__es.length - 1].onmessage({data: JSON.stringify({area:'wallpapers', kind:'pool', svc:'wallpapers', tab:'other'})}));
 await new Promise(r => setTimeout(r, 400));
 out.otherFonts = (await hits('/api/fonts')) - f0;
 out.otherWalls = (await hits('/api/wallpapers')) - w0;

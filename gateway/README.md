@@ -70,7 +70,7 @@ src/
   config.rs    gateway.json：HTTPS 开关、密码哈希、mDNS 名、额外证书名、会话天数（读写走 rmsvc-core 的 config 模板）
   proxy.rs     /api/<seg>/* 反向代理
   manage.rs    MODULES 服务表（唯一事实源）、管理台、基石探测
-  events.rs    事件汇聚（spawn 返回总线；网关自发事件的 area/kind 常量）
+  events.rs    事件汇聚（spawn 返回总线；给事件补 svc/tab；网关自发事件的 area/kind/tab 常量）
   batch.rs     批量队列（含全部中止、等一本处理完的轮询）
   ui.rs        拼装单页 UI、登录页、改密页
   failed.rs    几个接口共用的失败项应答片段 {name,message}（跨服务共享的状态值用 rmsvc_core::wire）

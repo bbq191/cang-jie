@@ -5,6 +5,7 @@
 //! **已开**（跑着→网页有该功能）。开关＝`systemctl start/stop`（仅关后台省占用，非省电）；卸载＝调已装的
 //! `shelf-uninstall --only <令牌>`（对称删单元/二进制/qmd）；**安装不走网页**（不让网页 remount /usr 装系统单元），
 //! 未装模块只给引导。网关自身永远在（管理台宿主），不可从网页关/卸。基石（xovi / qt-resource-rebuilder）只读探测。
+use crate::events::{TAB_BOOKS, TAB_NOTES, TAB_OTHER};
 use rmsvc_core::http::{ApiError, ApiResult, Reply, Request};
 use rmsvc_core::paths::Paths;
 use rmsvc_core::registry;
@@ -26,17 +27,21 @@ pub struct Module {
     /// 收到该服务的事件时还要叫醒的网关内部等待方（`events::spawn` 的订阅线程调用）。目前只有 book-serve：批量队列等
     /// "这本书处理完没有"靠它（`batch::poll_until_settled`）。2026-10-10 前是汇聚循环里写死 `seg == "books"`。
     pub wake: Option<fn() -> &'static crate::events::Wake>,
+    /// 该服务的事件归网页哪个顶层 tab（网关汇聚时给事件补 `"tab"`，网页按它路由，见 [`crate::events::tag`]）。
+    /// 2026-10-10 前网页按事件的 `area` 找 tab：ink-serve、transcribe-serve 发 `area:"notes"` 能到笔记页，只因 note-serve
+    /// 的 URL 段恰好也叫 `notes`（审计 FE-6）。现在由这张表声明：笔记线四个服务都归笔记页，字体/壁纸归「其他」。
+    pub tab: &'static str,
 }
 
 pub const MODULES: &[Module] = &[
-    Module { seg: "books", service: "book-serve", only: "book", label: "母版库 / 落原生", events: true, wake: Some(crate::events::books_wake) },
-    Module { seg: "fonts", service: "font-serve", only: "font", label: "xochitl 字体", events: true, wake: None },
-    Module { seg: "wallpapers", service: "wallpaper-serve", only: "wallpaper", label: "壁纸", events: true, wake: None },
+    Module { seg: "books", service: "book-serve", only: "book", label: "母版库 / 落原生", events: true, wake: Some(crate::events::books_wake), tab: TAB_BOOKS },
+    Module { seg: "fonts", service: "font-serve", only: "font", label: "xochitl 字体", events: true, wake: None, tab: TAB_OTHER },
+    Module { seg: "wallpapers", service: "wallpaper-serve", only: "wallpaper", label: "壁纸", events: true, wake: None, tab: TAB_OTHER },
     // 笔记线（notes/）：矿 / 转写 / 脑 / 本，挂同一网关；网页只有 note-serve 注册「笔记」tab，前端组合四个 seg。
-    Module { seg: "ink", service: "ink-serve", only: "ink", label: "笔记·矿（条目库）", events: true, wake: None },
-    Module { seg: "transcribe", service: "transcribe-serve", only: "transcribe", label: "笔记·转写（手写→文字）", events: true, wake: None },
-    Module { seg: "mind", service: "mind-serve", only: "mind", label: "笔记·脑（问AI）", events: false, wake: None },
-    Module { seg: "notes", service: "note-serve", only: "note", label: "笔记·本（笔记本/导出）", events: true, wake: None },
+    Module { seg: "ink", service: "ink-serve", only: "ink", label: "笔记·矿（条目库）", events: true, wake: None, tab: TAB_NOTES },
+    Module { seg: "transcribe", service: "transcribe-serve", only: "transcribe", label: "笔记·转写（手写→文字）", events: true, wake: None, tab: TAB_NOTES },
+    Module { seg: "mind", service: "mind-serve", only: "mind", label: "笔记·脑（问AI）", events: false, wake: None, tab: TAB_NOTES },
+    Module { seg: "notes", service: "note-serve", only: "note", label: "笔记·本（笔记本/导出）", events: true, wake: None, tab: TAB_NOTES },
 ];
 
 pub fn by_seg(seg: &str) -> Option<&'static Module> {
