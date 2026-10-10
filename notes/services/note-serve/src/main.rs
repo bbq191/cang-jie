@@ -2,7 +2,7 @@
 //! 本体职责是把条目库投影成设备笔记本（复用书本自己所在的设备文件夹，一章一本，xochitl 7 种打字样式）与 md 导出
 //! （`export.rs`，落 `$XDG_DATA_HOME/notes/vault/<书名>/`；网页走 `.../export.md` 单章下载）。
 //! 生成编排见 `publish.rs`：只读 ink-serve 的条目库（改字段仍是 ink-serve 的事）、按章指纹判断要不要重传，
-//! 传完按 `visibleName`+时间窗认领设备新分配的 uuid，旧版本入 `book-serve` 回收站队列（真机验证过的软删路）。
+//! 传完按 `visibleName` 认领设备新分配的 uuid（基座 `Xochitl::upload_and_claim`），旧版本入 `book-serve` 回收站队列（真机验证过的软删路）。
 //! 路由（经网关前缀 `/api/notes`）：`GET /status` · `GET /events` ·
 //! `POST /books/{uuid}/chapters/{idx}/generate`（单章重新投影+按需上传）·
 //! `POST /books/{uuid}/import-md`（单篇 markdown → 新设备笔记本文档，独立于条目库，见 `publish::import_markdown`，
