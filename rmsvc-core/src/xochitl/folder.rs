@@ -1,7 +1,7 @@
 //! 书库文件夹的类型：[`FolderId`]（一个活文件夹的 uuid）与 [`Folder`]（书库根，或某个文件夹）。
 //!
 //! 为什么要类型（2026-10-10，审计 X-1/X-3）：此前文件夹"名字"与"uuid"都是 `&str`，上传接口成对出现
-//! （`upload`/`upload_into`、`upload_file`/`upload_file_into`……），把 uuid 传给按名字的那个也照样编译通过——
+//! （`upload`/`upload_into`、`upload_file`/`upload_file_into`……，2026-10-10 第二阶段已删），把 uuid 传给按名字的那个也照样编译通过——
 //! note-serve 就这样把笔记本投到书库根投了一个月。新接口只收 [`Folder`]：
 //! - **按名字解析由调用方先做**（[`super::Xochitl::folder_by_name`] 全库按名找、[`super::Xochitl::child_folder`] 按层找），
 //!   拿到 [`FolderId`] 再投。全库按名找在多级同名文件夹下有歧义（「漫画/卷01」「小说/卷01」），按层找没有；
@@ -20,7 +20,7 @@ impl FolderId {
         is_uuid_shape(s).then(|| FolderId(s.to_string()))
     }
 
-    /// 不校验形状（内部：旧的按 `&str` 的入口委托新实现时，原样保留它们收任意字符串的行为）。
+    /// 不校验形状（内部：书库查询从 `.metadata` 文件名 / `parent` 字段读出来的 uuid 原样用，与一直以来的行为一致）。
     pub(crate) fn unchecked(s: &str) -> FolderId {
         FolderId(s.to_string())
     }
@@ -61,15 +61,6 @@ impl Folder {
             FolderId::parse(s).map(Folder::Id)
         }
     }
-
-    /// 内部：旧接口的 `folder_uuid: &str`（空串＝根，其余原样当 uuid，不校验——保持它们一直以来的行为）。
-    pub(crate) fn from_legacy_uuid(s: &str) -> Folder {
-        if s.is_empty() {
-            Folder::Root
-        } else {
-            Folder::Id(FolderId::unchecked(s))
-        }
-    }
 }
 
 impl From<FolderId> for Folder {
@@ -107,7 +98,5 @@ mod tests {
         assert_eq!(Folder::Root.as_parent_str(), "");
         assert_eq!(Folder::from(None::<FolderId>), Folder::Root);
         assert_eq!(Folder::from(FolderId::parse(U)), Folder::Id(FolderId::parse(U).unwrap()));
-        assert_eq!(Folder::from_legacy_uuid(""), Folder::Root);
-        assert_eq!(Folder::from_legacy_uuid("c2").as_parent_str(), "c2", "旧接口收的任意字符串原样保留");
     }
 }

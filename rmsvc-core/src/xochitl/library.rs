@@ -1,6 +1,7 @@
 //! 原生书库的**只读元数据模型**：`<uuid>.metadata`/`.content` 的查询（找文件夹、列文件夹、文档去重命名、
 //! 按创建时间圈"刚进库的那本"、渲染页数）。纯文件系统读取，不碰 HTTP——和上传客户端（父模块 [`super::Xochitl`]）
 //! 分开，各自单一职责；对外路径仍是 `rmsvc_core::xochitl::*`（父模块 `pub use` 再导出）。
+use super::folder::{Folder, FolderId};
 use std::path::Path;
 
 /// 书库目录里所有可解析的 `<uuid>.metadata` → (uuid, 强类型 [`Metadata`])。只读；读不了、解析不了（含字段类型不对，
@@ -52,15 +53,17 @@ pub fn is_uuid_shape(s: &str) -> bool {
 }
 
 /// 按 visibleName 在**整个书库**里找活文件夹（不管它在哪一层），多个同名取先扫到的。网页「加入 xochitl → 文件夹」用；
-/// 要按层找（某个父文件夹下的某个名字）用 [`find_child_folder`]。
-pub fn find_folder_by_name(dir: &Path, name: &str) -> Option<String> {
-    live_folders(dir).find(|(_, m)| m.visible_name == name).map(|(uuid, _)| uuid)
+/// 要按层找（某个父文件夹下的某个名字）用 [`child_folder`]。
+pub fn find_folder_by_name(dir: &Path, name: &str) -> Option<FolderId> {
+    live_folders(dir).find(|(_, m)| m.visible_name == name).map(|(uuid, _)| FolderId::unchecked(&uuid))
 }
 
-/// 在 `parent`（文件夹 uuid，空串＝书库根）**正下方**找名叫 `name` 的活文件夹（`CollectionType`、没删、不在回收站），
-/// 返回它的 uuid（2026-10-07 直接导入按层建多级文件夹用）。同一层有多个同名的取 uuid 最小的那个，结果不随目录扫描顺序变。
-pub fn find_child_folder(dir: &Path, parent: &str, name: &str) -> Option<String> {
-    live_folders(dir).filter(|(_, m)| m.parent == parent && m.visible_name == name).map(|(uuid, _)| uuid).min()
+/// 在 `parent` **正下方**找名叫 `name` 的活文件夹（`CollectionType`、没删、不在回收站），2026-10-07 直接导入按层建多级文件夹用。
+/// 同一层有多个同名的取 uuid 最小的那个，结果不随目录扫描顺序变。2026-10-10 前收 `parent: &str`（空串＝根）、回 `String`，
+/// 名字与 uuid 都是字符串，传错了也编译通过（审计 X-1）。
+pub fn child_folder(dir: &Path, parent: &Folder, name: &str) -> Option<FolderId> {
+    let parent = parent.as_parent_str();
+    live_folders(dir).filter(|(_, m)| m.parent == parent && m.visible_name == name).map(|(uuid, _)| uuid).min().map(|u| FolderId::unchecked(&u))
 }
 
 /// 书库里所有活文件夹的（父文件夹 uuid, 名字）——建文件夹队列每次唤醒判"哪些已经建出来了"用，整库只扫一遍。
@@ -68,12 +71,12 @@ pub fn folder_keys(dir: &Path) -> std::collections::HashSet<(String, String)> {
     live_folders(dir).map(|(_, m)| (m.parent, m.visible_name)).collect()
 }
 
-/// 文件夹 `folder` 从书库根往下的完整路径，各级名字用 `/` 连起来（`漫画/死亡筆記(愛藏版)`）；空串（书库根）→ 空串。
+/// 文件夹 `folder` 从书库根往下的完整路径，各级名字用 `/` 连起来（`漫画/死亡筆記(愛藏版)`）；书库根 → 空串。
 /// 往上找 `parent` 直到根；中途某一级读不到、不是文件夹、在回收站、或层数超过 64（防 `.metadata` 里成环）就停在那里，
 /// 只拼已经找到的那几级。名字里本来带 `/` 的（如《乱马1/2》）原样拼进去，路径就有歧义——只给人看、给客户端比对，不再拆回去用。
-pub fn folder_path_of(dir: &Path, folder: &str) -> String {
+pub fn folder_path_of(dir: &Path, folder: &Folder) -> String {
     let mut names = Vec::new();
-    let mut cur = folder.to_string();
+    let mut cur = folder.as_parent_str().to_string();
     while !cur.is_empty() && is_uuid_shape(&cur) && names.len() < 64 {
         let Ok(Some(m)) = read_meta(dir, &cur) else { break };
         if !m.is_folder() || !m.is_live() {
@@ -98,19 +101,23 @@ pub fn list_folders(dir: &Path) -> Vec<String> {
         .collect()
 }
 
-/// 给定一份文档的 uuid，读它 `.metadata` 的 `parent` 字段——就是它当前所在的设备文件夹 uuid
-/// （空串＝书库根）。找不到 `.metadata`、解析失败、或书在回收站（`parent=="trash"`），一律返回
-/// `None`，调用方按 best-effort 落书库根处理（2026-09-09 补：`note-serve` 生成章节笔记本时不再
-/// 新建/确保文件夹，改成直接复用书本自己已经在的文件夹）。
-pub fn parent_folder_of(dir: &Path, uuid: &str) -> Option<String> {
+/// 给定一份文档的 uuid，读它 `.metadata` 的 `parent` 字段——就是它当前所在的设备文件夹（空串＝书库根）。找不到 `.metadata`、
+/// 解析失败、或书在回收站（`parent=="trash"`），一律返回 `None`，调用方按 best-effort 落书库根处理（2026-09-09 补：`note-serve`
+/// 生成章节笔记本时不再新建/确保文件夹，改成直接复用书本自己已经在的文件夹）。`parent` 不校验 uuid 形状、原样当文件夹
+/// （xochitl 自己写的值，与 2026-10-10 前回 `String` 的 `parent_folder_of` 行为一致）。
+pub fn folder_of_document(dir: &Path, uuid: &str) -> Option<Folder> {
     let m = read_meta(dir, uuid).ok()??;
-    (m.parent != "trash").then_some(m.parent)
+    match m.parent.as_str() {
+        "trash" => None,
+        "" => Some(Folder::Root),
+        p => Some(Folder::Id(FolderId::unchecked(p))),
+    }
 }
 
-/// 在 `folder`（文件夹 uuid，空串＝根）范围内，如果 `base_name` 已经被别的活文档占用，就在末尾加
-/// 数字后缀（`"标题"` → `"标题 2"` → `"标题 3"` ...）直到不冲突；没冲突就原样返回。只读 `.metadata`，
-/// 不写、不建任何东西。
-pub fn unique_document_name(dir: &Path, folder: &str, base_name: &str) -> String {
+/// 在 `folder` 范围内，如果 `base_name` 已经被别的活文档占用，就在末尾加数字后缀（`"标题"` → `"标题 2"` → `"标题 3"` ...）
+/// 直到不冲突；没冲突就原样返回。只读 `.metadata`，不写、不建任何东西。
+pub fn unique_document_name(dir: &Path, folder: &Folder, base_name: &str) -> String {
+    let folder = folder.as_parent_str();
     let names: std::collections::HashSet<String> = metadata_entries(dir)
         .into_iter()
         .filter(|(_, m)| m.is_live_document() && m.parent == folder)
@@ -136,9 +143,9 @@ pub fn unique_document_name(dir: &Path, folder: &str, base_name: &str) -> String
 pub struct Metadata {
     #[serde(rename = "visibleName", deserialize_with = "null_default")]
     pub visible_name: String,
-    /// `DocumentType` / `CollectionType`。
-    #[serde(rename = "type", deserialize_with = "null_default")]
-    pub kind: String,
+    /// `type` 字段：`DocumentType` / `CollectionType` / 别的（2026-10-10 前是原样字符串，各处再按字面量比，审计 CORE-2）。
+    #[serde(rename = "type")]
+    pub kind: EntryKind,
     /// 所在文件夹 uuid（空串＝根，`trash`＝回收站）。
     #[serde(deserialize_with = "null_default")]
     pub parent: String,
@@ -172,12 +179,21 @@ where
     Ok(<Option<T> as serde::Deserialize>::deserialize(d)?.unwrap_or_default())
 }
 
-/// `.metadata` 的 `type`：文档 / 文件夹 / 别的（xochitl 新版本加了类型时不至于解析失败）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// `.metadata` 的 `type`：文档 / 文件夹 / 别的（xochitl 新版本加了类型时不至于解析失败）。缺、`null`、不是字符串 → `Other`
+/// （与改成枚举前"字段按空串读"一致，不让一个怪值把整份 `.metadata` 解析失败）。只读不写：本模块从不写 `.metadata`。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum EntryKind {
     Document,
     Folder,
+    #[default]
     Other,
+}
+
+impl<'de> serde::Deserialize<'de> for EntryKind {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<EntryKind, D::Error> {
+        let v = <serde_json::Value as serde::Deserialize>::deserialize(d)?;
+        Ok(v.as_str().map(EntryKind::parse).unwrap_or_default())
+    }
 }
 
 impl EntryKind {
@@ -196,15 +212,11 @@ impl Metadata {
     pub fn is_live(&self) -> bool {
         self.parent != "trash" && !self.deleted
     }
-    /// `type` 字段的枚举视图（`kind` 字段仍是原样字符串）。
-    pub fn entry_kind(&self) -> EntryKind {
-        EntryKind::parse(&self.kind)
-    }
     pub fn is_document(&self) -> bool {
-        self.entry_kind() == EntryKind::Document
+        self.kind == EntryKind::Document
     }
     pub fn is_folder(&self) -> bool {
-        self.entry_kind() == EntryKind::Folder
+        self.kind == EntryKind::Folder
     }
     pub fn is_live_document(&self) -> bool {
         self.is_document() && self.is_live()
@@ -276,6 +288,11 @@ pub fn page_count(dir: &Path, uuid: &str) -> Option<u64> {
 mod tests {
     use super::*;
 
+    /// 测试夹具里的文件夹名不一定是 uuid 形状（`m`、`f1`），按 xochitl 写进 `parent` 的原样当文件夹。
+    fn id(s: &str) -> Folder {
+        Folder::Id(FolderId::unchecked(s))
+    }
+
     #[test]
     fn metadata_null_fields_fall_back_to_default() {
         let m: Metadata = serde_json::from_str(r#"{"visibleName":"书","type":"DocumentType","parent":null,"deleted":null}"#).unwrap();
@@ -283,6 +300,10 @@ mod tests {
         assert!(!m.deleted);
         assert!(m.is_live_document());
         assert_eq!(m.last_opened_page, None);
+        // `type` 缺、为 null、不是字符串：都按"别的"读，不让整份解析失败（改成枚举前按空串读，同样既不是文档也不是文件夹）
+        for j in [r#"{"visibleName":"书"}"#, r#"{"visibleName":"书","type":null}"#, r#"{"visibleName":"书","type":5}"#] {
+            assert_eq!(serde_json::from_str::<Metadata>(j).unwrap().kind, EntryKind::Other, "{j}");
+        }
     }
 
     /// `lastOpenedPage`：数字、数字字符串都认（同 book-serve progress.rs 手解的规则）；怪值不拖垮整份解析。
@@ -310,7 +331,7 @@ mod tests {
         assert_eq!((a.visible_name.as_str(), a.created_ms()), ("书", 1_700_000_000_123));
         let b = read_meta(d, "b").unwrap().unwrap();
         assert!(b.is_folder() && !b.is_live() && b.created_ms() == 5);
-        assert_eq!((a.entry_kind(), b.entry_kind(), EntryKind::parse("SomethingNew"), Metadata::default().entry_kind()), (EntryKind::Document, EntryKind::Folder, EntryKind::Other, EntryKind::Other));
+        assert_eq!((a.kind, b.kind, EntryKind::parse("SomethingNew"), Metadata::default().kind), (EntryKind::Document, EntryKind::Folder, EntryKind::Other, EntryKind::Other));
         assert_eq!(read_meta(d, "missing").unwrap(), None, "没有 → Ok(None)");
         assert!(read_meta(d, "c").is_err(), "半截 → Err，不当成没有");
         assert_eq!(file_type(d, "a").as_deref(), Some("epub"));
@@ -339,13 +360,13 @@ mod tests {
         w("b.metadata", r#"{"type":"DocumentType","visibleName":"library","parent":""}"#);
         w("c.metadata", r#"{"type":"CollectionType","visibleName":"library","parent":""}"#);
         w("d.content", r#"{}"#);
-        assert_eq!(find_folder_by_name(t.path(), "library"), Some("c".into()));
+        assert_eq!(find_folder_by_name(t.path(), "library").as_ref().map(FolderId::as_str), Some("c"));
         assert_eq!(find_folder_by_name(t.path(), "none"), None);
     }
 
     /// 按层找：只认指定父文件夹正下方的；不同父文件夹下的同名子文件夹互不相混。
     #[test]
-    fn find_child_folder_matches_parent_and_name() {
+    fn child_folder_matches_parent_and_name() {
         let t = tempfile::tempdir().unwrap();
         let w = |n: &str, j: &str| std::fs::write(t.path().join(n), j).unwrap();
         w("m.metadata", r#"{"type":"CollectionType","visibleName":"漫画","parent":""}"#);
@@ -355,13 +376,13 @@ mod tests {
         w("t1.metadata", r#"{"type":"CollectionType","visibleName":"卷02","parent":"trash"}"#);
         w("d1.metadata", r#"{"type":"DocumentType","visibleName":"卷03","parent":"m"}"#);
         w("x1.metadata", r#"{"type":"CollectionType","visibleName":"卷04","parent":"m","deleted":true}"#);
-        assert_eq!(find_child_folder(t.path(), "", "漫画"), Some("m".into()));
-        assert_eq!(find_child_folder(t.path(), "m", "卷01"), Some("m1".into()));
-        assert_eq!(find_child_folder(t.path(), "n", "卷01"), Some("n1".into()));
-        assert_eq!(find_child_folder(t.path(), "", "卷01"), None, "根下没有卷01");
-        assert_eq!(find_child_folder(t.path(), "m", "卷02"), None, "回收站里的不算");
-        assert_eq!(find_child_folder(t.path(), "m", "卷03"), None, "文档不是文件夹");
-        assert_eq!(find_child_folder(t.path(), "m", "卷04"), None, "已删的不算");
+        assert_eq!(child_folder(t.path(), &Folder::Root, "漫画").as_ref().map(FolderId::as_str), Some("m"));
+        assert_eq!(child_folder(t.path(), &id("m"), "卷01").as_ref().map(FolderId::as_str), Some("m1"));
+        assert_eq!(child_folder(t.path(), &id("n"), "卷01").as_ref().map(FolderId::as_str), Some("n1"));
+        assert_eq!(child_folder(t.path(), &Folder::Root, "卷01").as_ref().map(FolderId::as_str), None, "根下没有卷01");
+        assert_eq!(child_folder(t.path(), &id("m"), "卷02").as_ref().map(FolderId::as_str), None, "回收站里的不算");
+        assert_eq!(child_folder(t.path(), &id("m"), "卷03").as_ref().map(FolderId::as_str), None, "文档不是文件夹");
+        assert_eq!(child_folder(t.path(), &id("m"), "卷04").as_ref().map(FolderId::as_str), None, "已删的不算");
         let keys = folder_keys(t.path());
         assert!(keys.contains(&("m".to_string(), "卷01".to_string())) && keys.contains(&("n".to_string(), "卷01".to_string())));
         assert!(!keys.contains(&("m".to_string(), "卷04".to_string())));
@@ -375,11 +396,12 @@ mod tests {
         w(a, r#"{"type":"CollectionType","visibleName":"漫画","parent":""}"#);
         w(b, &format!(r#"{{"type":"CollectionType","visibleName":"死亡筆記(愛藏版)","parent":"{a}"}}"#));
         w(c, &format!(r#"{{"type":"CollectionType","visibleName":"环","parent":"{c}"}}"#));
-        assert_eq!(folder_path_of(t.path(), ""), "");
-        assert_eq!(folder_path_of(t.path(), a), "漫画");
-        assert_eq!(folder_path_of(t.path(), b), "漫画/死亡筆記(愛藏版)");
-        assert_eq!(folder_path_of(t.path(), "dddddddd-dddd-4ddd-8ddd-dddddddddddd"), "", "读不到就是空");
-        assert_eq!(folder_path_of(t.path(), c).split('/').count(), 64, "成环也会停");
+        assert_eq!(folder_path_of(t.path(), &Folder::Root), "");
+        assert_eq!(folder_path_of(t.path(), &id(a)), "漫画");
+        assert_eq!(folder_path_of(t.path(), &id(b)), "漫画/死亡筆記(愛藏版)");
+        assert_eq!(folder_path_of(t.path(), &id("dddddddd-dddd-4ddd-8ddd-dddddddddddd")), "", "读不到就是空");
+        assert_eq!(folder_path_of(t.path(), &id(c)).split('/').count(), 64, "成环也会停");
+        assert_eq!(folder_path_of(t.path(), &id("c2")), "", "uuid 形状不对的不往上找");
     }
 
     #[test]
@@ -395,16 +417,16 @@ mod tests {
     }
 
     #[test]
-    fn parent_folder_of_reads_parent_field_and_treats_trash_as_none() {
+    fn folder_of_document_reads_parent_field_and_treats_trash_as_none() {
         let t = tempfile::tempdir().unwrap();
         let w = |n: &str, j: &str| std::fs::write(t.path().join(n), j).unwrap();
         w("book-in-folder.metadata", r#"{"type":"DocumentType","visibleName":"人骨拼图","parent":"folder-uuid"}"#);
         w("book-at-root.metadata", r#"{"type":"DocumentType","visibleName":"飘","parent":""}"#);
         w("book-in-trash.metadata", r#"{"type":"DocumentType","visibleName":"删了","parent":"trash"}"#);
-        assert_eq!(parent_folder_of(t.path(), "book-in-folder"), Some("folder-uuid".into()));
-        assert_eq!(parent_folder_of(t.path(), "book-at-root"), Some(String::new()), "根目录是空串，不是 None");
-        assert_eq!(parent_folder_of(t.path(), "book-in-trash"), None, "书在回收站，别把笔记也生成进去");
-        assert_eq!(parent_folder_of(t.path(), "no-such-uuid"), None, "查不到就 None，调用方 best-effort 落根");
+        assert_eq!(folder_of_document(t.path(), "book-in-folder"), Some(id("folder-uuid")));
+        assert_eq!(folder_of_document(t.path(), "book-at-root"), Some(Folder::Root), "根目录是 Root，不是 None");
+        assert_eq!(folder_of_document(t.path(), "book-in-trash"), None, "书在回收站，别把笔记也生成进去");
+        assert_eq!(folder_of_document(t.path(), "no-such-uuid"), None, "查不到就 None，调用方 best-effort 落根");
     }
 
     #[test]
@@ -415,10 +437,10 @@ mod tests {
         w("b.metadata", r#"{"type":"DocumentType","visibleName":"楔子 2","parent":"f1"}"#);
         w("c.metadata", r#"{"type":"DocumentType","visibleName":"楔子","parent":"f2"}"#);
         w("trashed.metadata", r#"{"type":"DocumentType","visibleName":"楔子 3","parent":"trash"}"#);
-        assert_eq!(unique_document_name(t.path(), "f1", "楔子"), "楔子 3", "f1 下已有「楔子」和「楔子 2」（后者活着占用），下一个该是 3");
-        assert_eq!(unique_document_name(t.path(), "f2", "楔子"), "楔子 2", "f2 只有一份同名，跟 f1 的计数互不影响");
-        assert_eq!(unique_document_name(t.path(), "f3", "楔子"), "楔子", "f3 没有同名文档，原样返回");
-        assert_eq!(unique_document_name(t.path(), "trash", "楔子 3"), "楔子 3", "回收站里的同名文档不算占用（is_live 过滤掉）");
+        assert_eq!(unique_document_name(t.path(), &id("f1"), "楔子"), "楔子 3", "f1 下已有「楔子」和「楔子 2」（后者活着占用），下一个该是 3");
+        assert_eq!(unique_document_name(t.path(), &id("f2"), "楔子"), "楔子 2", "f2 只有一份同名，跟 f1 的计数互不影响");
+        assert_eq!(unique_document_name(t.path(), &id("f3"), "楔子"), "楔子", "f3 没有同名文档，原样返回");
+        assert_eq!(unique_document_name(t.path(), &id("trash"), "楔子 3"), "楔子 3", "回收站里的同名文档不算占用（is_live 过滤掉）");
     }
 
     #[test]

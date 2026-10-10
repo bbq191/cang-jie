@@ -897,10 +897,10 @@ fn deliver_folder_resolves_at_root_not_same_named_subfolder() {
         let made = spawn_agent(q.clone(), lib.clone(), false, stop.clone());
         s.deliver("书.epub", "卷01").unwrap();
         stop.store(true, std::sync::atomic::Ordering::Relaxed);
-        let root = rmsvc_core::xochitl::find_child_folder(&lib, "", "卷01").expect("应在根下建出「卷01」");
+        let root = rmsvc_core::xochitl::child_folder(&lib, &rmsvc_core::xochitl::Folder::Root, "卷01").expect("应在根下建出「卷01」");
         assert_eq!(*made.lock().unwrap(), [(String::new(), "卷01".to_string())], "oversized={oversized}");
         let doc = std::fs::read_dir(&lib).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).find_map(|n| n.strip_suffix(".epub").map(str::to_string)).expect("书已加入");
-        assert_eq!(rmsvc_core::xochitl::parent_folder_of(&lib, &doc), Some(root), "书落进根下的「卷01」，不是「漫画/卷01」（oversized={oversized}）");
+        assert_eq!(rmsvc_core::xochitl::folder_of_document(&lib, &doc), Some(root.into()), "书落进根下的「卷01」，不是「漫画/卷01」（oversized={oversized}）");
     }
 }
 

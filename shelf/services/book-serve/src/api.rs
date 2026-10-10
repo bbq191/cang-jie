@@ -624,7 +624,7 @@ mod tests {
         let st = state(&t);
         let router = router(st.clone());
         assert_eq!(call(&router, Method::Post, "/mkdir/add", r#"{"name":"漫画/卷01"}"#).0, 200, "网页入口：名字里的 / 当普通字符，建在根");
-        st.mkdir.add_in(P, "卷01").unwrap();
+        st.mkdir.add_in(&rmsvc_core::xochitl::Folder::from_parent_str(P).unwrap(), "卷01").unwrap();
         let (code, v) = call(&router, Method::Get, "/mkdir/pending", "");
         assert_eq!(code, 200);
         assert_eq!(v, serde_json::json!({"items": [{"name": "漫画/卷01", "parent": ""}, {"name": "卷01", "parent": P}]}));
