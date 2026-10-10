@@ -394,7 +394,6 @@ dependencies = [
  "epubmap",
  "image",
  "notecore",
- "notesvc",
  "rmsvc-core",
  "rmv6",
  "serde",
