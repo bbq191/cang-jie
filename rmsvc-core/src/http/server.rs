@@ -19,9 +19,17 @@ pub const DEFAULT_MAX_CONCURRENT: usize = 64;
 /// 靠 `vendor/tiny_http` 的补丁对每条 accept 出来的连接设 `read_timeout`（2026-09-24 第三轮审计）。
 pub const READ_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
+/// HTTPS 用的证书链与私钥（PEM）。类型放在 HTTP 层、不放 `tls` 模块：`tls`（生成私有 CA / 叶证书）只在 `gateway` feature 下编，
+/// 而 [`ServeOpts`] 每个服务都用（2026-10-10 审计 CORE-3）。不带 `gateway` feature 的构建没有 HTTPS 服务端，给了证书
+/// [`serve_with`] 直接报错，不会悄悄退回明文。
+pub struct TlsPem {
+    pub cert: Vec<u8>,
+    pub key: Vec<u8>,
+}
+
 /// 服务选项：TLS（PEM）与请求守卫（登录/密码策略由服务自己定义，HTTP 层只负责"先问守卫再分发"）。
 pub struct ServeOpts {
-    pub tls: Option<crate::tls::TlsPem>,
+    pub tls: Option<TlsPem>,
     pub guard: Option<Guard>,
     /// 并发请求上限；`None`=不限。缺省 [`DEFAULT_MAX_CONCURRENT`]。
     pub max_concurrent: Option<usize>,
@@ -253,6 +261,7 @@ mod tests {
     }
 
     /// HTTPS（tiny_http + rustls）路径下同样拿得到对端 IP；顺带证明带名称约束的 CA 签出的叶能完成真实握手。
+    #[cfg(feature = "gateway")]
     #[test]
     fn remote_ip_works_over_tls() {
         let dir = tempfile::tempdir().unwrap();
@@ -281,6 +290,7 @@ mod tests {
     /// 要量"有没有线程在空转"只能看进程 CPU 时间，而同一测试进程里别的测试（PBKDF2 之类）也在吃 CPU，
     /// 所以把探针放进独立子进程只跑它一个（`--exact … --ignored`），子进程自己量自己。
     /// 2026-10-10 实测：rustls 0.20 时子进程 1.5 秒窗口里吃满 ~1.5 秒 CPU（红），0.23 时近 0（绿）。
+    #[cfg(feature = "gateway")]
     #[test]
     fn close_notify_during_handshake_does_not_spin() {
         let out = std::process::Command::new(std::env::current_exe().unwrap())
@@ -293,6 +303,7 @@ mod tests {
 
     /// [`close_notify_during_handshake_does_not_spin`] 的子进程探针：起 HTTPS 服务，发一条明文 close_notify 告警后
     /// 不关自己这端，看接下来 1.5 秒本进程吃了多少 CPU。
+    #[cfg(feature = "gateway")]
     #[test]
     #[ignore = "由 close_notify_during_handshake_does_not_spin 在独立子进程里跑（要单独量本进程 CPU）"]
     fn close_notify_probe() {

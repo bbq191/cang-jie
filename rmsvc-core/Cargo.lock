@@ -693,6 +693,7 @@ dependencies = [
  "libc",
  "pbkdf2",
  "rcgen",
+ "rmsvc-core",
  "rustls",
  "rustls-pki-types",
  "rustls-webpki",

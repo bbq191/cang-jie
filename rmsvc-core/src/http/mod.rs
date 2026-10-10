@@ -9,7 +9,7 @@ pub use router::{encode_query, parse_query, Router};
 pub use test_request::TestRequest;
 #[cfg(test)]
 pub(crate) use server::serve_listener;
-pub use server::{serve, serve_with, Guard, GuardFn, GuardRequest, ServeOpts, DEFAULT_MAX_CONCURRENT};
+pub use server::{serve, serve_with, Guard, GuardFn, GuardRequest, ServeOpts, TlsPem, DEFAULT_MAX_CONCURRENT};
 
 use serde::Serialize;
 use std::collections::HashMap;

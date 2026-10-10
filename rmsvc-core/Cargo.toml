@@ -5,29 +5,39 @@ edition = "2021"
 description = "reMarkable 设备端 Web 服务共享底座：XDG 路径、服务注册/发现、流式 multipart、资产仓库、HTTP 适配层、xochitl 注入、目录监听。2026-09-11 从 shelf/crates/shelf-core 正名搬顶层——shelf/notes/gateway 三方共用，不是 shelf 私有 crate。"
 license = "MIT"
 
+[features]
+# 只有网关用的能力（2026-10-10 审计 CORE-3）：HTTPS 服务端（tiny_http 的 rustls 适配）、私有 CA 与叶证书（tls）、密码哈希 /
+# Basic / Cookie / 会话（auth）、mDNS 应答器（mdns）、本机 IPv4 表（netinfo）。默认关：书架 / 笔记 / enhance 各服务不编这些，
+# 网关在自己的 Cargo.toml 里打开。
+gateway = ["tiny_http/ssl-rustls", "dep:rcgen", "dep:x509-parser", "dep:sha2", "dep:time", "dep:socket2", "dep:base64", "dep:pbkdf2"]
+
 [dependencies]
-# tiny_http 0.12.0 的本地副本：改了三处（每条连接读空闲超时、accept 暂时性错误不退出、rustls 适配层升到 0.23），见 vendor/README.md
-tiny_http = { path = "vendor/tiny_http", features = ["ssl-rustls"] }
-# 自签证书（首启生成，纯 Rust ring 后端）与密码哈希/Basic 认证
-rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem", "ring"] }
-# 解析已有 CA 证书、判断是否带名称约束（迁移用）。依赖树里本来就有（rcgen/rustls 间接引入），不新增编译量。
-x509-parser = { version = "0.18", default-features = false }
-sha2 = "0.11"
-time = "0.3"
-# mDNS 应答器需要 SO_REUSEADDR + 多播接口选择，std UdpSocket 不暴露
-socket2 = { version = "0.5", features = ["all"] }
-# mDNS 监听内核地址变化（netlink 套接字 + poll），socket2 不管 AF_NETLINK 的地址结构。依赖树里本来就有（socket2/inotify 间接引入）。
+# tiny_http 0.12.0 的本地副本：改了三处（每条连接读空闲超时、accept 暂时性错误不退出、rustls 适配层升到 0.23），见 vendor/README.md。
+# HTTPS（ssl-rustls）只在 `gateway` feature 下打开。
+tiny_http = { path = "vendor/tiny_http" }
+# 自签证书（首启生成，纯 Rust ring 后端）与密码哈希/Basic 认证（gateway）
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem", "ring"], optional = true }
+# 解析已有 CA 证书、判断是否带名称约束（迁移用，gateway）。
+x509-parser = { version = "0.18", default-features = false, optional = true }
+sha2 = { version = "0.11", optional = true }
+time = { version = "0.3", optional = true }
+# mDNS 应答器需要 SO_REUSEADDR + 多播接口选择，std UdpSocket 不暴露（gateway）
+socket2 = { version = "0.5", features = ["all"], optional = true }
+# poll / statvfs / mDNS 监听内核地址变化（netlink 套接字），socket2 不管 AF_NETLINK 的地址结构。
 libc = "0.2"
-base64 = "0.22"
+base64 = { version = "0.22", optional = true }
 ureq = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
 inotify = { version = "0.11.5", default-features = false }
-pbkdf2 = { version = "0.13.0", default-features = false, features = ["hmac", "sha2"] }
+pbkdf2 = { version = "0.13.0", default-features = false, features = ["hmac", "sha2"], optional = true }
 
 [dev-dependencies]
 tempfile = "3"
+# 本 crate 自己的单测要连 `gateway` feature 下的模块一起跑（CI 对 rmsvc-core 是不带 feature 的 `cargo test`）：dev-dependency 指向自己并打开
+# feature，只影响本 crate 的测试构建，依赖它的各服务看不到 dev-dependency。
+rmsvc-core = { path = ".", features = ["gateway"] }
 # 测试里用真实的证书链校验器（与 rustls 同一套）证明名称约束生效，并走一次真 TLS 握手验证对端地址
 rustls-webpki = { version = "0.103", default-features = false, features = ["std", "ring"] }
 rustls-pki-types = "1"
