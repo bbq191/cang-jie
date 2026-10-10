@@ -143,3 +143,35 @@ function fillList(ul,items,row,emptyMsg){ul.innerHTML='';if(!items.length){ul.in
     row(it,left,right,li);li.append(left,right);ul.appendChild(li)})}
 /* 删除按钮：confirmDialog → DELETE → 刷新 */
 const delBtn=(msg,url,refresh)=>btn(T('action.delete'),async()=>{if(await confirmDialog(msg)){await sendT(url,'DELETE');refresh()}});
+/* 实时事件流（SSE）的连接管理，2026-10-10 从启动代码里收成一个对象（行为不变）：
+   - 心跳 ?ka=60：默认 20 秒一帧空注释，只是为了让中间代理不掐空闲连接；网关直连浏览器用不着这么勤（设备上每帧都是一次唤醒+TLS 写）。
+   - 页面隐藏超过 HIDDEN_CLOSE_MS 就**主动断开**（锁屏/切走的标签页不再让设备为它保活），重新可见时重连——重连成功会调
+     onReopen（调用方补查/补刷，断开期间漏掉的事件不丢）；连接一直在时变可见调 onVisible。
+   - **浏览器放弃重连的情况**：连上时回的不是 200（网关重启后内存里的会话全没了→401、并发满→503），EventSource 直接进
+     CLOSED、再也不重试——此前页面就此静默失去实时刷新。CLOSED 时先查一次 /api/session（401 由 j() 带去登录页），其余情况
+     按 RETRY_MIN_MS 起、翻倍、封顶 RETRY_MAX_MS 的退避重开；页面隐藏时不重试，等变可见时重开。浏览器自己在重连的
+     （CONNECTING）不插手。
+   o: {url, onEvent(ev), onReopen(), onVisible(), onState(connected)}。 */
+const liveStream=o=>{
+  const HIDDEN_CLOSE_MS=60000,RETRY_MIN_MS=5000,RETRY_MAX_MS=300000;
+  let es=null,opened=false,hiddenTimer=0,retryMs=0,retryTimer=0;
+  const reopenLater=()=>{clearTimeout(retryTimer);if(document.hidden)return;
+    retryMs=Math.min(retryMs?retryMs*2:RETRY_MIN_MS,RETRY_MAX_MS);
+    retryTimer=setTimeout(async()=>{if(es||document.hidden)return;
+      const s=await j('/api/session');if(s.ok===false){reopenLater();return} // 401/403 时 j() 已经跳走
+      if(!es&&!document.hidden)open()},retryMs)};
+  const open=()=>{clearTimeout(retryTimer);
+    const src=es=new EventSource(o.url);
+    es.onopen=()=>{retryMs=0;o.onState(true);if(opened)o.onReopen();opened=true}; // 非首次 onopen = 重连
+    es.onerror=()=>{o.onState(false);
+      if(src.readyState===2&&es===src){close();reopenLater()}}; // 2 = EventSource.CLOSED：浏览器不会再自己重连
+    es.onmessage=e=>{let ev;try{ev=JSON.parse(e.data)}catch{return}o.onEvent(ev)}};
+  const close=()=>{if(!es)return;es.close();es=null;o.onState(false)};
+  document.addEventListener('visibilitychange',()=>{
+    if(document.hidden){clearTimeout(hiddenTimer);hiddenTimer=setTimeout(close,HIDDEN_CLOSE_MS);return}
+    clearTimeout(hiddenTimer);
+    if(!es){retryMs=0;open();return} // 重连后的 onopen 调 onReopen
+    o.onVisible()});
+  open();
+  if(document.hidden)hiddenTimer=setTimeout(close,HIDDEN_CLOSE_MS); // 页面是在后台标签页里打开的
+};

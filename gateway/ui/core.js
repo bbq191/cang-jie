@@ -75,3 +75,40 @@ const EV={
     FONTS:'fonts',UI:'ui',CONFIG:'config',POOL:'pool',                    // font-serve / wallpaper-serve
   },
 };
+/* 笔记页的刷新闸门（2026-10-10 把 renderNotes 里散落的六组时序标志收成这一个对象；机制与各道闸的条件都没变）。SSE 事件、
+   切 tab、换书、自己的动作都会要求"重取整本书并重画"，三种情况要挡：
+   ① hold（挡多久 + 为什么）：刚显示出一条结果提示（推送本章 / 重新转写 / 提问的"✓ 完成 · token…"），或那个请求还在跑。
+      这几个动作本身会让 ink-serve 发 entries 事件，SSE 触发的整段重画比提示停留时间快得多，提示一闪就被冲掉（真机反馈
+      "重复推送的提示看不清"，2026-09-17；把停留从 1.5s 延到 3s 没用，根子在被抢跑）；请求还在跑时重画还会让结果写到
+      已经脱离页面的节点上。所以请求在跑时挡 HOLD_BUSY_MS（10 分钟只是兜底），结果出来后改成再挡 LINGER_MS，之后调用方
+      自己主动重画一次——不会漏刷新。只挡 SSE 触发的刷新（含只刷同步状态的那条）；用户自己换书、清空回收站是 force，不挡。
+   ② quiet：自己的动作刚重取过整本书（reloadBook），同一动作让服务端发出的 entries 事件再整页刷新就是重复取——重取期间与之后
+      SELF_QUIET_MS 内的 entries 事件不理。
+   ③ editing：用户正在本 tab 的输入框里打字，事件来了先不重画（光标会连同输入框一起被重画掉），记一笔，焦点离开再补一次。
+   另外合并"下一轮刷新要取什么"：list（书列表）、checkImport（「导入 md」开关，只有切回本 tab 时查）、force（不受 hold 挡）。
+   被 hold 挡掉的那一轮：force 已消耗，list/checkImport 留给下一轮（与改造前一致）。
+   `st` 记着当前各道闸的状态与最近一次判定（last），出问题时在控制台看它就知道是哪道闸挡的。纯逻辑、时间可注入，见 core.test.mjs。 */
+const NOTE_GATE={HOLD_BUSY_MS:10*60*1000,LINGER_MS:3000,SELF_QUIET_MS:1000};
+const refreshGate=(now=()=>Date.now())=>{
+  const st={holdUntil:0,holdWhy:'',quietUntil:0,deferred:false,want:{list:false,checkImport:false,force:false},last:''};
+  const held=()=>now()<st.holdUntil;
+  return {st,held,
+    /* 挡 SSE 触发的刷新 ms 毫秒（0 = 解除）；why 只用来记录。 */
+    hold(ms,why){st.holdUntil=ms?now()+ms:0;st.holdWhy=ms?why:''},
+    quietBegin(){st.quietUntil=Infinity},
+    quietEnd(){st.quietUntil=now()+NOTE_GATE.SELF_QUIET_MS},
+    /* 一个 SSE 事件该怎么处理：'defer'（正在输入，记一笔）/ 'sync'（只刷同步状态）/ 'quiet'（自己刚重取过，不理）/ 'refresh'。 */
+    event(kind,editing){
+      if(editing){st.deferred=true;return st.last='defer'}
+      if(kind===EV.kind.NOTEBOOKS)return st.last='sync';
+      if(kind===EV.kind.ENTRIES&&now()<st.quietUntil)return st.last='quiet';
+      return st.last='refresh'},
+    /* 焦点离开输入框后：之前有被挡下的事件就该补一次刷新。 */
+    blurred(editing){if(st.deferred&&!editing){st.deferred=false;return true}return false},
+    request(list,checkImport,force){const w=st.want;w.list=w.list||list;w.checkImport=w.checkImport||checkImport;w.force=w.force||force},
+    /* 一轮刷新开始时取走请求；被 hold 挡住返回 null。 */
+    take(){const w=st.want,force=w.force;w.force=false;
+      if(!force&&held()){st.last='hold:'+st.holdWhy;return null}
+      const r={list:w.list,checkImport:w.checkImport,force};w.list=false;w.checkImport=false;st.last='run';return r},
+  };
+};

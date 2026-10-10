@@ -59,7 +59,7 @@ document.addEventListener('click',e=>{const b=e.target.closest('.badge[title]');
   const svcKey=svcs.map(s=>s.name).join(',');
   const liveDot=el('span',{id:'live',title:T('common.eventStream'),text:'●'});liveDot.style.cssText='margin-left:.5em;font-size:.8em;color:var(--bad)';$('#hdr').appendChild(liveDot);
   const activeSec=()=>[...main.children].find(x=>x.classList.contains('on'));
-  let activeStale=false,opened=false,es=null,hiddenTimer=0;
+  let activeStale=false;
   /* 服务集合变了（装/卸/启停带来 tab 增减）就整页重载。只在页面可见时查：隐藏时只记 `svcStale`，变可见再查一次——
      此前隐藏时每个 manage 事件都照样去取 /api/services；而隐藏超过 60 秒 SSE 断开期间漏掉的 manage 事件，重连后也没人补查，
      tab 列表会一直停在旧的服务集合上。 */
@@ -68,42 +68,18 @@ document.addEventListener('click',e=>{const b=e.target.closest('.badge[title]');
     const d=await j('/api/services');if(d.ok===false)return false;
     const k=(d.services||[]).filter(s=>s.ui&&TABS[s.name]).map(s=>s.name).join(',');
     if(k!==svcKey){location.reload();return true}return false};
-  /* 心跳 ?ka=60：默认 20 秒一帧空注释，只是为了让中间代理不掐空闲连接；网关直连浏览器用不着这么勤（设备上每帧都是一次唤醒+TLS 写）。
-     页面隐藏超过 60 秒就**主动断开** SSE（锁屏/切走的标签页不再让设备为它保活），重新可见时重连——重连成功的 onopen
-     本来就会补刷当前 tab（见上），断开期间漏掉的事件不丢；别的 tab 切过去时无条件刷新（addTab 的点击处理）。
-     **浏览器放弃重连的情况**：连上时回的不是 200（网关重启后内存里的会话全没了→401、并发满→503），EventSource 直接进
-     CLOSED、再也不重试——此前页面就此静默失去实时刷新（红点一直亮，用户不点东西就不知道要重新登录）。现在 CLOSED 时
-     先查一次 /api/session（401 由 j() 带去登录页），其余情况按 5 秒起、翻倍、封顶 5 分钟的退避重开；页面隐藏时不重试，
-     等变可见时由 visibilitychange 重开。浏览器自己在重连的（CONNECTING）不插手。 */
-  const HIDDEN_CLOSE_MS=60000,RETRY_MIN_MS=5000,RETRY_MAX_MS=300000;
-  let retryMs=0,retryTimer=0;
-  const reopenLater=()=>{clearTimeout(retryTimer);if(document.hidden)return;
-    retryMs=Math.min(retryMs?retryMs*2:RETRY_MIN_MS,RETRY_MAX_MS);
-    retryTimer=setTimeout(async()=>{if(es||document.hidden)return;
-      const s=await j('/api/session');if(s.ok===false){reopenLater();return} // 401/403 时 j() 已经跳走
-      if(!es&&!document.hidden)openEs()},retryMs)};
-  const openEs=()=>{clearTimeout(retryTimer);
-    const src=es=new EventSource('/api/events?ka=60');
-    es.onopen=()=>{retryMs=0;liveDot.style.color='var(--ok)';liveDot.title=T('common.eventStreamConnected');
-      // 重连（非首次）：断线期间的事件没人推给我们——补查服务集合（可能整页重载）、补刷当前 tab。
-      if(opened){svcStale=true;if(document.hidden)activeStale=true;else(async()=>{if(await checkServices())return;activeStale=false;const s=activeSec();if(s)refreshSec(s)})()}opened=true};
-    es.onerror=()=>{liveDot.style.color='var(--bad)';liveDot.title=T('common.eventStreamReconnecting');
-      if(src.readyState===2&&es===src){closeEs();reopenLater()}}; // 2 = EventSource.CLOSED：浏览器不会再自己重连
-    es.onmessage=async(e)=>{let ev;try{ev=JSON.parse(e.data)}catch{return}
+  const refreshActive=()=>{activeStale=false;const s=activeSec();if(s)refreshSec(s)};
+  liveStream({url:'/api/events?ka=60',
+    onState:up=>{liveDot.style.color=up?'var(--ok)':'var(--bad)';liveDot.title=T(up?'common.eventStreamConnected':'common.eventStreamReconnecting')},
+    // 重连：断线期间的事件没人推给我们——补查服务集合（可能整页重载）、补刷当前 tab。
+    onReopen:()=>{svcStale=true;if(document.hidden)activeStale=true;else(async()=>{if(await checkServices())return;refreshActive()})()},
+    onVisible:()=>{(async()=>{if(svcStale&&await checkServices())return;if(activeStale)refreshActive()})()},
+    onEvent:async ev=>{
       if(ev.kind===EV.kind.AGENT_FAILED){showAgentFailBanner();return} // 全站横幅，与哪个 tab 无关
       if(ev.area===EV.area.MANAGE&&await checkServices())return;
       const sec=secByArea[ev.area];if(!sec)return;
       if(!sec.classList.contains('on'))return;
       if(document.hidden)activeStale=true;
       else if(sec.onEvent)sec.onEvent(ev); // tab 自己按事件决定刷多少（母版库：网关排队/进度事件只重取两个状态）
-      else refreshSec(sec)}};
-  const closeEs=()=>{if(!es)return;es.close();es=null;liveDot.style.color='var(--bad)';liveDot.title=T('common.eventStreamReconnecting')};
-  document.addEventListener('visibilitychange',()=>{
-    if(document.hidden){clearTimeout(hiddenTimer);hiddenTimer=setTimeout(closeEs,HIDDEN_CLOSE_MS);return}
-    clearTimeout(hiddenTimer);
-    if(!es){retryMs=0;openEs();return} // 重连后的 onopen 负责补查服务集合、补刷当前 tab
-    (async()=>{if(svcStale&&await checkServices())return;
-      if(activeStale){activeStale=false;const s=activeSec();if(s)refreshSec(s)}})()});
-  openEs();
-  if(document.hidden)hiddenTimer=setTimeout(closeEs,HIDDEN_CLOSE_MS); // 页面是在后台标签页里打开的
+      else refreshSec(sec)}});
 })();

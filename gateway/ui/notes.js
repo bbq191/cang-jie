@@ -59,27 +59,17 @@ function renderNotes(sec){sec.innerHTML=`
   // 条目状态动作（ink-serve：request/skip/archive/restore）：POST 空体，失败 postJ 已弹提示，返回是否成功。
   const entryAct=async(id,action)=>(await postJ(entryApi('ink',id,'/'+action),{})).ok!==false;
   const sel=$('#nbook',sec),chaptertabs=$('#nchaptertabs',sec),chapterbody=$('#nchapterbody',sec),browse=$('#nbrowse',sec),sum=$('#nsum',sec);let book=null;
-  // 「推送本章」/「重新转写」/「提问」点完显示结果文案、停留 3s 再让用户看清（见下面三处 wait(3000)）——
-  // 但这三个动作本身会让 ink-serve 发 `entries` 事件，笔记 tab 正开着时 SSE 会立刻调 `sec.refresh`
-  // 整段重画，比 3s 计时器快得多，文案实际上一闪就被这个"我以为没关系的"刷新冲掉了（真机反馈"重复
-  // 推送的提示看不清，一闪而过"，2026-09-17；上一轮把 1.5s 延到 3s 完全没解决，根子根本不在计时器
-  // 长短）。这里挡一下：显示文案的同时记一个"暂停到几点"的时间戳，`refresh()` 起手先看这个时间戳，
-  // 没过就直接跳过这次 SSE 触发的重画——不会漏刷新，三处调用点末尾自己的 `wait(3000)` 之后本来就会
-  // 主动重画一次，只是不再被 SSE 抢跑。
-  let holdRefreshUntil=0;
-  const holdFor=ms=>{holdRefreshUntil=ms?Date.now()+ms:0};
-  // 请求还在跑时一直挡着（生成笔记本 + 导出、转写、提问都可能超过十几秒；此前固定挡 15 秒，超时后 SSE 把卡片重画掉，
-  // 结果文字写到已经脱离页面的节点上）。请求结束由 lingerThen / holdFor(0) 改成"再挡 3 秒"或解除；10 分钟只是兜底。
-  const HOLD_BUSY=10*60*1000;
-  /* 结果文案停留 3s（这期间 SSE 触发的重画被 holdRefreshUntil 挡住），再执行 fn（通常是拉新数据重画）。三处「点完显示结果」共用。 */
-  const lingerThen=async fn=>{holdFor(3000);await wait(3000);await fn()};
+  // 刷新闸门：结果提示停留 / 自己刚重取过 / 正在输入三道闸与"下一轮取什么"，规则见 core.js 的 refreshGate。
+  const gate=refreshGate();
+  /* 结果文案停留 LINGER_MS（这期间 SSE 触发的重画被闸门挡住），再执行 fn（通常是拉新数据重画）。三处「点完显示结果」共用。 */
+  const lingerThen=async fn=>{gate.hold(NOTE_GATE.LINGER_MS,'linger');await wait(NOTE_GATE.LINGER_MS);await fn()};
   /* 「重新转写」/「提问」共用：按钮禁用 + 状态文字（转写中…/提问中…）→ POST 调模型服务 → 显示"✓ 完成 · token 入X 出Y"或错误，
      停留 3s 后重取整本书重画。`reloadOnFail`：失败也重取（转写失败要刷新失败标记）；否则失败只解除暂停、不重画。 */
-  const callModel=async(button,stat,url,busyKey,failKey,doneKey,reloadOnFail)=>{button.disabled=true;stat.textContent=T(busyKey);holdFor(HOLD_BUSY);
+  const callModel=async(button,stat,url,busyKey,failKey,doneKey,reloadOnFail)=>{button.disabled=true;stat.textContent=T(busyKey);gate.hold(NOTE_GATE.HOLD_BUSY_MS,'busy');
     const r=await j(url,{method:'POST'});
     button.disabled=false;
     stat.textContent=r.ok===false?'✗ '+(r.message||T(failKey)):T(doneKey,{promptTokens:r.promptTokens||0,completionTokens:r.completionTokens||0});
-    if(r.ok===false&&!reloadOnFail){holdFor(0);return}
+    if(r.ok===false&&!reloadOnFail){gate.hold(0);return}
     await lingerThen(()=>reloadBook(renderBook))};
   const cropUrl=(uuid,f)=>`/api/ink/books/${encodeURIComponent(uuid)}/crops/${encodeURIComponent(f)}`;
   // 2026-09-16 截图走查发现：`e.ink` 有值但 `e.ink.crop` 是空串（ink-serve 自渲染裁图失败/写盘失败时
@@ -114,11 +104,10 @@ function renderNotes(sec){sec.innerHTML=`
      审计发现），任何一处漏改都容易造成"某个动作之后画面没更新"这类不容易被发现的 bug——收成一个
      辅助函数，调用方只需要说清楚"这次要重画哪几个子视图"。 */
   /* 自己动作之后这里已经重取过整本书，同一动作让服务端发出的 `entries` 事件再触发一次整页刷新就是重复取（书列表 + 整本书 +
-     同步状态 + 转写状态）：重取期间和之后 1 秒内到达的事件不再刷新。 */
-  let selfQuietUntil=0;
-  const reloadBook=async(...views)=>{selfQuietUntil=Infinity;
+     同步状态 + 转写状态）：重取期间和之后 SELF_QUIET_MS 内到达的事件不再刷新（闸门 ②）。 */
+  const reloadBook=async(...views)=>{gate.quietBegin();
     try{await flushPendingText();const b=await j(bookApi('ink'));if(b.ok!==false)book=b;await refreshSync();views.forEach(fn=>fn())}
-    finally{selfQuietUntil=Date.now()+1000}};
+    finally{gate.quietEnd()}};
   /* s 是章节级同步状态（notebookNeeded/Synced、obsidianNeeded/Synced），本身只精确到"整章"，不到
      "这一条"（`fingerprint_chapter` 把整章活条目内容拼一起算一个哈希，见白皮书 §03aa）。章头调用不传
      `only`，如实显示整章的聚合状态；贴在每条笔记行上时传 `only=该条自己的 destination`，把跟这条本身
@@ -332,7 +321,7 @@ function renderNotes(sec){sec.innerHTML=`
       // 是重复劳动，一个按钮内部按当前去处该做哪样做哪样：没有条目要那个去处，对应那步自然是 Empty
       // （后端已有这个语义，见 export::ExportOutcome/publish::ChapterOutcome），前端只是不重复提示
       // "没做"；改名"推送"是因为"同步"暗示双向/拉取，这个按钮其实只单向推。
-      syncBtn.onclick=async()=>{syncBtn.disabled=true;msg.textContent='';holdFor(HOLD_BUSY);
+      syncBtn.onclick=async()=>{syncBtn.disabled=true;msg.textContent='';gate.hold(NOTE_GATE.HOLD_BUSY_MS,'busy');
         // 服务端没有天然的分步数据（耗时来自生成笔记本+导出 md 两次整章调用，不是可数的"第几步"）——
         // 跟母版库普通整本落库同一处境，共用同一套不确定态滚动条（2026-09-19 代码质量审计，
         // 原来这里只有一句不会变的静态文字"推送中…"）。
@@ -455,25 +444,21 @@ function renderNotes(sec){sec.innerHTML=`
   /* 全部刷新入口走同一个 coalesce（切 tab、事件、换书、搜索跳转、清空回收站…）：此前切 tab 和事件各有一个合并器，
      两份 loadBook 可以并发跑。`checkImport`：只有切回本 tab 的刷新重查「导入 md」开关（那个开关在「管理」页改）——
      自动转写期间每转完一条都有事件，原来每次都连带让网关扫一遍 xochitl 扩展状态。 */
-  let wantImport=false,wantList=false,wantForce=false;
-  const doRefresh=async()=>{const force=wantForce;wantForce=false;
-    if(!force&&Date.now()<holdRefreshUntil)return; // 正显示着结果提示，别被 SSE 抢跑冲掉（见 holdRefreshUntil 声明处注释）；用户自己换书不挡
-    const checkImport=wantImport,list=wantList;wantImport=false;wantList=false;
+  const doRefresh=async()=>{const want=gate.take();
+    if(!want)return; // 正显示着结果提示，别被 SSE 抢跑冲掉（闸门 ①）；用户自己换书是 force，不挡
+    const {checkImport,list}=want;
     if(list){const d=await j('/api/ink/books');const cur=sel.value;sel.innerHTML=(d.items||[]).map(b=>`<option value="${esc(b.uuid)}">${esc(T('common.paren',{text:b.title,inner:b.entries}))}</option>`).join('')||`<option value="">${T('notes.noBooks')}</option>`;
       if(cur&&[...sel.options].some(o=>o.value===cur))sel.value=cur}
     await loadBook();if(checkImport)await syncImportVisible()};
   const runCoalesced=coalesce(doRefresh);
-  const runRefresh=(list=true,checkImport=false,force=false)=>{wantList=wantList||list;wantImport=wantImport||checkImport;wantForce=wantForce||force;return runCoalesced()};
+  const runRefresh=(list=true,checkImport=false,force=false)=>{gate.request(list,checkImport,force);return runCoalesced()};
   const refresh=()=>runRefresh(true,true);
   /* 只有同步状态变了（note-serve 生成笔记本/导出 md 发 `notebooks`）：只重取同步状态、重画「整理」和回收站，不重取书列表和整本书。 */
-  const syncOnly=coalesce(async()=>{if(Date.now()<holdRefreshUntil||!book)return;await refreshSync();await renderBook();renderTrash()});
+  const syncOnly=coalesce(async()=>{if(gate.held()||!book)return;await refreshSync();await renderBook();renderTrash()});
   /* 事件刷新会整段重画（含正在编辑的文本框）：用户正在本 tab 的输入框里打字时先不重画，只记一笔，焦点离开输入框再补一次。
      此前自动转写/另一台设备的改动一来，光标连同输入框一起被重画掉（文字靠 pendingText 保住了，但得重新点进去）。 */
   const editing=()=>{const a=document.activeElement;return !!a&&sec.contains(a)&&(a.tagName==='TEXTAREA'||(a.tagName==='INPUT'&&/^(text|search)$/.test(a.type)))};
-  let deferred=false;
-  sec.onEvent=ev=>{if(editing()){deferred=true;return}
-    if(ev.kind===EV.kind.NOTEBOOKS){syncOnly();return}
-    if(ev.kind===EV.kind.ENTRIES&&Date.now()<selfQuietUntil)return; // 自己刚动过、已经重取过了
-    runRefresh()};
-  sec.addEventListener('focusout',()=>setTimeout(()=>{if(deferred&&!editing()){deferred=false;runRefresh()}},0));
+  sec.onEvent=ev=>{const act=gate.event(ev.kind,editing());
+    if(act==='sync')syncOnly();else if(act==='refresh')runRefresh()}; // 'defer'/'quiet'：不刷（见 refreshGate）
+  sec.addEventListener('focusout',()=>setTimeout(()=>{if(gate.blurred(editing()))runRefresh()},0));
   refresh();sec.refresh=refresh;subtabs(sec)}
