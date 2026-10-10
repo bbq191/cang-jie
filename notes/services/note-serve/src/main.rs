@@ -36,6 +36,11 @@ use trash::{BookServeTrash, TrashSink};
 
 pub const APP: &str = "notes";
 
+/// 本服务发的事件（网关按 `area` 路由到笔记页；线上值不能改，前端按这两个字面量认）。
+const EVENT_AREA: &str = "notes";
+/// 生成过笔记本（网页据此刷新各章的笔记本徽章）。
+const EVENT_NOTEBOOKS: &str = "notebooks";
+
 const SPEC: ServiceSpec = ServiceSpec { name: "note-serve", label: "笔记·本", version: env!("CARGO_PKG_VERSION"), default_bind: "127.0.0.1:8798", tab: Some(("笔记", 25)) };
 
 struct State {
@@ -104,7 +109,7 @@ fn router(st: &Arc<State>) -> Router {
             let _g = s.publishing();
             let book = s.store.book(&uuid)?;
             let result = generate_chapter(&s.ctx(rmsvc_core::clock::now_ms()), &book, idx);
-            s.bus.publish("notes", "notebooks");
+            s.bus.publish(EVENT_AREA, EVENT_NOTEBOOKS);
             results_reply(std::slice::from_ref(&result))
         }))
         // 单篇 markdown → 一个新的设备笔记本文档，独立于条目库（不经章节投影/指纹追踪，见

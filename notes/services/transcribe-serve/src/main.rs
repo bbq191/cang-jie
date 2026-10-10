@@ -29,6 +29,13 @@ const SPEC: ServiceSpec = ServiceSpec { name: "transcribe-serve", label: "笔记
 /// 事件到跑之间的防抖：合上书 ink-serve 会连发几条。
 const DEBOUNCE: Duration = Duration::from_secs(3);
 
+/// 本服务发的事件（网关按 `area` 路由到笔记页；线上值不能改，前端按这两个字面量认）。
+const EVENT_AREA: &str = "notes";
+/// 转写配置/一轮结果变了（网页据此刷新转写状态）。
+const EVENT_TRANSCRIBE: &str = "transcribe";
+/// 订阅的 ink-serve 事件：条目库变了（与 ink-serve 的 `EVENT_ENTRIES` 同值，两边一起改）。
+const INK_EVENT_ENTRIES: (&str, &str) = ("notes", "entries");
+
 struct State {
     paths: Paths,
     cfg: ConfigCell<TranscribeConfig>,
@@ -67,7 +74,7 @@ impl State {
             println!("[transcribe-serve] 一轮：扫 {} 成 {} 败 {} 跳 {} 余 {} {}", report.scanned, report.done, report.failed, report.skipped, report.left, report.note);
         }
         if changed {
-            self.bus.publish("notes", "transcribe");
+            self.bus.publish(EVENT_AREA, EVENT_TRANSCRIBE);
         }
         report
     }
@@ -83,7 +90,7 @@ impl State {
 /// loopback 长心跳，与网关汇聚同一套实现）。
 fn watch_ink(st: Arc<State>) {
     follow(&st.paths.clone(), "ink-serve", |json| {
-        if Event::parse(json).is_some_and(|e| e.is("notes", "entries")) && st.cfg().auto {
+        if Event::parse(json).is_some_and(|e| e.is(INK_EVENT_ENTRIES.0, INK_EVENT_ENTRIES.1)) && st.cfg().auto {
             st.kick();
         }
     });
@@ -146,7 +153,7 @@ fn main() {
             let j = r.json()?;
             let next = s.cfg.update(|c| c.apply(&j))?;
             let has_key = next.key().is_some();
-            s.bus.publish("notes", "transcribe");
+            s.bus.publish(EVENT_AREA, EVENT_TRANSCRIBE);
             if has_key && next.auto {
                 s.kick();
             }
