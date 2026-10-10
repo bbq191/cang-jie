@@ -14,16 +14,8 @@ use crate::events as ev;
 /// 最多留几条（最旧的先丢）。
 const KEEP: usize = 20;
 
-/// 放弃的是哪个队列的活。线上 / 落盘都是小写字符串 `trash` / `mkdir`（2026-10-10 前是 `String`，取值只有这两个，
-/// 网页按它挑提示文案）。
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum FailureKind {
-    /// 移进 xochitl 回收站。
-    Trash,
-    /// 在 xochitl 书库建文件夹。
-    Mkdir,
-}
+/// 放弃的是哪个队列的活：[`FailureKind`] 定义在基座 `wire`（线上 / 落盘仍是小写 `trash` / `mkdir`，网关语言包测试也引用它）。
+use rmsvc_core::wire::FailureKind;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Failure {

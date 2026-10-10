@@ -76,9 +76,46 @@ impl std::fmt::Display for RenderStatus {
     }
 }
 
+/// 设备端代理（QML）交满次数仍没做成、book-serve 放弃的活是哪一种（`agent-failures.json` 的 `kind`，网页页头横幅按它挑文案，
+/// 语言包键 `agentfail.<kind>`）。线上 / 落盘都是小写字符串 `trash` / `mkdir`。2026-10-10 从 book-serve 搬来：网关的语言包测试要
+/// 列出全部取值，此前只能在网关里手抄一份。
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[serde(rename_all = "lowercase")]
+pub enum FailureKind {
+    /// 移进 xochitl 回收站。
+    Trash,
+    /// 在 xochitl 书库建文件夹。
+    Mkdir,
+}
+
+impl FailureKind {
+    /// 全部取值（网关语言包测试逐个核对 `agentfail.<kind>`）。
+    pub const ALL: [FailureKind; 2] = [FailureKind::Trash, FailureKind::Mkdir];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FailureKind::Trash => "trash",
+            FailureKind::Mkdir => "mkdir",
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 线上值不变；`ALL` 列全（加了变体忘了加进 `ALL`，这里的 match 不会编译失败，但下面的长度断言会提醒）。
+    #[test]
+    fn failure_kind_wire_values() {
+        for k in FailureKind::ALL {
+            assert_eq!(serde_json::to_value(k).unwrap(), k.as_str());
+            assert_eq!(serde_json::from_value::<FailureKind>(serde_json::json!(k.as_str())).unwrap(), k);
+            match k {
+                FailureKind::Trash | FailureKind::Mkdir => {}
+            }
+        }
+        assert_eq!(FailureKind::ALL.map(FailureKind::as_str), ["trash", "mkdir"]);
+    }
 
     #[test]
     fn deliver_status_round_trips_as_lowercase_strings() {
