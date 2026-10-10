@@ -79,9 +79,10 @@
 | 第四轮审计（09-25）：擦掉又回来的笔迹复活原条目、`.metadata` 读不了不再当成书被删、章判据统一为顶层条目、KOReader 章表只追加、秒级 mtime 防漏扫、小数不当编号、草稿只留 10 份、没改动不写盘、畸形 `.rm` 不先分配内存 | 09-25 已部署 | host 验证（当时 240 过 + 1 忽略）；真机没逐项核 | 3.1–3.5、第 4、9 章、第 13 章 7d |
 | 第五轮审计（09-30）：epubmap 按 OPF 声明找目录、启动追平重扫没章的活条目、裁图灰度 + 像素封顶 + 坏坐标报错、「转入笔记」继承定稿 / 草稿、读 `.rm` 时正被改写就跳过、补笔 / 清空回收站删掉没人用的裁图、模型调用端复用（`ClientCache`）、删 `ink.json` 三个死键 | **09-30 已部署**，部署自检通过，功能待手测 | host 250 过 + 1 忽略（当时还含 KOReader 导入的测试） | 3.1–3.3、第 6 章、第 13 章 7e |
 | 重构第一阶段（10-10）：条目状态转移收进 `Entry` 方法，修“再转写草稿留 `- `、导出 `- - 查作者`”；改字 / 草稿 / 回答请求体改成 `notecore::api` 类型，形状不对 400、不再清空回答；条目应答带 `live`；草稿 / 回答记真实模型标识；三份 ink 客户端合成 `notesvc::InkClient`；账本一轮合并落盘；条目库写紧凑 JSON | **未部署** | host 257 过 + 1 忽略 | 3.3、3.5、第 4–6 章、第 10 章 |
+| 重构第二阶段（10-10）：笔记本上传认领改用基座 `Xochitl::upload_and_claim`（`ClaimBy::VisibleName`，文件夹类型化为 `Folder`）；ink-serve 页表改用基座 `PageTable`；读条目库的错误带状态码（ink-serve 404 透传、没运行 503；问 AI 模型 / 写回失败、强制转写一条时模型失败 502；markdown 导入上传失败 500；配置字段不合法 400、存盘失败 500）；章节失败项 `error` → `message`；事件 area/kind 收成常量 | **未部署** | host 265 过 + 1 忽略 | 8.1、8.3、第 6 章、第 13 章 7i |
 | 第六轮审计（10-09）：笔记本落进书所在文件夹、内存直传、认领改等 inotify 并排除上传前已有的同名文档；调云瞬时故障重试一次、闲置 45 秒的连接重建；epubmap 解 XML 实体与百分号编码；`.content` 没有 `pages` 时按 `cPages` 取页序；坏文件留证只留第一份；四个服务改用 rmsvc-core 共享实现。同日稍后的审计后续：单价 `PUT` 字段名与 `GET` 统一、EPUB 容器/OPF 解析并进 `rmsvc-core/epubpkg`、zip 去掉用不到的 zopfli | **10-09 已部署（部署自检 38✓），功能未手测**；审计后续随下一次部署（10-09，39✓）上机，也没单独手测 | host 246 过 + 1 忽略（审计时） | 3.1、第 2 章、第 4、6 章、8.1、8.3、第 13 章 7g |
 
-**离线门槛**：`cd notes && cargo test --workspace`，2026-10-10 实跑 **257 过 + 1 忽略**（rmv6 29 · epubmap 10 · notecore 75 · notesvc 2 · vendorcfg 28 · ink-serve 32 · transcribe-serve 27 · mind-serve 23 · note-serve 31，另有 note-serve 1 个 `#[ignore]`；零警告、clippy 零告警）；共享的 `rmsvc-core/epubpkg` 另跑 `cargo test --manifest-path ../rmsvc-core/epubpkg/Cargo.toml`；网关另跑 `node --check ui/app.js`；脚本过 shellcheck。测试数会变，改了就同步这里和 README。note-serve 里几条认领测试会真的等书库目录变化（整组约 5 秒）。
+**离线门槛**：`cd notes && cargo test --workspace`，2026-10-10 重构第二阶段后实跑 **265 过 + 1 忽略**（rmv6 29 · epubmap 10 · notecore 75 · notesvc 4 · vendorcfg 29 · ink-serve 32 · transcribe-serve 28 · mind-serve 25 · note-serve 33，另有 note-serve 1 个 `#[ignore]`；零警告、clippy 零告警）；共享的 `rmsvc-core/epubpkg` 另跑 `cargo test --manifest-path ../rmsvc-core/epubpkg/Cargo.toml`；网关前端另跑 `node --check`（`gateway/ui/*.js`）与 `node --test gateway/ui/test/*.test.mjs`；脚本过 shellcheck。测试数会变，改了就同步这里和 README。note-serve 里几条认领测试会真的等书库目录变化（整组约 5 秒）。
 
 **已知小问题**：`Entry::set_triage` 不拒绝 `Skipped`（接口上能对已跳过的条目直接调 `/request` / `/archive`）——10-10 已修：终态一律拒绝，重复点同一个终态动作算无改动。
 
@@ -230,7 +231,7 @@
 
 **现状结论**：按条目单发，在用，真机端到端通过（DashScope）。
 
-- **用法**：「整理」卡片勾「问 AI」、填问题、点「提问」。服务端要求条目已勾选且问题非空，否则返回 400，防止误触。
+- **用法**：「整理」卡片勾「问 AI」、填问题、点「提问」。服务端要求条目已勾选且问题非空，否则返回 400，防止误触。模型调用失败、写回 ink-serve 失败回 502；条目库里没有这本书时透传 ink-serve 的 404，ink-serve 没运行回 503（10-10 第二阶段，此前一律 400 / 404；未部署）。
 - **提示词**：书名 + 章节 + 勾画原文 + 旁边批注（定稿或草稿）+ 问题，长度各有截断。回答经 `POST …/answer` 写回为 `Answer{text, backend, at, brief}`，`brief` 存当时问的问题，`backend` 记真实模型标识（10-10 前恒为 `"qwen"`）。回答形状不对直接 400，不会碰已有回答（此前通用端点把形状错误的 `answer` 当成清空）。
 - **记账**：模型报错记一次失败；模型答了就先记 token 再写回 ink，写回失败也不丢这笔用量（09-24 第三轮审计调换了顺序）。
 - **纯被动**：没有后台线程、不订阅事件、不批量跑，空闲时零 CPU。网关登记里它的 `events` 是 `false`。
@@ -278,7 +279,7 @@
 
 ## 第 7 章 网页：「笔记」tab
 
-**现状结论**：「笔记」tab 顶部是选书、「重扫」和搜索框（「KOReader 回流」按钮 09-29 删），下面四个子视图：浏览 / 整理 / 回收站 / 导入 md 文档（最后一个默认隐藏）。「整理」页的现行形态在 2026-09-08 第七轮反馈后定型，之后只做了小修。页面代码在 `gateway/ui/app.js` 的 `renderNotes`，文案有中英两套（`notes.*` 命名空间）。**纯前端的渲染和交互一直没有人眼确认过**，只确认了代码已部署、接口数据对得上。
+**现状结论**：「笔记」tab 顶部是选书、「重扫」和搜索框（「KOReader 回流」按钮 09-29 删），下面四个子视图：浏览 / 整理 / 回收站 / 导入 md 文档（最后一个默认隐藏）。「整理」页的现行形态在 2026-09-08 第七轮反馈后定型，之后只做了小修。页面代码在 `gateway/ui/notes.js` 的 `renderNotes`（模型管理卡片在 `gateway/ui/manage.js` 的 `mountModelPanel`；10-10 网关前端拆文件前都在 `app.js`），文案有中英两套（`notes.*` 命名空间）。**纯前端的渲染和交互一直没有人眼确认过**，只确认了代码已部署、接口数据对得上。
 
 ![「整理」页现行形态](diagrams/organize-page.svg)
 
@@ -322,8 +323,8 @@
 ### 8.1 往设备写笔记本（rmv6 写入 + .rmdoc 上传）
 
 - **写 `.rm`**：只自己编码 `RootTextBlock`（正文文字块），其余块用一份真机产出的 `.rm` 当模板原样拼回（模板替换）。全新文档没有编辑历史，CRDT id 连续分配。
-- **打包上传**：`.metadata` + `.content`（`fileType: notebook`）+ 一页 `.rm`，STORED 不压缩，经 xochitl 的 `POST /upload` 上传（它也接受 `.rmdoc`）。xochitl 会**重新分配文档 uuid**，所以上传后按 `visibleName` + 创建时间窗回查认领新 uuid。**认领**（10-09 起，已部署、未手测）：上传前先记下书库里已有的同名文档，认领时排除它们（不把旧文档错认成这次生成的）；然后用 `fswatch::wait_for` 先挂书库目录监听再查，文件落盘就认领，最多等 5 秒（此前固定每 1.5 秒查一次、最多 4 次）。仍失败的话，设备上可能留下一份没人追踪的同名文档，错误文案会提示用户手动删掉多的那份。完整事务化判定为复杂度不值得。
-- **内存直传**（10-09）：几 KB 的 `.rmdoc` 直接从内存经 `Xochitl::upload_into` 上传，不再先写临时文件再传、传完删。
+- **打包上传**：`.metadata` + `.content`（`fileType: notebook`）+ 一页 `.rm`，STORED 不压缩，经 xochitl 的 `POST /upload` 上传（它也接受 `.rmdoc`）。xochitl 会**重新分配文档 uuid**，所以上传后按 `visibleName` 回查认领新 uuid。**认领**（10-09 起，已部署、未手测；10-10 第二阶段起整段交给基座，未部署）：调 `Xochitl::upload_and_claim(UploadBody::Bytes, …, ClaimBy::VisibleName(名字), ClaimWait::new(5 秒))`——上传前快照"最近两秒内建的文档"，认领时只在快照之外的新文档里找同名的（不把旧文档错认成这次生成的；多于一份取最早建的），用 `fswatch::wait_for` 挂书库目录监听，文件落盘就认领，最多等 5 秒，**绝不"取最新一本"兜底**。`.rmdoc` 会被 xochitl 解包，书库里没有与上传字节相同的文件，所以判据只能是名字。此前 note-serve 自己拼"记下已有同名 → `upload_into` → 等待认领"三步（`Uploader` trait 三个方法），现在 `Uploader` 只剩 `upload_and_claim` 一个上传方法，外加 `folder_of_document`（书所在文件夹）与 `unique_name`（去重）。认领前后各读几次 `.metadata` 的次数与改动前相同（快照 1 次 + 每次目录变化 1 次，都按 mtime 先挡掉旧文件，见 8.3 末尾）。仍失败的话，设备上可能留下一份没人追踪的同名文档，错误文案会提示用户手动删掉多的那份。完整事务化判定为复杂度不值得。
+- **内存直传**（10-09）：几 KB 的 `.rmdoc` 直接从内存上传（10-10 起 `UploadBody::Bytes`），不再先写临时文件再传、传完删。
 - **七种打字样式都能写**（xochitl 3.28 格式菜单），真机渲染逐一核对过：
 
 | 样式 | `.rm` 码 | 投影里用在哪 |
@@ -352,12 +353,16 @@
 
 1. 算本章指纹（章名 + 各条目 id / 样式 / 小节名 / 文字 / 原文 / 回答；两条投影共用 `project::fingerprint_entries`，只是各自的条目集合按去处过滤），和上次记录一样 → 返回“没变化”，不联网。
 2. 变了 → 编码、打包、上传、认领新 uuid。
-3. **放在哪、叫什么**：放进**书本自己所在的设备文件夹**（读书本 `.metadata` 的 `parent`，得到文件夹 uuid），经按 uuid 的 `Xochitl::upload_into` 上传；名字是章名，首次生成时在同一文件夹内查重、重名加数字后缀；**重新生成沿用上次记下的名字**（此时旧文档还占着这个名字，重新查重会把自己判成重名，“楔子”变“楔子 2”）。
+3. **放在哪、叫什么**：放进**书本自己所在的设备文件夹**（`Xochitl::folder_of_document` 读书本 `.metadata` 的 `parent`，得到 `Folder`：根或某个文件夹 uuid；10-10 前是字符串 + `upload_into`），按 `Folder` 上传——类型上就传不进文件夹名字；名字是章名，首次生成时在同一文件夹内查重、重名加数字后缀；**重新生成沿用上次记下的名字**（此时旧文档还占着这个名字，重新查重会把自己判成重名，“楔子”变“楔子 2”）。
    - **2026-09-09～10-09 的 bug**（10-09 修，当天已部署，落点未在真机手测）：09-09 改成“复用书本文件夹”时，拿到的文件夹 uuid 被交给了按文件夹**名字**查找的 `Xochitl::upload`，按名字找不到就静默落到书库根——书在文件夹里时，笔记本其实一直生成在书库根，查重名却查的是书所在的文件夹。本文此前把这一项记成“真机验证”，那次验证没能暴露这个问题（书本身在根目录时落根看起来是对的），以代码为准更正。修法加了假 xochitl 回归测试，钉住“文件夹 uuid 真的传下去”。基座这两套参数的区别见[基座白皮书 §03](../../rmsvc-core/docs/reMarkable设备端Web服务基座白皮书.md)。
 4. 这章以前生成过 → 旧文档交给书架 book-serve 的回收站队列（用生成时记下的旧名字，book-serve 按名字核对 uuid 防错删），由设备上的 `shelf-trash-agent.qmd` 移进回收站（09-25 起长轮询、按 id 执行，入队后几秒内生效，不再依赖设备上正打开书库）。直接改 `.metadata` 的 `parent` 会被运行中的 xochitl 覆盖，只能走这条路。
 5. 记下 `{doc_uuid, visible_name, fingerprint, generated_at}`（`~/.local/state/notes/notebooks/<uuid>.json`）。任何一步失败都不写记录，下次照常重试；旧版本入队失败不算本章失败。记录文件解析失败时先另存 `.corrupt`、按空记录处理（09-24 第三轮审计）——`doc_uuid` 是把旧版本送进回收站的唯一线索，丢了会在设备上多出一份旧笔记本，要手动删。
 
 **章里没有要投影的条目时**：只有这章**一个活条目都没有了**才清掉历史记录；如果条目还在、只是去处改到了另一边，记录保留（`Book::chapter_has_live_entries`）。2026-09-17 真机 bug：用户把唯一一条从“设备”切到“Obsidian”再推送，笔记本的“已推送”状态凭空消失——后端把仍然有效的历史记录清掉了。第一轮只改了前端判据，用单次快照核对就以为修好了；按用户描述的两步操作走一遍才发现真根因在后端。
+
+**失败怎么回执**（10-10 第二阶段，未部署）：生成结果每章一项 `{chapter, title, status, …}`，`status` 为 `generated`（带 `doc_uuid`）/ `unchanged` / `empty` / `failed`；失败原因字段叫 `message`（与网关批量、清理的失败项同名，此前叫 `error`），网页 `gateway/ui/notes.js` 同步改读 `message`。取书失败不进这张表，直接是 HTTP 错误：ink-serve 回 404 就原样 404，ink-serve 没运行 / 连不上 503（`notesvc::InkClient` 改用 `try_get_typed`，错误带对方状态码；此前 note-serve 一律 400）。
+
+**认领要读多少次书库**（10-10 第二阶段核对，迁移前后相同）：一次生成 = `folder_of_document` 读书本那一份 `.metadata`（1 次单文件读）+ 首次生成时 `unique_name` 整库读一遍 `.metadata`（重新生成不调）+ 认领。认领在迁移前是"`existing` 列一次 + 等待中每次目录变化列一次"，迁移后是"快照列一次 + 等待中每次目录变化列一次"，次数一样；每次列都先用目录项的 mtime 挡掉 7 秒前（迁移前 5 秒前）没改过的文件，只打开刚改过的几份，不是整库解析。整库读只有首次生成那次去重，与迁移前一致，没有新增。
 
 ### 8.4 同步状态与 md 下载
 
@@ -367,7 +372,7 @@
 
 ### 8.5 单篇 md 导入
 
-「导入 md 文档」选一个 `.md` 文件，直接生成一份新的设备笔记本，**不经条目库**、不写生成记录（重复导入会生成多份，靠重名后缀区分）。落在当前所选书本的文件夹里（和推送同一条上传路，所以同样受 8.3 那个 bug 影响，10-09 一起修好并部署，未手测）。映射：`#` → Title，`##` → Subheading 1，`###` 及以下 → Subheading 2，`-`/`*`/`+` → 无序，`1.`/`1)` → 有序，`- [ ]`/`- [x]` → 待办（已勾选降级为未勾选），其余 → Body。行内加粗、斜体、代码只剥掉**成对**的符号（样式是按段落的，做不到半句加粗）。后端 2026-09-09 真机逐段核对 9 段全对；前端入口（选文件上传）没人眼确认。用户明确要求这个入口不放进「整理」，也不做 Obsidian 双向同步（规模不对）。
+「导入 md 文档」选一个 `.md` 文件，直接生成一份新的设备笔记本，**不经条目库**、不写生成记录（重复导入会生成多份，靠重名后缀区分）。落在当前所选书本的文件夹里（和推送同一条上传路，所以同样受 8.3 那个 bug 影响，10-09 一起修好并部署，未手测）。10-10 第二阶段起由处理函数先从条目库取书：书不在条目库回 404（透传 ink-serve），上传 / 认领失败回 500（此前都是 400）。映射：`#` → Title，`##` → Subheading 1，`###` 及以下 → Subheading 2，`-`/`*`/`+` → 无序，`1.`/`1)` → 有序，`- [ ]`/`- [x]` → 待办（已勾选降级为未勾选），其余 → Body。行内加粗、斜体、代码只剥掉**成对**的符号（样式是按段落的，做不到半句加粗）。后端 2026-09-09 真机逐段核对 9 段全对；前端入口（选文件上传）没人眼确认。用户明确要求这个入口不放进「整理」，也不做 Obsidian 双向同步（规模不对）。
 
 ### 8.6 被推翻的做法与教训
 
@@ -413,7 +418,7 @@
 | `services/transcribe-serve` | `config`/`ledger`（vendorcfg 薄封装）· `backend`（`Vision`）· `prompt` · `ink`（`EntryStore` trait，生产实现 `notesvc::InkClient`）· `worker` · `main` |
 | `services/mind-serve` | 同上，换成 `TextModel`；`worker` 只处理调用方指定的那一条，没有后台线程 |
 | `services/note-serve` | `rmdoc`（打包）· `chapter_store`（泛型“每书每章一条记录”，`notebooks`/`export_state` 是它的类型别名）· `publish`（上传 + 生成编排 + md 导入）· `export`（vault 落盘；下载用的 md 正文与文件名在 `notecore::export`，`Content-Disposition` 在 `rmsvc_core::multipart`）· `ink`/`trash`（跨服务客户端）· `config` · `main` |
-| 仓库其他位置 | `shelf/build.sh` 的 `NOTES_BINS` · `shelf/manifest.sh` 的安装令牌 `ink transcribe mind note`（install / uninstall / `packaging/deploy.sh` 共用）· `gateway/src/manage.rs::MODULES` 四行 · `gateway/ui/app.js` 的 `renderNotes` 与 `mountModelPanel` |
+| 仓库其他位置 | `shelf/build.sh` 的 `NOTES_BINS` · `shelf/manifest.sh` 的安装令牌 `ink transcribe mind note`（install / uninstall / `packaging/deploy.sh` 共用）· `gateway/src/manage.rs::MODULES` 四行 · `gateway/ui/notes.js` 的 `renderNotes` · `gateway/ui/manage.js` 的 `mountModelPanel` |
 
 **去重记录**：`transcribe`/`mind` 的 `config.rs`（约 85% 重复）和 `ledger.rs`（约 90%）收进 `vendorcfg`，两边的配置结构和落盘形状保持各自定义；note-serve 两份“按章记录”收成泛型 `ChapterStore<T>`；四处访问其他服务的 HTTP 客户端样板收成 `rmsvc_core::registry::SvcClient`，各自的业务 trait 不合并；2026-09-20 两个服务的 OpenAI 兼容传输收进 `vendorcfg::chat`（之前判断“几十行胶水不值得抽”，后来翻案）；09-24 第三轮审计把两边逐行相同的 `OpenAiCompat` 壳也合成 `vendorcfg::ChatClient`，并清掉 `rmv6` / `epubmap` 的 46 条 clippy 告警（纯机械，不改解析语义）。前几轮每次都用真机采样的真实配置文件形状写回归测试，并在真机上确认已存的 key 和累计用量原样读出、新用量能正确记账；09-24 第三轮审计的改动只跑了 host 测试。
 
@@ -498,6 +503,7 @@
 | 7e | **09-30 第五轮审计改动：09-30 14:10 已部署，部署自检通过，功能待手测** | 可核：nav 不叫 `nav.xhtml` 的书条目有章；09-29 前摄取、至今没章的条目在服务重启后归上章；裁图是灰度 PNG、转写照常；「不需要」→ 恢复 → 「转入笔记」一条已定稿的条目，落 `Reviewed` 不是待转写；补几笔后 `crops/` 里旧图消失、清空回收站后被清条目的裁图消失；边写边合书不产生误撤销 |
 | 7f | **10-07 代码审查改动：10-07 已部署并整机重启，部署自检通过，功能未手测** | 可核：「整理」页开着时后台事件刷新不跳回第一章；改字途中来事件不丢字；「推送本章」后提示里的链接能下载 md；笔记页重画时裁图走浏览器缓存（开发者工具看不再重新请求）。部署要换 ink-serve 与网关，见书架白皮书附录 §05 #23 |
 | 7g | **10-09 第六轮审计改动：10-09 已部署（自检 38✓；审计后续随下一次部署上机），功能未手测** | 可核：书放在某个文件夹里，「推送本章」后笔记本出现在**同一个文件夹**（不是书库根）；「导入 md 文档」同样落进所选书的文件夹；设备休眠几小时后第一次「提问」/「重新转写」不再卡满超时；文件名含 `&` 的 EPUB 条目能归上章；同名旧笔记本存在时推送，认领到的是新的那份；「模型管理」改单价保存后刷新，数值不变 |
+| 7i | **10-10 重构第二阶段：未部署**（与第一阶段一起，四个服务 + 网关须一起部署：章节失败项字段改名，网页同步读 `message`） | 可核：书在某个文件夹里，「推送本章」后笔记本仍落进同一个文件夹、网页显示 ✓；同名旧笔记本在时推送，认领到新的那份、旧的进回收站；「导入 md 文档」落进书的文件夹、返回的名字带去重后缀；停掉 ink-serve（`systemctl stop`）后在笔记页推送 / 提问，提示"ink-serve 未运行"（浏览器开发者工具看 503，不是 400）；断网时提问提示模型调用失败（502）；推送失败时提示里有原因（不是 `undefined`）；ink 摄取照常（合书后勾画入库、页号对得上） |
 | 7h | **10-10 重构第一阶段：未部署**（四个服务 + 网关须一起部署：草稿 / 回答改走新端点，网页改用 `live`） | 可核：一条没定稿、手写 `- 查作者` 的条目转写后是圆点 + “查作者”，补几笔再转写仍无 `- `，推送的笔记本和导出 md 没有 `- - `；改字 / 去处 / 问 AI 勾选 / 问题照常保存；提问后回答显示，草稿 / 回答的 `backend` 是所选预置 id（`GET /api/ink/books/<uuid>` 看）；`~/.local/state/notes/books/*.json` 改字后是单行紧凑 JSON 且没有 `live` 字段；一轮自动转写后 `transcribe.json` 只改一次（`stat` 看 mtime / inode） |
 | 8 | “改去处后对应导出指纹立刻变”只有离线单测 | 当时测试书状态在漂移，真机没能单变量复现 |
 | 9 | **书的小节名插行** | 09-25 真机验证用的《13 級階梯》目录是平铺的，条目 `subhead` 全空，这一项只有单测覆盖；找一本目录有二级小节的书再验 |

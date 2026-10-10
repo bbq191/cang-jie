@@ -8,6 +8,7 @@ use crate::ink::EntryStore;
 use crate::ledger::Ledger;
 use notecore::api::AnswerPost;
 use notecore::model::Entry;
+use rmsvc_core::http::ApiError;
 use vendorcfg::VendorConfig;
 
 pub struct Ctx<'a> {
@@ -30,31 +31,33 @@ pub struct Answered {
 /// 回答一条的问题并写回；返回回答文本 + token 消耗。`book_title` 由调用方传入（它为了找条目已经取过整本书，
 /// 这里不再向 ink-serve 重复请求一遍——每次提问原来要白拉两次整本 JSON）。要求条目勾了「问AI」且填了问题——两者都是网页写
 /// 的字段，直接调这个端点绕过勾选框也会被拒（防止误触/脚本误调，语义上"问AI"这个开关就该管这件事）。
-pub fn ask_entry(c: &Ctx<'_>, uuid: &str, book_title: &str, e: &Entry) -> Result<Answered, String> {
+/// 错误直接是回执（2026-10-10 审计 CORE-1，此前一律 400）：条目不能问 → 400；模型调用失败、写回 ink-serve 失败是
+/// 下游故障 → 502。
+pub fn ask_entry(c: &Ctx<'_>, uuid: &str, book_title: &str, e: &Entry) -> Result<Answered, ApiError> {
     // 终态守卫（2026-09-09 审计补）：只检查 ask_ai/question 两个字段，不检查 status——一条已"跳过/
     // 撤销/删除"的条目只要 ask_ai 还留着 true 就能继续被问 AI、消耗 token，且对着一条用户认为已经
     // 处理完的条目回答没有意义。
     if e.is_terminal() {
-        return Err("这条已跳过/撤销/删除，不能再问 AI".into());
+        return Err(ApiError::bad("这条已跳过/撤销/删除，不能再问 AI"));
     }
     if !e.ask_ai {
-        return Err("这条没勾「问AI」".into());
+        return Err(ApiError::bad("这条没勾「问AI」"));
     }
-    let question = e.question.as_deref().map(str::trim).filter(|q| !q.is_empty()).ok_or("没有问题内容")?;
+    let question = e.question.as_deref().map(str::trim).filter(|q| !q.is_empty()).ok_or_else(|| ApiError::bad("没有问题内容"))?;
     let ctx = crate::prompt::Context { book: book_title, chapter: &e.chapter_title, quote: e.quote.as_ref().map(|q| q.text.as_str()), text: e.display_text(), question };
     let prompt = crate::prompt::build(&c.cfg.prompt, &ctx);
     let reply = match c.model.ask(&prompt) {
         Ok(r) => r,
         Err(err) => {
             c.ledger.record_fail(&c.cfg.usage_key(), &err, c.now);
-            return Err(err);
+            return Err(ApiError::bad_gateway(err));
         }
     };
     // `backend` 记真实模型标识（`ChatClient` 以 `usage_key()` 建，见 main.rs `State::model`），不再恒为配置里的 "qwen"。
     let answer = AnswerPost { text: reply.text.clone(), backend: c.model.name().to_string(), brief: question.to_string() };
     // 先记账再写回：模型已经答了、token 已经花了，写回 ink-serve 失败也不该让这笔用量凭空消失。
     c.ledger.record_ok(&c.cfg.usage_key(), reply.prompt_tokens, reply.completion_tokens, c.now);
-    c.store.post_answer(uuid, &e.id, &answer)?;
+    c.store.post_answer(uuid, &e.id, &answer).map_err(ApiError::bad_gateway)?;
     Ok(Answered { text: reply.text, prompt_tokens: reply.prompt_tokens, completion_tokens: reply.completion_tokens })
 }
 
@@ -126,9 +129,12 @@ mod tests {
         let model = Fixed("x".into());
         let ledger = Ledger::open(&tempfile::tempdir().unwrap().path().join("mind.json"));
         let c = Ctx { store: &store, model: &model, cfg: &cfg(), ledger: &ledger, now: 1 };
-        assert!(ask_entry(&c, "u", "测试书", &entry(false, Some("问题"))).unwrap_err().contains("问AI"));
-        assert!(ask_entry(&c, "u", "测试书", &entry(true, None)).unwrap_err().contains("问题"));
-        assert!(ask_entry(&c, "u", "测试书", &entry(true, Some("  "))).unwrap_err().contains("问题"), "空白问题也算没有");
+        let err = |e: &Entry| ask_entry(&c, "u", "测试书", e).unwrap_err();
+        let e = err(&entry(false, Some("问题")));
+        assert!(e.message.contains("问AI") && e.status == 400, "{e:?}");
+        assert!(err(&entry(true, None)).message.contains("问题"));
+        let e = err(&entry(true, Some("  ")));
+        assert!(e.message.contains("问题") && e.status == 400, "空白问题也算没有: {e:?}");
         assert!(store.posted.lock().unwrap().is_empty(), "拒绝的不该有任何写回");
     }
 
@@ -144,7 +150,7 @@ mod tests {
             let mut e = entry(true, Some("问题"));
             e.status = s;
             let err = ask_entry(&c, "u", "测试书", &e).unwrap_err();
-            assert!(err.contains("跳过/撤销/删除"), "{s:?}: {err}");
+            assert!(err.message.contains("跳过/撤销/删除") && err.status == 400, "{s:?}: {err:?}");
         }
         assert!(store.posted.lock().unwrap().is_empty(), "终态条目一律不该有写回");
     }
@@ -156,7 +162,7 @@ mod tests {
         let ledger = Ledger::open(&tempfile::tempdir().unwrap().path().join("mind.json"));
         let c = Ctx { store: &store, model: &model, cfg: &cfg(), ledger: &ledger, now: 5 };
         let err = ask_entry(&c, "u", "测试书", &entry(true, Some("问题"))).unwrap_err();
-        assert_eq!(err, "模拟失败");
+        assert_eq!((err.status, err.message.as_str()), (502, "模拟失败"), "模型调用失败是下游故障，不是请求写错");
         assert!(store.posted.lock().unwrap().is_empty());
         let m = &ledger.snapshot().by_model[&cfg().usage_key()];
         assert_eq!((m.failed, m.last_error.as_str()), (1, "模拟失败"));

@@ -33,6 +33,11 @@ use std::sync::Arc;
 
 pub const APP: &str = "notes";
 
+/// 本服务发的事件（网关按 `area` 路由到笔记页；线上值不能改，前端与 transcribe-serve 按这两个字面量认）。
+const EVENT_AREA: &str = "notes";
+/// 条目库变了（摄取、改字段、清理）。
+const EVENT_ENTRIES: &str = "entries";
+
 const SPEC: ServiceSpec = ServiceSpec { name: "ink-serve", label: "笔记·矿", version: env!("CARGO_PKG_VERSION"), default_bind: "127.0.0.1:8795", tab: None };
 
 struct State {
@@ -56,7 +61,7 @@ impl State {
             // 这时也要发事件，不然网页「笔记」列表要等到下一次不相干的事件才会把这本书摘掉。
             Ok(Some(s)) if s.pages > 0 || s.merge.revoked > 0 => {
                 println!("[ink-serve] {uuid}: 页 {} 新增 {} 变更 {} 不变 {} 撤销 {} 复活 {}", s.pages, s.merge.added, s.merge.changed, s.merge.unchanged, s.merge.revoked, s.merge.revived);
-                self.bus.publish("notes", "entries");
+                self.bus.publish(EVENT_AREA, EVENT_ENTRIES);
             }
             Ok(_) => {}
             Err(e) => eprintln!("[ink-serve] {uuid}: {e}"),
@@ -74,7 +79,7 @@ fn edit_entry(s: &State, uuid: &str, id: &str, f: impl FnOnce(&mut Entry) -> Res
         Some(Some(Err(e))) => return Err(ApiError::bad(e)),
         Some(Some(Ok(()))) => {}
     }
-    s.bus.publish("notes", "entries");
+    s.bus.publish(EVENT_AREA, EVENT_ENTRIES);
     Ok(Reply::ok(&serde_json::json!({"ok": true})))
 }
 
@@ -87,7 +92,7 @@ fn triage(s: &State, r: &mut Request<'_>, target: Status) -> ApiResult {
 /// 请求体 → 契约类型（`notecore::api`，`deny_unknown_fields`）：JSON 坏了、字段名/形状不对一律 400，
 /// 不再像此前那样逐字段 `from_value(..).ok()` 静默丢掉（`answer` 形状写错曾直接把已有回答清空，NT-2）。
 fn decode<T: serde::de::DeserializeOwned>(r: &mut Request<'_>) -> Result<T, ApiError> {
-    let bytes = r.read_small_body().map_err(ApiError::bad)?;
+    let bytes = r.small_body()?; // 超限 413、读失败 400
     serde_json::from_slice(&bytes).map_err(|e| ApiError::bad(format!("请求体格式不对: {e}")))
 }
 
@@ -139,7 +144,7 @@ fn main() {
 /// 路由表（单独成函数，测试直接对它发请求）。
 fn router(st: &Arc<State>) -> Router {
     Router::new()
-        .get("/events", bind(st, |s, _| Ok(s.bus.sse_reply())))
+        .get("/events", bind(st, |s, r| Ok(s.bus.sse_reply_for(r))))
         .get("/books", bind(st, |s, _| {
             Ok(Reply::ok(&BookList { items: s.db.list_active().iter().map(|b| BookBrief::of(b)).collect() }))
         }))
@@ -191,7 +196,7 @@ fn router(st: &Arc<State>) -> Router {
         .post("/books/{uuid}/purge", bind(st, |s, r| {
             let removed = ingest::purge_terminal(&s.db, &s.crops_dir(), r.param("uuid")).map_err(ApiError::internal)?.ok_or_else(|| ApiError::not_found("没有这本书的条目"))?;
             if removed > 0 {
-                s.bus.publish("notes", "entries");
+                s.bus.publish(EVENT_AREA, EVENT_ENTRIES);
             }
             Ok(Reply::ok(&serde_json::json!({"ok": true, "removed": removed})))
         }))
@@ -210,7 +215,7 @@ fn router(st: &Arc<State>) -> Router {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rmsvc_core::http::Method;
+    use rmsvc_core::http::{Method, TestRequest};
 
     /// 沙箱里起一份 State（HOME/XDG 全在临时目录，不碰开发机），条目库放一本书一条条目（已有回答）。
     fn setup() -> (tempfile::TempDir, Arc<State>, Router) {
@@ -225,9 +230,7 @@ mod tests {
         (t, st, r)
     }
     fn call(r: &Router, method: Method, path: &str, body: &str) -> (u16, serde_json::Value) {
-        let mut b = body.as_bytes();
-        let mut req = Request { method, path: path.into(), query: Default::default(), params: Default::default(), content_type: "application/json".into(), content_length: Some(body.len()), headers: vec![], body: &mut b };
-        let rep = r.dispatch(&mut req);
+        let rep = TestRequest::new(method, path).content_type("application/json").body(body).dispatch(r);
         (rep.status, serde_json::from_slice(&rep.body).unwrap_or_default())
     }
     fn entry_of(st: &State) -> Entry {
@@ -242,6 +245,8 @@ mod tests {
         assert_eq!(call(&r, Method::Post, "/books/u/entries/e", r#"{"answer":null}"#).0, 400);
         assert_eq!(call(&r, Method::Post, "/books/u/entries/e/answer", r#"{"text":"新"}"#).0, 400);
         assert_eq!(call(&r, Method::Post, "/books/u/entries/e/answer", "不是 JSON").0, 400);
+        let huge = format!(r#"{{"text":"{}","backend":"b","brief":"q"}}"#, "x".repeat(rmsvc_core::http::SMALL_BODY_MAX as usize));
+        assert_eq!(call(&r, Method::Post, "/books/u/entries/e/answer", &huge).0, 413, "超限是 413，不是 400");
         assert_eq!(entry_of(&st).answer.unwrap().text, "旧回答");
         assert_eq!(call(&r, Method::Post, "/books/u/entries/e", r#"{"askAi":"yes"}"#).0, 400, "类型不对不再悄悄当没给");
         assert!(!entry_of(&st).ask_ai);

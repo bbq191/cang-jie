@@ -14,7 +14,7 @@ use config::TranscribeConfig;
 use notesvc::InkClient;
 use ledger::Ledger;
 use rmsvc_core::events::{follow, Event, EventBus};
-use rmsvc_core::http::{bind, ApiError, Reply, Router, ServeOpts};
+use rmsvc_core::http::{bind, ApiError, ApiResult, Reply, Router, ServeOpts};
 use rmsvc_core::paths::Paths;
 use rmsvc_core::service::{self, ServiceSpec};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
@@ -28,6 +28,13 @@ pub const APP: &str = "notes";
 const SPEC: ServiceSpec = ServiceSpec { name: "transcribe-serve", label: "笔记·转写", version: env!("CARGO_PKG_VERSION"), default_bind: "127.0.0.1:8796", tab: None };
 /// 事件到跑之间的防抖：合上书 ink-serve 会连发几条。
 const DEBOUNCE: Duration = Duration::from_secs(3);
+
+/// 本服务发的事件（网关按 `area` 路由到笔记页；线上值不能改，前端按这两个字面量认）。
+const EVENT_AREA: &str = "notes";
+/// 转写配置/一轮结果变了（网页据此刷新转写状态）。
+const EVENT_TRANSCRIBE: &str = "transcribe";
+/// 订阅的 ink-serve 事件：条目库变了（与 ink-serve 的 `EVENT_ENTRIES` 同值，两边一起改）。
+const INK_EVENT_ENTRIES: (&str, &str) = ("notes", "entries");
 
 struct State {
     paths: Paths,
@@ -67,7 +74,7 @@ impl State {
             println!("[transcribe-serve] 一轮：扫 {} 成 {} 败 {} 跳 {} 余 {} {}", report.scanned, report.done, report.failed, report.skipped, report.left, report.note);
         }
         if changed {
-            self.bus.publish("notes", "transcribe");
+            self.bus.publish(EVENT_AREA, EVENT_TRANSCRIBE);
         }
         report
     }
@@ -83,7 +90,7 @@ impl State {
 /// loopback 长心跳，与网关汇聚同一套实现）。
 fn watch_ink(st: Arc<State>) {
     follow(&st.paths.clone(), "ink-serve", |json| {
-        if Event::parse(json).is_some_and(|e| e.is("notes", "entries")) && st.cfg().auto {
+        if Event::parse(json).is_some_and(|e| e.is(INK_EVENT_ENTRIES.0, INK_EVENT_ENTRIES.1)) && st.cfg().auto {
             st.kick();
         }
     });
@@ -99,6 +106,17 @@ fn work_loop(st: Arc<State>, rx: Receiver<()>) {
             eprintln!("[transcribe-serve] 一轮转写 panic（已兜住，下次再踢照常跑）");
         }
     }
+}
+
+/// 强制转写一条的回执：成功 → token 消耗（点「重转」弹出的是这一次调用的实际数字，不是账本累计）；真调了模型却失败
+/// （取裁图 / 视觉模型 / 写回草稿，`failed > 0`）是下游故障 → 502；其余（没这条、没手写、终态、没配 key、取不到条目库）
+/// 一轮报告里只剩一句 `note`，分不出是哪一类，仍回 400（2026-10-10 审计 CORE-1：此前连模型失败也是 400）。
+fn force_reply(rep: ledger::RunReport) -> ApiResult {
+    if rep.done == 1 {
+        return Ok(Reply::ok(&serde_json::json!({"ok": true, "promptTokens": rep.prompt_tokens, "completionTokens": rep.completion_tokens})));
+    }
+    let msg = if rep.note.is_empty() { "没有这条目或它没有手写".to_string() } else { rep.note };
+    Err(if rep.failed > 0 { ApiError::bad_gateway(msg) } else { ApiError::bad(msg) })
 }
 
 fn main() {
@@ -132,7 +150,7 @@ fn main() {
         }
     }
     let router = Router::new()
-        .get("/events", bind(&st, |s, _| Ok(s.bus.sse_reply())))
+        .get("/events", bind(&st, |s, r| Ok(s.bus.sse_reply_for(r))))
         .get("/status", bind(&st, |s, _| {
             let (ink, pending) = match s.store.list_books() {
                 Ok(b) => (true, b.iter().map(|x| x.pending).sum::<usize>()),
@@ -144,9 +162,9 @@ fn main() {
         .get("/config", bind(&st, |s, _| Ok(Reply::ok(&s.cfg().public()))))
         .put("/config", bind(&st, |s, r| {
             let j = r.json()?;
-            let next = s.cfg.update(|c| c.apply(&j)).map_err(ApiError::bad)?;
+            let next = s.cfg.update(|c| c.apply(&j))?;
             let has_key = next.key().is_some();
-            s.bus.publish("notes", "transcribe");
+            s.bus.publish(EVENT_AREA, EVENT_TRANSCRIBE);
             if has_key && next.auto {
                 s.kick();
             }
@@ -154,15 +172,25 @@ fn main() {
         }))
         .post("/books/{uuid}/entries/{id}", bind(&st, |s, r| {
             let (uuid, id) = (r.param("uuid").to_string(), r.param("id").to_string());
-            let rep = s.run(Some(Target { uuid: &uuid, id: &id }));
-            if rep.done == 1 {
-                // 点「重转」弹出这次调用的消耗（token）——不是账本累计，是这一次调用的实际数字。
-                Ok(Reply::ok(&serde_json::json!({"ok": true, "promptTokens": rep.prompt_tokens, "completionTokens": rep.completion_tokens})))
-            } else {
-                Err(ApiError::bad(if rep.note.is_empty() { "没有这条目或它没有手写".to_string() } else { rep.note }))
-            }
+            force_reply(s.run(Some(Target { uuid: &uuid, id: &id })))
         }));
     let c = st.cfg();
     println!("[transcribe-serve] 配置 {}；模型 {}（{} @ {}）；key {:?}", st.cfg.path().display(), c.usage_key(), c.model(), c.base_url(), c.key_source());
     service::run_or_exit(&SPEC, &bind_addr, &paths, router, ServeOpts::default())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn force_reply_status_by_outcome() {
+        let Ok(ok) = force_reply(ledger::RunReport { done: 1, prompt_tokens: 3, completion_tokens: 4, ..Default::default() }) else { panic!("应成功") };
+        assert_eq!((ok.status, serde_json::from_slice::<serde_json::Value>(&ok.body).unwrap()["promptTokens"].as_u64()), (200, Some(3)));
+        let err = |r| force_reply(r).err().unwrap();
+        let e = err(ledger::RunReport { failed: 1, note: "模型超时".into(), ..Default::default() });
+        assert_eq!((e.status, e.message.as_str()), (502, "模型超时"), "调了模型却失败是下游故障");
+        let e = err(ledger::RunReport::default());
+        assert_eq!((e.status, e.message.as_str()), (400, "没有这条目或它没有手写"));
+    }
 }

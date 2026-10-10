@@ -2,7 +2,7 @@
 <defs><marker id="mk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker><marker id="mr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b0451f"/></marker><marker id="mg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2f7d45"/></marker></defs>
 <rect x="0" y="0" width="1240" height="700" fill="#fbfbfa"/>
 <text x="620.0" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">「整理」页现行形态（2026-09-30 按 app.js 核对）</text>
-<text x="620.0" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">目标：任意时刻屏幕上最多只有“一章”的内容——滚动这件事本身消失；网页在网关的 ui/app.js 的 renderNotes 里</text>
+<text x="620.0" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">目标：任意时刻屏幕上最多只有“一章”的内容——滚动这件事本身消失；网页在网关的 ui/notes.js 的 renderNotes 里</text>
 <rect x="24" y="84" width="300" height="90" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
 <text x="174.0" y="104" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">顶部：选书 · 重扫 · 搜索框</text>
 <text x="174.0" y="127" text-anchor="middle" font-size="10" fill="#3a3a3a">子视图：浏览 · 整理 · 回收站 · 导入 md 文档</text>

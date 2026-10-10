@@ -334,7 +334,7 @@ function renderNotes(sec){sec.innerHTML=`
         const parts=[];
         const fail=(label,m)=>parts.push('✗ '+T('common.labelValue',{label,value:m}));
         if(gr.ok===false)fail(T('notes.push.notebook'),gr.message||T('common.failed'));
-        else if(gc.status==='failed')fail(T('notes.push.notebook'),gc.error);
+        else if(gc.status==='failed')fail(T('notes.push.notebook'),gc.message);
         else if(gc.status==='generated')parts.push('✓ '+T('notes.push.notebookUpdated'));
         if(er.ok===false)fail('md',er.message||T('common.failed'));
         // md 用一条带链接的提示让用户点开：此前在两次请求之后才 window.open，已经不在点击的上下文里，iOS Safari / Firefox

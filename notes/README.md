@@ -44,7 +44,7 @@ reMarkable 的强项是**荧光笔勾书，再在勾出来的地方旁边手写*
 | ink | `GET /books`（只列还有活条目的书）· `GET /books/{uuid}`（每条条目带 `live`＝是否进投影，只在应答里、不落盘）· `GET /books/{uuid}/crops/{file}` · `POST /books/{uuid}/entries/{id}`（网页改 `text` / `destination` / `askAi` / `question`；未知字段、形状不对回 400；终态条目拒改）· `POST …/entries/{id}/draft`（transcribe 写草稿：`{text,backend,hash}`，原文）· `…/answer`（mind 写回答：`{text,backend,brief}`）· `…/request`（转入笔记）· `…/skip`（不需要）· `…/archive`（不要了）· `…/restore`（恢复）· `POST /books/{uuid}/purge`（清空回收站，不可恢复）· `POST /books/{uuid}/rescan` · `GET /search?q=&limit=` · `GET /events`。请求/应答类型在 `notecore::api`，收发两端共用；原 `POST /koreader/import` 已删（2026-09-30），以前导入的 KOReader 条目照常可用 |
 | transcribe | `GET /status` · `GET /config` · `PUT /config`（`preset` / `apiKey`（只写）/ `clearKey` / `price`（`{inputPer1k,outputPer1k}`，与 GET 回的同名；老写法 `{input,output}` 也认）/ 自定义 `model`+`baseUrl` / `auto` / `maxPerRun` / `pauseMs` / `timeoutSecs` / `maxAttempts` / `prompt`）· `POST /books/{uuid}/entries/{id}`（强制转写一条，返回 token 用量）· `GET /events`（`POST /run`、`/retry` 网页不用，10-10 删；配置里的 `backend` 10-10 起不再读写） |
 | mind | `GET /status` · `GET /config` · `PUT /config`（同上，只有 `timeoutSecs` / `prompt`，没有 `auto` / `maxPerRun` / `pauseMs` / `maxAttempts` 这些节流字段）· `POST /books/{uuid}/entries/{id}/ask`（要求已勾「问 AI」且问题非空）|
-| notes | `GET /status` · `GET /books/{uuid}/sync`（每章两个去处的同步状态）· `POST /books/{uuid}/chapters/{idx}/generate`（生成本章设备笔记本）· `POST /books/{uuid}/chapters/{idx}/export`（md 落设备 vault；内部按整本重导，内容没变的章跳过）· `GET /books/{uuid}/chapters/{idx}/export.md`（浏览器下载）· `POST /books/{uuid}/import-md {title, markdown}` · `GET /events`。只有这 7 个；网页从没用过的 `GET /books`、`GET …/notebooks`、`GET …/exports`、整本 `POST …/generate`、整本 `POST …/export`、`GET …/vault.json` 已于 2026-10-09 删掉 |
+| notes | `GET /status` · `GET /books/{uuid}/sync`（每章两个去处的同步状态）· `POST /books/{uuid}/chapters/{idx}/generate`（生成本章设备笔记本；回 `{chapters:[{chapter,title,status,…}]}`，`status` 为 `generated`/`unchanged`/`empty`/`failed`，失败原因在 `message`，10-10 前叫 `error`）· `POST /books/{uuid}/chapters/{idx}/export`（md 落设备 vault；内部按整本重导，内容没变的章跳过）· `GET /books/{uuid}/chapters/{idx}/export.md`（浏览器下载）· `POST /books/{uuid}/import-md {title, markdown}` · `GET /events`。只有这 7 个；网页从没用过的 `GET /books`、`GET …/notebooks`、`GET …/exports`、整本 `POST …/generate`、整本 `POST …/export`、`GET …/vault.json` 已于 2026-10-09 删掉 |
 
 事件区域都是 `notes`：ink 发 `entries`，transcribe 发 `transcribe`（空跑且与上一轮相同的轮次不发），note-serve 发 `notebooks`；网页据此自动刷新。
 
@@ -63,7 +63,7 @@ notes/
 └── docs/                 白皮书 + diagrams/（overview · architecture · data-flow · entry-status · marker-styles · model-config · organize-page · push-notebook · robustness）
 ```
 
-网页在网关里：[`../gateway/ui/app.js`](../gateway/ui/app.js) 的 `renderNotes`（浏览 / 整理 / 回收站 / 导入 md 文档四个子视图，顶部是选书、重扫和搜索框）与 `mountModelPanel`（模型管理卡片）。
+网页在网关里：[`../gateway/ui/notes.js`](../gateway/ui/notes.js) 的 `renderNotes`（浏览 / 整理 / 回收站 / 导入 md 文档四个子视图，顶部是选书、重扫和搜索框）与 [`../gateway/ui/manage.js`](../gateway/ui/manage.js) 的 `mountModelPanel`（模型管理卡片）。
 
 ## 设备上的路径（XDG，HOME=/home/root）
 
@@ -80,7 +80,7 @@ notes/
 与书架共用交叉编译环境（`rustup target add aarch64-unknown-linux-musl` + aarch64 交叉 gcc），见 [`../shelf/README.md`](../shelf/README.md)「构建 · 部署 · 卸载」。
 
 ```sh
-cd notes && cargo test --workspace      # host：257 过 + 1 忽略（rmv6 29 · epubmap 10 · notecore 75 · notesvc 2 · vendorcfg 28 · ink 32 · transcribe 27 · mind 23 · note 31 另 1 个 ignored；2026-10-10 实跑）
+cd notes && cargo test --workspace      # host：265 过 + 1 忽略（rmv6 29 · epubmap 10 · notecore 75 · notesvc 4 · vendorcfg 29 · ink 32 · transcribe 28 · mind 25 · note 33 另 1 个 ignored；2026-10-10 重构第二阶段后实跑）
 cd ../shelf && sh build.sh               # host 测试 + 交叉编译（notes/ 在就一起编）
 cd ../packaging && sh deploy.sh <设备IP> --only ink,transcribe,mind,note   # 只装/更新笔记线（网关总会一起装）；不加 --only 就全装
 ```
@@ -100,5 +100,6 @@ cd ../packaging && sh deploy.sh <设备IP> --only ink,transcribe,mind,note   # �
 - 2026-09-25 第四轮审计的改动（擦掉又回来的笔迹复活原条目、`.metadata` 读不了不当成书被删、章判据统一、小数不当编号等）09-25 已部署，但没在真机上逐项核，见白皮书第 13 章 7d；
 - 2026-09-30 第五轮审计的改动（epubmap 按 OPF 声明找目录、启动重扫没章的条目、灰度裁图 + 像素封顶、「转入笔记」继承定稿、正被写的 `.rm` 跳过、删没人用的裁图、调用端复用）**09-30 已部署**，部署自检通过，但功能还没手测（包括"旧条目重启后归上章"），见白皮书第 13 章 7e；
 - 2026-10-09 第六轮审计的改动（笔记本落进书所在文件夹、调云重试一次与闲置连接重建、epubmap 解 XML 实体、认领改等 inotify 等）**10-09 已部署**（部署自检 38✓），功能还没在真机上手测；同日稍后的审计后续（单价字段名统一、EPUB 解析并进 `epubpkg`）随下一次部署上机，也没单独手测。见白皮书第 13 章 7g。
+- 2026-10-10 重构（第一、第二阶段）**未部署**：第二阶段把笔记本上传认领迁到基座 `upload_and_claim`、`.content` 页表改用基座 `PageTable`，并改了错误状态码（ink-serve 的 404 透传、没运行 503、上传 / 模型失败 5xx）与章节失败项字段名（`error` → `message`，网页同步改），网关须一起部署。见白皮书第 13 章 7h、7i。
 
 用户已决定不改的：编号列表被〔原文〕/〔AI〕段打断会从 1 重来；没转写的条目写“（待转写）”占位。
