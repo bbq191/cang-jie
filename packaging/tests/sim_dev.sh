@@ -108,3 +108,12 @@ echo TZ > "$R/Shanghai"; mkdir -p "$R/timezone-cn.rootbind/etc"; echo old > "$R/
 ( umask 000; cd "$PKG" && CJ_ZONEINFO="$R/Shanghai" CJ_LOCALTIME="$R/localtime" CJ_MOUNTS="$R/mounts-ov" CJ_BACKUP_DIR="$R/tbk" CJ_TMPDIR="$R" run sh deploy-timezone-cn.sh 127.0.0.1 ) >/dev/null 2>&1; rc=$?
 sd_tz_perms() { test "$rc" -eq 0 && not_ww "$R/tbk" && not_ww "$R/tbk/timezone-cn.log"; }
 check "timezone-cn umask 000：改前记录 timezone-cn.log 与备份目录不全局可写" sd_tz_perms
+
+# ── devlib：/usr 单元写到一半被打断留下的 .<unit>.new，卸载时一并删（单元本体在不在都删） ──
+new_sandbox; : > "$CJ_SIM_LOG"
+mkdir -p "$CJ_SYSD/multi-user.target.wants"; echo half > "$CJ_SYSD/.z.service.new"
+( . "$PKG/devlib.sh"; export PATH="$STUBS:$PATH"; cj_remove_usr_unit z.service multi-user.target.wants ) >/dev/null 2>&1; rc=$?
+check "remove_usr_unit：只剩写到一半的 .z.service.new → 也删掉（并恢复 ro）" test "$rc" -eq 0 -a ! -e "$CJ_SYSD/.z.service.new" -a "$(last_mount)" = "mount -o remount,ro /"
+echo unit > "$CJ_SYSD/z.service"; echo half > "$CJ_SYSD/.z.service.new"
+( . "$PKG/devlib.sh"; export PATH="$STUBS:$PATH"; cj_remove_usr_unit z.service multi-user.target.wants ) >/dev/null 2>&1
+check "remove_usr_unit：单元本体与 .z.service.new 一起删" test ! -e "$CJ_SYSD/z.service" -a ! -e "$CJ_SYSD/.z.service.new"

@@ -321,7 +321,7 @@ sh verify-on-device.sh --from d.txt        # 不连设备，离线重判存下�
 ## 测试：不碰真机验证脚本
 
 ```sh
-bash packaging/tests/run_sim_tests.sh      # 2026-10-09 实跑 371 项断言全过；也由 tests/test_install_scripts_sim.py 经 pytest 调用
+bash packaging/tests/run_sim_tests.sh      # 2026-10-10 实跑 448 项断言全过；也由 tests/test_install_scripts_sim.py 经 pytest 调用
 git ls-files -z '*.sh' | xargs -0 shellcheck --severity=warning   # 全仓库 34 个 .sh，零告警
 shellcheck --severity=warning --shell=sh packaging/tests/stubs/*   # 测试桩（无 .sh 后缀），10-09 起 CI 同样门控
 ```

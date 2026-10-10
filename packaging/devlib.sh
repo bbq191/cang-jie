@@ -387,7 +387,8 @@ cj_install_usr_unit() {
 
 cj_usr_rm_body() { # UNIT WANTS…
     cj_ub=$1; shift
-    rm -f "$CJ_SYSD/$cj_ub"
+    # 连同 cj_usr_put_body 写到一半被打断留下的暂存 .<unit>.new 一起删（重装会覆盖它，但装到一半就直接卸载时没人管，2026-10-10）
+    rm -f "$CJ_SYSD/$cj_ub" "$CJ_SYSD/.$cj_ub.new"
     for cj_wd in "$@"; do rm -f "$CJ_SYSD/$cj_wd/$cj_ub"; done
     return 0
 }
@@ -399,6 +400,7 @@ cj_remove_usr_unit() {
     systemctl disable --now "$cj_u" 2>/dev/null || true
     cj_present=0
     [ -e "$CJ_SYSD/$cj_u" ] && cj_present=1
+    [ -e "$CJ_SYSD/.$cj_u.new" ] && cj_present=1   # 只剩写到一半的暂存也要开一次 rw 窗口删掉
     for cj_wd in "$@"; do [ -L "$CJ_SYSD/$cj_wd/$cj_u" ] && cj_present=1; done
     if [ "$cj_present" = "0" ]; then
         echo "-- $CJ_SYSD/$cj_u 本来就不存在，跳过"
