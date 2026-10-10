@@ -291,6 +291,15 @@ impl Reply {
 }
 
 /// 领域错误 → 回执：`Err(ApiError)` 统一变 JSON。
+///
+/// **没有** `From<String>`（2026-10-10 第二阶段删掉）：此前字符串错误 `?` 上来一律成 500，领域校验错误（"非法文件名"）也报成服务端故障
+/// （审计 CORE-1）。状态码由调用方显式选（`bad` / `not_found` / `conflict` / `internal` …），或由带种类的领域错误 `From` 过来：
+///
+/// ```compile_fail
+/// fn handler() -> Result<(), rmsvc_core::http::ApiError> {
+///     Err(String::from("非法文件名"))?
+/// }
+/// ```
 #[derive(Debug)]
 pub struct ApiError {
     pub status: u16,
@@ -325,11 +334,6 @@ impl ApiError {
     }
     pub fn not_found(m: impl Into<String>) -> ApiError {
         ApiError { status: 404, message: m.into() }
-    }
-}
-impl From<String> for ApiError {
-    fn from(m: String) -> Self {
-        ApiError::internal(m)
     }
 }
 impl From<ApiError> for Reply {
