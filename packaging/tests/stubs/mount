@@ -2,5 +2,7 @@
 echo "mount $*" >> "${CJ_SIM_LOG:-/dev/null}"
 case "$*" in
     *remount,rw*) [ -n "${CJ_SIM_RW_FAIL:-}" ] && exit 1 ;;
+    *remount,ro*) [ -n "${CJ_SIM_RO_FAIL:-}" ] && exit 1 ;;   # 模拟 remount ro 一直 busy
+    --bind*) [ -n "${CJ_SIM_BIND_FAIL:-}" ] && exit 1 ;;
 esac
 exit 0

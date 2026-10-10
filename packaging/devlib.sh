@@ -129,6 +129,68 @@ cj_with_rootfs_rw() {
     return "$cj_rc"
 }
 
+# ── /etc 下层（rootfs 里的 /etc）编辑窗口（PK-1，2026-10-10）────────────────────
+# /etc 是 overlay（lower = rootfs 的 /etc，只读；upper = /var/volatile tmpfs）：直接写 /etc 重启即丢，要持久就得改 lower。
+# 手法（chrony-cn.sh / timezone-cn.sh 真机验证过的那套，原先两份脚本里各写一遍，现收进这里）：
+#   ① 先 `mount -o remount,rw /` 再 `mount --bind / <绑定点>`——bind 继承绑定时刻的 ro 标志，顺序反了拿到的还是只读视图；
+#   ② 在 <绑定点>/etc 下改（绕开 overlay 直达 lower）；
+#   ③ sync → 卸 bind（不卸的话 remount ro 必 busy）→ remount ro，busy 重试 5 次（cj_rootfs_restore）。
+# 用法：cj_etc_lower_edit NAME FUNC [ARGS…]
+#   绑定点 = ${CJ_TMPDIR:-/tmp}/NAME.rootbind；FUNC 跑时 CJ_LOWER=<绑定点>（lower 里的 /etc 即 "$CJ_LOWER/etc"）。
+#   FUNC 在**当前 shell** 里跑（不是子 shell）：它设的变量（如 changed=1）调用方看得到；也因此没有 set -e，
+#   每步请显式 `|| return 1`。FUNC 里 `exit` 也安全：EXIT trap 会卸 bind、恢复 ro。
+# 返回：FUNC 的退出码；remount rw / bind 失败 1；dm-verity 激活 3（什么都没动，调用方按"只改当前视图"处理）。
+# 与三份旧实现（cj_with_rootfs_rw、chrony-cn.sh 与 timezone-cn.sh 各自内联的一段）逐行对比后的取舍——新函数是三者的超集：
+#   · 恢复 ro：旧两脚本正常路径重试 5 次、**失败/信号路径的 EXIT trap 只试一次**；这里一律走 cj_rootfs_restore（5 次，
+#     间隔 CJ_RETRY_SLEEP，缺省 2 秒，与旧脚本写死的 2 秒相同）。
+#   · bind 失败：旧脚本只试一次 remount ro 就 exit 1，留下空的绑定点目录；这里同样恢复 ro（带重试）并 rmdir 绑定点。
+#   · 卸 bind：旧脚本 umount 不看结果；这里失败时打印 ⚠（随后 remount ro 多半 busy，cj_rootfs_restore 会如实报"暂留 rw"），
+#     照旧继续尝试恢复 ro，不提前返回。
+#   · sync：旧脚本在 FUNC 内部 sync，cj_with_rootfs_rw 在 body 之后 sync；这里在 FUNC 之后、卸 bind 之前统一 sync（FUNC 自己再 sync 也无害）。
+#   · 子 shell + set -e（cj_with_rootfs_rw 的做法）不采用：chrony 要在窗口里记 changed、拷 lower 出来，子 shell 里设的变量带不出来；
+#     旧两脚本本来就在当前 shell 里跑、靠显式 `exit 1`，行为不变。
+#   · trap：与 cj_with_rootfs_rw 一样接 EXIT 与 INT/TERM/HUP/PIPE（PIPE：经 ssh 跑时连接断了，下一次输出就是 SIGPIPE，
+#     不接住就不走 EXIT trap、rootfs 留在 rw），结束后清掉；会覆盖调用方已设的这几个 trap（设备端脚本本来不设）。
+#   · dm-verity 门：旧两脚本在调用方判，这里收进来（返回 3），与 cj_install_usr_unit 同一约定。
+CJ_LOWER=""
+CJ_BIND_ACTIVE=0
+cj_etc_lower_cleanup() {
+    if [ "$CJ_BIND_ACTIVE" = "1" ]; then
+        umount "$CJ_LOWER" 2>/dev/null || echo "⚠ 卸 $CJ_LOWER 失败（下面 remount ro 可能 busy）"
+        CJ_BIND_ACTIVE=0
+    fi
+    [ -z "$CJ_LOWER" ] || rmdir "$CJ_LOWER" 2>/dev/null || true   # 卸不掉时它仍是挂载点，rmdir 失败，无害
+    cj_rootfs_restore
+}
+cj_etc_lower_edit() {
+    cj_el_name=$1; shift
+    if cj_verity_active; then
+        echo "✋ dm-verity 激活，rootfs 不可写：不改 rootfs 底层（$cj_el_name）"
+        return 3
+    fi
+    CJ_LOWER="${CJ_TMPDIR:-/tmp}/$cj_el_name.rootbind"
+    mount -o remount,rw / || { echo "!! remount rw / 失败"; return 1; }
+    CJ_RW_ACTIVE=1
+    trap 'cj_etc_lower_cleanup' EXIT
+    trap 'cj_etc_lower_cleanup; exit 143' INT TERM HUP PIPE
+    # 先置标记再 bind：信号恰好落在"bind 已成功、标记还没置"之间时，旧写法会漏卸 bind、remount ro 必 busy；
+    # 反过来（标记置了、bind 没成）只是多一次无害的 umount 失败
+    CJ_BIND_ACTIVE=1
+    if ! { mkdir -p "$CJ_LOWER" && mount --bind / "$CJ_LOWER"; }; then
+        CJ_BIND_ACTIVE=0
+        echo "!! bind / 到 $CJ_LOWER 失败"
+        cj_etc_lower_cleanup
+        trap - EXIT INT TERM HUP PIPE
+        return 1
+    fi
+    cj_el_rc=0
+    "$@" || cj_el_rc=$?
+    sync
+    cj_etc_lower_cleanup
+    trap - EXIT INT TERM HUP PIPE
+    return "$cj_el_rc"
+}
+
 # ── 原子替换（M4）─────────────────────────────────────────────────────────
 # cj_safe_replace SRC DST [STAGE_DIR] [MODE]：cp 到暂存文件 → chmod → rename 覆盖 DST。
 # STAGE_DIR 缺省 DST 同目录；DST 在 extensions.d 一类"目录下任何文件都会被当扩展加载"的地方时，

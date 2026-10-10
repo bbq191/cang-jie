@@ -75,7 +75,7 @@ new_sandbox() {
     export CJ_APPLY_GRACE=0 CJ_HEALTH_SLEEP=0 CJ_RETRY_SLEEP=0 CJ_APPLY_VERIFY=0   # 部署后等重启+自动核对另有专门用例
     # 待生效标记目录进沙箱（默认 /run/cangjie-pending-apply 是真实系统路径）
     export CJ_PENDING_DIR="$R/run/cangjie-pending"
-    unset CJ_SIM_VERITY CJ_SIM_RW_FAIL CJ_SIM_INACTIVE CJ_SIM_SCP_CORRUPT CJ_HOME CJ_XOVI CJ_BACKUP_DIR CJ_BACKUP_KEEP CJ_STAGE_DIR CJ_PENDING_FALLBACK
+    unset CJ_SIM_VERITY CJ_SIM_RW_FAIL CJ_SIM_RO_FAIL CJ_SIM_BIND_FAIL CJ_SIM_INACTIVE CJ_SIM_SCP_CORRUPT CJ_HOME CJ_XOVI CJ_BACKUP_DIR CJ_BACKUP_KEEP CJ_STAGE_DIR CJ_PENDING_FALLBACK
 }
 # xovi_live on|off：模拟 xochitl 进程里有/没有 LD_PRELOAD=xovi.so，及 maps 里有无扩展
 xovi_live() {
@@ -137,6 +137,31 @@ check "with_rootfs_rw：body 被 SIGKILL → 非 0，且仍恢复 ro" test "$rc"
 : > "$CJ_SIM_LOG"
 sh -c ". '$PKG/devlib.sh'; body_pipe() { kill -PIPE \$\$; }; cj_with_rootfs_rw body_pipe" >/dev/null 2>&1
 check "with_rootfs_rw：调用方 shell 收到 SIGPIPE → 仍恢复 ro" test "$(last_mount)" = "mount -o remount,ro /"
+
+# etc_lower_edit（PK-1，2026-10-10）：/etc 下层编辑窗口。假 mount 不真 bind，绑定点就是沙箱里的普通目录
+el_ok() { el_seen="$CJ_LOWER"; mkdir -p "$CJ_LOWER/etc" && echo v2 > "$CJ_LOWER/etc/x"; }
+el_fail() { return 1; }
+el_order() { grep -E '^(mount|umount) ' "$CJ_SIM_LOG" | sed -e 's/ -o / /' -e "s#$R/el##" | cut -d' ' -f1-3 | tr '\n' '|'; }
+export CJ_TMPDIR="$R/el"; mkdir -p "$CJ_TMPDIR"
+: > "$CJ_SIM_LOG"; el_seen=""; cj_etc_lower_edit t el_ok; rc=$?
+check "etc_lower_edit：成功 → 0；FUNC 在当前 shell 跑（设的变量带得出来），CJ_LOWER=\$CJ_TMPDIR/NAME.rootbind" test "$rc" -eq 0 -a "$el_seen" = "$R/el/t.rootbind" -a "$(cat "$R/el/t.rootbind/etc/x")" = v2
+check "etc_lower_edit：顺序 remount rw → bind → umount → remount ro" test "$(el_order)" = "mount remount,rw /|mount --bind /|umount /t.rootbind|mount remount,ro /|"
+check "etc_lower_edit：返回后 EXIT/PIPE trap 已清" test -z "$(trap -p EXIT)$(trap -p PIPE)"
+: > "$CJ_SIM_LOG"; cj_etc_lower_edit t2 el_fail; rc=$?
+check "etc_lower_edit：FUNC 失败 → 非 0，仍卸 bind、最后一次 mount 是 ro、绑定点已删" test "$rc" -ne 0 -a "$(count_log '^umount')" = 1 -a "$(last_mount)" = "mount -o remount,ro /" -a ! -e "$R/el/t2.rootbind"
+: > "$CJ_SIM_LOG"; sh -c ". '$PKG/devlib.sh'; f() { exit 7; }; cj_etc_lower_edit t3 f; echo 不该到这里" >"$R/out.txt" 2>&1; rc=$?
+check "etc_lower_edit：FUNC 里 exit → 退出码照传，EXIT trap 卸 bind 并恢复 ro" test "$rc" -eq 7 -a "$(count_log '^umount')" = 1 -a "$(last_mount)" = "mount -o remount,ro /" -a -z "$(grep 不该到这里 "$R/out.txt")"
+: > "$CJ_SIM_LOG"; sh -c ". '$PKG/devlib.sh'; f() { kill -PIPE \$\$; }; cj_etc_lower_edit t4 f" >/dev/null 2>&1; rc=$?
+check "etc_lower_edit：窗口内收到 SIGPIPE（ssh 断开）→ 退出 143，仍卸 bind、恢复 ro" test "$rc" -eq 143 -a "$(count_log '^umount')" = 1 -a "$(last_mount)" = "mount -o remount,ro /"
+: > "$CJ_SIM_LOG"; el_seen=""; CJ_SIM_BIND_FAIL=1 cj_etc_lower_edit t5 el_ok >"$R/out.txt"; rc=$?
+check "etc_lower_edit：bind 失败 → 1、不跑 FUNC、不 umount、恢复 ro、绑定点目录不留" test "$rc" -eq 1 -a -z "$el_seen" -a "$(count_log '^umount')" = 0 -a "$(last_mount)" = "mount -o remount,ro /" -a ! -e "$R/el/t5.rootbind"
+: > "$CJ_SIM_LOG"; CJ_SIM_RW_FAIL=1 cj_etc_lower_edit t6 el_ok >/dev/null; rc=$?
+check "etc_lower_edit：remount rw 失败 → 1、不 bind、不跑 FUNC、无 ro 调用" test "$rc" -eq 1 -a "$(count_log -- '--bind')" = 0 -a "$(count_log 'remount,ro')" = 0
+: > "$CJ_SIM_LOG"; CJ_SIM_VERITY=1 cj_etc_lower_edit t7 el_ok >"$R/out.txt"; rc=$?
+check "etc_lower_edit：dm-verity 激活 → 3、一次 mount 都没有" test "$rc" -eq 3 -a "$(count_log '^mount')" = 0 -a -n "$(grep dm-verity "$R/out.txt")"
+: > "$CJ_SIM_LOG"; CJ_SIM_RO_FAIL=1 cj_etc_lower_edit t8 el_ok >"$R/out.txt"; rc=$?
+check "etc_lower_edit：remount ro 一直 busy → 试 5 次后如实报\"暂留 rw\"，返回 FUNC 的 0（旧脚本的失败路径只试 1 次）" test "$rc" -eq 0 -a "$(count_log 'remount,ro')" = 5 -a -n "$(grep '暂留 rw' "$R/out.txt")"
+unset CJ_TMPDIR
 
 # install_usr_unit：源缺失 → 不 remount；verity → 3 且不 remount；成功 → wants 链接；幂等
 : > "$CJ_SIM_LOG"; cj_install_usr_unit x.service "$R/nope" multi-user.target.wants; rc=$?
@@ -668,7 +693,7 @@ check "uninstall-all + dm-verity：shelf 二进制被保留 → shelf-pkg 载荷
 check "uninstall-all 可写后再跑：shelf 卸干净，shelf-pkg 载荷随后删除" test "$rc" -eq 0 -a ! -e "$R/home/root/.local/bin/gateway" -a ! -e "$R/home/root/shelf-pkg"
 unset CJ_SKIP_BUILD
 
-section "chrony-cn / timezone-cn（路径覆盖；只测非 overlay 与 verity 路径，overlay 底层改写只能真机验证）"
+section "chrony-cn / timezone-cn（路径覆盖；overlay 分支用沙箱目录假扮 bind 视图，真 bind 与 overlay 缓存只能真机验证）"
 new_sandbox; : > "$R/mounts"; CONF="$R/chrony.conf"
 printf 'driftfile /var/lib/chrony/drift\nserver time1.google.com iburst\nserver time2.google.com iburst\nmakestep 1.0 3\n' > "$CONF"
 RE_ETC_BEFORE="$(md5sum /etc/chrony.conf 2>/dev/null | cut -c1-32)$(readlink -f /etc/localtime 2>/dev/null)"
@@ -977,6 +1002,16 @@ echo TZ > "$R/Shanghai"; chmod 555 "$R/timezone-cn.rootbind/etc"; : > "$CJ_SIM_L
 ( cd "$PKG" && CJ_ZONEINFO="$R/Shanghai" CJ_LOCALTIME="$R/localtime" CJ_MOUNTS="$R/mounts-ov" CJ_BACKUP_DIR="$R/cbk" CJ_TMPDIR="$R" run sh deploy-timezone-cn.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
 check "timezone-cn overlay：写底层失败 → 退出非 0、报错、不说\"已改\"、最后一次 mount 是 ro" test "$rc" -ne 0 -a -n "$(grep '失败（底层未动）' "$R/out.txt")" -a -z "$(grep '底层已改' "$R/out.txt")" -a "$(last_mount)" = "mount -o remount,ro /"
 chmod 755 "$R/timezone-cn.rootbind/etc"
+# overlay 成功路径（2026-10-10 起底层编辑走 cj_etc_lower_edit）：底层改了、当前视图同步、bind 卸掉后才 remount ro
+printf 'server a.google.com iburst\n' > "$R/chrony-cn.rootbind/etc/chrony.conf"; printf 'server a.google.com iburst\n' > "$R/chrony.conf"; : > "$CJ_SIM_LOG"
+( cd "$PKG" && CJ_CHRONY_CONF="$R/chrony.conf" CJ_MOUNTS="$R/mounts-ov" CJ_BACKUP_DIR="$R/cbk" CJ_TMPDIR="$R" run sh deploy-chrony-cn.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+check "chrony-cn overlay：底层改成国内 NTP、备份了旧的、当前视图同步，umount 在最后一次 remount ro 之前" test "$rc" -eq 0 -a "$(grep -c '^server ntp' "$R/chrony-cn.rootbind/etc/chrony.conf")" -ge 1 -a -n "$(find "$R/cbk" -name 'chrony.conf.bak.*')" -a "$(grep -c '^server ntp' "$R/chrony.conf")" -ge 1 -a "$(grep -E '^(mount|umount) ' "$CJ_SIM_LOG" | tail -n 2 | cut -c1-6 | tr '\n' ' ')" = "umount mount  " -a "$(last_mount)" = "mount -o remount,ro /" -a ! -e "$R/chrony-cn.lower"
+rm -f "$R/timezone-cn.rootbind/etc/localtime"; echo old > "$R/localtime"; : > "$CJ_SIM_LOG"
+( cd "$PKG" && CJ_ZONEINFO="$R/Shanghai" CJ_LOCALTIME="$R/localtime" CJ_MOUNTS="$R/mounts-ov" CJ_BACKUP_DIR="$R/cbk" CJ_TMPDIR="$R" run sh deploy-timezone-cn.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+check "timezone-cn overlay：底层与当前视图都指向 Asia/Shanghai、留改前记录、最后一次 mount 是 ro" test "$rc" -eq 0 -a "$(readlink "$R/timezone-cn.rootbind/etc/localtime")" = "$R/Shanghai" -a "$(readlink "$R/localtime")" = "$R/Shanghai" -a -s "$R/cbk/timezone-cn.log" -a "$(last_mount)" = "mount -o remount,ro /"
+# 手动跑忘了拼 devlib.sh：动手前就报错指路，不进 rw 窗口
+: > "$CJ_SIM_LOG"; ( cd "$PKG" && CJ_CHRONY_CONF="$R/chrony.conf" CJ_MOUNTS="$R/mounts-ov" CJ_TMPDIR="$R" PATH="$STUBS:$PATH" sh chrony-cn.sh ) >"$R/out.txt" 2>&1; rc=$?
+check "chrony-cn 不带 devlib.sh 直接跑 → 退出 1、提示拼 devlib.sh、不 mount" test "$rc" -eq 1 -a -n "$(grep 'devlib.sh' "$R/out.txt")" -a "$(count_log '^mount')" = 0
 
 # 连接次数（2026-09-25 合批）：推送一次 ssh 建目录 + 每文件一次 scp + 一次 ssh 取全部 md5
 new_sandbox; : > "$CJ_SIM_LOG"
@@ -1200,8 +1235,8 @@ check "usr 单元已装好且没变、之后才开了 dm-verity：如实报已�
 section "静态守卫"
 cd "$REPO" || exit 1
 # 1) 只有库/既有的 /etc 覆写脚本可以 remount rw
-viol="$(grep -rn 'remount,rw' packaging/*.sh shelf/*.sh enhance/*/install.sh enhance/*/deploy/*.sh 2>/dev/null | grep -v -e '^packaging/devlib.sh' -e '^packaging/chrony-cn.sh' -e '^packaging/timezone-cn.sh' -e ':[0-9]*:[[:space:]]*#' -e 'echo')"
-check "remount,rw 只出现在 devlib.sh（带 trap）与 chrony-cn/timezone-cn（自带重试收尾）里" test -z "$viol"
+viol="$(grep -rn 'remount,rw' packaging/*.sh shelf/*.sh enhance/*/install.sh enhance/*/deploy/*.sh 2>/dev/null | grep -v -e '^packaging/devlib.sh' -e ':[0-9]*:[[:space:]]*#' -e 'echo')"
+check "remount,rw 只出现在 devlib.sh（带 trap；chrony-cn/timezone-cn 2026-10-10 起改用 cj_etc_lower_edit）里" test -z "$viol"
 [ -n "$viol" ] && echo "$viol"
 # 2) 可执行的 xovi/start 只允许在 devlib.sh
 viol="$(grep -rnE '^[[:space:]]*("\$[A-Za-z_]*/start"|/home/root/xovi/start)[[:space:]]*(\|\||;|$)' packaging/*.sh shelf/*.sh enhance/*/install.sh enhance/*/deploy/*.sh 2>/dev/null | grep -v '^packaging/devlib.sh')"

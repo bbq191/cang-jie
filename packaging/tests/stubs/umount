@@ -1,0 +1,4 @@
+#!/bin/sh
+# 假 umount：只记日志（真 umount 非 root 必失败，也不该在开发机上卸任何东西）
+echo "umount $*" >> "${CJ_SIM_LOG:-/dev/null}"
+exit 0
