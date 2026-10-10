@@ -37,7 +37,7 @@ if [ -n "${CJ_SIM_KILL_ON:-}" ] && [ ! -e "$CJ_SIM_ROOT/.sim-killed" ] && printf
     if [ -n "$hit" ]; then
         # CJ_SIM_KILL_GROUP=1：发给它所在的整个进程组（终端 Ctrl-C / 挂断就是这样发的；用例用 setsid 把它放进独立进程组）
         if [ -n "${CJ_SIM_KILL_GROUP:-}" ]; then
-            g="$(sed 's/.*) [A-Za-z] [0-9]* \([0-9]*\) .*/\1/' "/proc/$hit/stat")"; kill "-${CJ_SIM_KILL_SIG:-TERM}" -- "-$g"
+            g="$(sed 's/.*) [A-Za-z] [0-9]* \([0-9]*\) .*/\1/' "/proc/$hit/stat")"; env kill -s "${CJ_SIM_KILL_SIG:-TERM}" -- "-$g"   # 用外部 kill：dash 内建 kill 既不认 `--` 也不认负数进程组号，CI 的 /bin/sh 是 dash
         else
             kill "-${CJ_SIM_KILL_SIG:-TERM}" "$hit"
         fi

@@ -15,12 +15,6 @@
 # 一键：sh packaging/tests/run_sim_tests.sh     （也由 pytest 的 test_install_scripts_sim.py 调用，CI 会跑）
 # ═══════════════════════════════════════════════════════════════════════════
 set -u
-# 信号处置恢复默认（2026-10-10）：CI 的运行器启动步骤时 SIGINT/SIGHUP 已被设成"忽略"，而 POSIX 规定非交互 shell
-# 不能给"启动时就被忽略"的信号挂 trap——于是"被 Ctrl-C / 挂断后清临时文件"的用例在 CI 上必挂（本机终端里不会）。
-# 用 coreutils 的 env --default-signal 把整套测试重新拉起一次；没有这个选项的 env 就照原样跑。
-if [ -z "${CJ_SIM_SIGRESET:-}" ] && env --default-signal true 2>/dev/null; then
-    CJ_SIM_SIGRESET=1 exec env --default-signal bash "$0" "$@"
-fi
 # 保险：如果真是 root 在跑，拒绝（stub 的 id 会骗过脚本，而脚本里有 remount/rm 等真命令走假 PATH，但保守起见不冒险）
 if [ "$(/usr/bin/id -u)" = "0" ] && [ -z "${CJ_SIM_ALLOW_ROOT:-}" ]; then
     echo "拒绝以 root 跑模拟测试（设 CJ_SIM_ALLOW_ROOT=1 强行跑）"; exit 2
