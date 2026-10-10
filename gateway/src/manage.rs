@@ -231,7 +231,7 @@ mod tests {
         let paths = Paths::sandbox(t.path());
         std::fs::create_dir_all(paths.bin_dir()).unwrap();
         std::fs::write(paths.bin_dir().join("book-serve"), b"x").unwrap(); // 已装、未跑（注册表空）
-        let v: serde_json::Value = serde_json::from_slice(&status(&paths).body).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(status(&paths).body.as_bytes()).unwrap();
         let mods = v["modules"].as_array().unwrap();
         let find = |svc: &str| mods.iter().find(|m| m["service"] == svc).unwrap();
         assert_eq!(find("book-serve")["installed"], true);
@@ -247,7 +247,7 @@ mod tests {
         let reg = |name: &str| registry::ServiceInfo { name: name.into(), port: 1, label: String::new(), version: String::new(), pid: std::process::id(), ui: None };
         let _a = registry::register(&paths, &reg("note-serve")).unwrap();
         let _b = registry::register(&paths, &reg("gateway")).unwrap();
-        let v: serde_json::Value = serde_json::from_slice(&services(&paths).body).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(services(&paths).body.as_bytes()).unwrap();
         let list = v["services"].as_array().unwrap();
         let find = |n: &str| list.iter().find(|s| s["name"] == n).unwrap();
         assert_eq!(find("note-serve")["seg"], "notes");
@@ -258,11 +258,11 @@ mod tests {
     fn foundation_probes_only_xovi_and_qrr() {
         let t = tempfile::tempdir().unwrap();
         let paths = Paths::sandbox(t.path());
-        let v: serde_json::Value = serde_json::from_slice(&foundation(&paths).body).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(foundation(&paths).body.as_bytes()).unwrap();
         assert_eq!((v["xovi"].as_bool(), v["qrr"].as_bool()), (Some(false), Some(false)), "没装时探测为 false");
         std::fs::create_dir_all(paths.home().join("xovi/exthome/qt-resource-rebuilder")).unwrap();
         std::fs::write(paths.home().join("xovi/start"), b"x").unwrap();
-        let v: serde_json::Value = serde_json::from_slice(&foundation(&paths).body).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(foundation(&paths).body.as_bytes()).unwrap();
         assert_eq!((v["xovi"].as_bool(), v["qrr"].as_bool()), (Some(true), Some(true)));
         // 2026-09-29 已卸载的三项不再探测（前端也不再显示）
         for k in ["koreader", "weread", "appload"] {
@@ -277,7 +277,7 @@ mod tests {
         let paths = Paths::sandbox(t.path());
         std::fs::create_dir_all(paths.bin_dir()).unwrap();
         std::fs::write(paths.bin_dir().join("book-serve"), b"x").unwrap();
-        let body = |r: Reply| serde_json::from_slice::<serde_json::Value>(&r.body).unwrap();
+        let body = |r: Reply| serde_json::from_slice::<serde_json::Value>(r.body.as_bytes()).unwrap();
         let v = body(status(&paths));
         assert_eq!(v["gateway"], serde_json::json!({"running": true}));
         assert_eq!(v["modules"].as_array().unwrap().len(), MODULES.len());

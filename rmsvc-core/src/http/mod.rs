@@ -7,6 +7,8 @@ mod test_request;
 pub use encoding::{percent_decode, percent_decode_path, percent_encode};
 pub use router::{encode_query, parse_query, Router};
 pub use test_request::TestRequest;
+#[cfg(test)]
+pub(crate) use server::serve_listener;
 pub use server::{serve, serve_with, Guard, GuardFn, GuardRequest, ServeOpts, DEFAULT_MAX_CONCURRENT};
 
 use serde::Serialize;
@@ -203,18 +205,53 @@ impl Request<'_> {
     }
 }
 
+/// 回执体的三种形态。2026-10-10 前 `Reply` 是 `body: Vec<u8>` 与 `stream: Option<reader>` 两个并列字段，"定长下载"靠往头里
+/// 塞一个 `Content-Length` 字符串表达、服务器再把它摘出来判断（审计 CORE-4）——"有 stream 又有 body""SSE 带了长度"
+/// 这类组合都写得出来，2026-09-24 母版库下载就因为没带长度被当成 SSE 发、客户端永远收不完。现在三种发法是三个变体，
+/// 服务器按变体分派，不再看头。
+pub enum Body {
+    /// 整块内存（JSON、HTML、小文件），按长度一次发完。
+    Bytes(Vec<u8>),
+    /// 已知长度的流（文件下载、网关转发大应答）：带 `Content-Length` 边读边发，发完这条响应即结束。
+    Sized { reader: Box<dyn Read + Send>, len: u64 },
+    /// 事件流（SSE）：不知长度，接管 socket 一帧一 flush，读到 reader 结束或客户端断开为止。
+    EventStream(Box<dyn Read + Send>),
+}
+
+impl std::fmt::Debug for Body {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Body::Bytes(b) => write!(f, "Bytes({} B)", b.len()),
+            Body::Sized { len, .. } => write!(f, "Sized({len} B)"),
+            Body::EventStream(_) => f.write_str("EventStream"),
+        }
+    }
+}
+
+impl Body {
+    /// 整块内存的内容；流式的两种给空（测试与只看 JSON 回执的调用方用）。
+    pub fn as_bytes(&self) -> &[u8] {
+        match self {
+            Body::Bytes(b) => b,
+            Body::Sized { .. } | Body::EventStream(_) => &[],
+        }
+    }
+}
+
 pub struct Reply {
     pub status: u16,
     pub content_type: String,
-    pub body: Vec<u8>,
     pub headers: Vec<(String, String)>,
-    /// 流式响应体（SSE 等）：Some 时忽略 `body`，chunked 边读边发，直到 reader 返回 0 或客户端断开。
-    pub stream: Option<Box<dyn Read + Send>>,
+    pub body: Body,
 }
 
 impl Reply {
+    /// 任意状态码 + 整块内存体（下面几个具名构造器都经过这里）。
+    pub fn with_bytes(status: u16, content_type: &str, body: Vec<u8>) -> Reply {
+        Reply { status, content_type: content_type.into(), headers: vec![], body: Body::Bytes(body) }
+    }
     pub fn json<T: Serialize>(status: u16, v: &T) -> Reply {
-        Reply { status, content_type: "application/json; charset=utf-8".into(), body: serde_json::to_vec(v).unwrap_or_default(), headers: vec![], stream: None }
+        Reply::with_bytes(status, "application/json; charset=utf-8", serde_json::to_vec(v).unwrap_or_default())
     }
     pub fn ok<T: Serialize>(v: &T) -> Reply {
         Reply::json(200, v)
@@ -223,25 +260,25 @@ impl Reply {
         Reply::json(status, &serde_json::json!({"ok": false, "message": message.into()}))
     }
     pub fn html(body: &str) -> Reply {
-        Reply { status: 200, content_type: "text/html; charset=utf-8".into(), body: body.as_bytes().to_vec(), headers: vec![], stream: None }
+        Reply::with_bytes(200, "text/html; charset=utf-8", body.as_bytes().to_vec())
     }
     pub fn bytes(content_type: &str, body: Vec<u8>) -> Reply {
-        Reply { status: 200, content_type: content_type.into(), body, headers: vec![], stream: None }
+        Reply::with_bytes(200, content_type, body)
     }
-    /// 流式响应（SSE）：不知长度，读到 reader 结束或客户端断开为止。
-    pub fn stream(content_type: &str, reader: Box<dyn Read + Send>) -> Reply {
-        Reply { status: 200, content_type: content_type.into(), body: Vec::new(), headers: vec![], stream: Some(reader) }
+    /// 事件流（SSE）：不知长度，读到 reader 结束或客户端断开为止。**只给 SSE 用**——普通下载用 [`Reply::sized_stream`]。
+    pub fn event_stream(content_type: &str, reader: Box<dyn Read + Send>) -> Reply {
+        Reply { status: 200, content_type: content_type.into(), headers: vec![], body: Body::EventStream(reader) }
     }
     /// 已知长度的流（文件下载）：带 `Content-Length`，服务器按定长响应边读边发，发完即结束（不走 SSE 那条路）。
     pub fn sized_stream(content_type: &str, reader: Box<dyn Read + Send>, len: u64) -> Reply {
-        Reply::stream(content_type, reader).with_header("Content-Length", &len.to_string())
+        Reply { status: 200, content_type: content_type.into(), headers: vec![], body: Body::Sized { reader, len } }
     }
     pub fn not_found() -> Reply {
         Reply::error(404, "not found")
     }
     /// 303 跳转（表单提交后用 303 避免重复提交）。
     pub fn redirect(location: &str) -> Reply {
-        Reply { status: 303, content_type: "text/plain; charset=utf-8".into(), body: Vec::new(), headers: vec![("Location".into(), location.into())], stream: None }
+        Reply::with_bytes(303, "text/plain; charset=utf-8", Vec::new()).with_header("Location", location)
     }
     pub fn with_header(mut self, k: &str, v: &str) -> Reply {
         self.headers.push((k.into(), v.into()));

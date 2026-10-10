@@ -125,7 +125,7 @@ mod tests {
         let _reg = rmsvc_core::registry::register(&p, &info).unwrap();
         let reply = ask();
         assert_eq!(reply.status, 404);
-        assert!(String::from_utf8_lossy(&reply.body).contains("没有这本书的条目"));
+        assert!(String::from_utf8_lossy(reply.body.as_bytes()).contains("没有这本书的条目"));
     }
 
     /// 配置字段不合法 → 400（存盘失败的 500 由 `vendorcfg::ConfigCell` 的测试覆盖）。

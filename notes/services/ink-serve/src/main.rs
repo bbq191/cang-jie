@@ -231,7 +231,7 @@ mod tests {
     }
     fn call(r: &Router, method: Method, path: &str, body: &str) -> (u16, serde_json::Value) {
         let rep = TestRequest::new(method, path).content_type("application/json").body(body).dispatch(r);
-        (rep.status, serde_json::from_slice(&rep.body).unwrap_or_default())
+        (rep.status, serde_json::from_slice(rep.body.as_bytes()).unwrap_or_default())
     }
     fn entry_of(st: &State) -> Entry {
         st.db.load("u").unwrap().entries[0].clone()

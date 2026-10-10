@@ -144,7 +144,7 @@ mod tests {
         std::fs::write(done.join("a.epub"), b"x").unwrap();
         assert!(post(&paths, br#"{"area":"books-done","names":[]}"#).is_err());
         assert!(post(&paths, br#"{"area":"books-done"}"#).is_err());
-        let v: serde_json::Value = serde_json::from_slice(&post(&paths, br#"{"area":"books-done","names":["a.epub","../x"]}"#).unwrap().body).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(post(&paths, br#"{"area":"books-done","names":["a.epub","../x"]}"#).unwrap().body.as_bytes()).unwrap();
         assert_eq!(v["deleted"], serde_json::json!(["a.epub"]));
         // 失败项与批量队列同形 `{name,message}`；部分失败标 `partial:true`，不在 200 应答里用错误信封的 `ok:false`（FE-4）
         assert_eq!(v["failed"], serde_json::json!([{"name": "../x", "message": "文件名不合法：../x"}]));
@@ -152,7 +152,7 @@ mod tests {
         assert!(v.get("ok").is_none(), "200 应答不带 ok，免得跟错误信封 {{ok:false,message}} 撞名");
         assert!(!done.join("a.epub").exists());
         std::fs::write(done.join("b.epub"), b"x").unwrap();
-        let v: serde_json::Value = serde_json::from_slice(&post(&paths, br#"{"area":"books-done","names":["b.epub"]}"#).unwrap().body).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(post(&paths, br#"{"area":"books-done","names":["b.epub"]}"#).unwrap().body.as_bytes()).unwrap();
         assert_eq!(v, serde_json::json!({"deleted": ["b.epub"], "failed": [], "partial": false}));
     }
 
@@ -171,7 +171,7 @@ mod tests {
         std::fs::write(x.join(format!("{u}.metadata")), r#"{"type":"DocumentType","visibleName":"书","parent":"","createdTime":"5"}"#).unwrap();
         std::fs::write(x.join(format!("{u}.pdf")), b"pdf").unwrap();
         let rep = TestRequest::new(Method::Get, "/api/device/cleanup").with(|r| cleanup_list(&paths, r)).unwrap();
-        let v: serde_json::Value = serde_json::from_slice(&rep.body).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(rep.body.as_bytes()).unwrap();
         assert_eq!(
             v,
             serde_json::json!({

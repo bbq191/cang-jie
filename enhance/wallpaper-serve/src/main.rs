@@ -218,7 +218,7 @@ mod tests {
         std::fs::remove_file(st.store.current_path()).unwrap();
         std::fs::create_dir(st.store.current_path()).unwrap();
         let reply = TestRequest::new(Method::Put, "/current").json(&serde_json::json!({"name": "b.png"})).dispatch(&r);
-        assert_eq!(reply.status, 500, "{}", String::from_utf8_lossy(&reply.body));
+        assert_eq!(reply.status, 500, "{}", String::from_utf8_lossy(reply.body.as_bytes()));
         assert_eq!(st.store.state().current.as_deref(), Some("a.png"));
     }
 
@@ -244,6 +244,6 @@ mod tests {
         let (_t, _st, r) = setup();
         let reply = TestRequest::new(Method::Get, "/events").query("ka", "30").dispatch(&r);
         assert_eq!(reply.status, 200);
-        assert!(reply.content_type.starts_with("text/event-stream") && reply.stream.is_some());
+        assert!(reply.content_type.starts_with("text/event-stream") && matches!(reply.body, rmsvc_core::http::Body::EventStream(_)));
     }
 }

@@ -13,7 +13,7 @@ use std::io::Read;
 const STREAM_MIN_BYTES: u64 = 256 * 1024;
 
 /// 这条后端应答该不该流式转发；该 → 返回定长。**只流式转发有 `Content-Length` 的 200**：定长流由 tiny_http
-/// 按长度发完即结束；没有长度的流只能走 `Reply::stream`（SSE 用的"升级成裸 socket、读到连接关闭"），拿来做
+/// 按长度发完即结束；没有长度的流只能走 `Reply::event_stream`（SSE 用的"升级成裸 socket、读到连接关闭"），拿来做
 /// 普通下载会让客户端等不到结束（2026-09-24 真机下载卡住就是这一类），所以宁可读完再回。
 fn stream_len(status: u16, download: bool, len: Option<u64>) -> Option<u64> {
     let n = len?;
@@ -79,7 +79,7 @@ pub fn forward(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
     } else {
         let mut body = Vec::new();
         resp.into_reader().read_to_end(&mut body).map_err(|e| ApiError::internal(e.to_string()))?;
-        Reply { status, content_type: ctype, body, headers: vec![], stream: None }
+        Reply::with_bytes(status, &ctype, body)
     };
     if let Some(v) = disposition {
         reply = reply.with_header("Content-Disposition", &v);

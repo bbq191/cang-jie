@@ -186,7 +186,7 @@ mod tests {
     #[test]
     fn force_reply_status_by_outcome() {
         let Ok(ok) = force_reply(ledger::RunReport { done: 1, prompt_tokens: 3, completion_tokens: 4, ..Default::default() }) else { panic!("应成功") };
-        assert_eq!((ok.status, serde_json::from_slice::<serde_json::Value>(&ok.body).unwrap()["promptTokens"].as_u64()), (200, Some(3)));
+        assert_eq!((ok.status, serde_json::from_slice::<serde_json::Value>(ok.body.as_bytes()).unwrap()["promptTokens"].as_u64()), (200, Some(3)));
         let err = |r| force_reply(r).err().unwrap();
         let e = err(ledger::RunReport { failed: 1, note: "模型超时".into(), ..Default::default() });
         assert_eq!((e.status, e.message.as_str()), (502, "模型超时"), "调了模型却失败是下游故障");

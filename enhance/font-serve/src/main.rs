@@ -200,7 +200,7 @@ mod tests {
         std::fs::create_dir(&json).unwrap();
         std::fs::write(json.join("x"), b"x").unwrap();
         let reply = select(&r, "");
-        assert_eq!(reply.status, 500, "{}", String::from_utf8_lossy(&reply.body));
+        assert_eq!(reply.status, 500, "{}", String::from_utf8_lossy(reply.body.as_bytes()));
         assert_eq!(st.ui.get().sans, "Ui");
     }
 
@@ -210,6 +210,6 @@ mod tests {
         let (_t, _st, r) = setup();
         let reply = TestRequest::new(Method::Get, "/events").dispatch(&r);
         assert_eq!(reply.status, 200);
-        assert!(reply.content_type.starts_with("text/event-stream") && reply.stream.is_some());
+        assert!(reply.content_type.starts_with("text/event-stream") && matches!(reply.body, rmsvc_core::http::Body::EventStream(_)));
     }
 }

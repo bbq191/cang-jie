@@ -283,7 +283,7 @@ mod tests {
         for (m, path) in [(Method::Post, "/books/b/chapters/0/generate"), (Method::Get, "/books/b/sync"), (Method::Post, "/books/b/chapters/0/export"), (Method::Get, "/books/b/chapters/0/export.md")] {
             let reply = TestRequest::new(m, path).dispatch(&r);
             assert_eq!(reply.status, 404, "{path}");
-            assert!(String::from_utf8_lossy(&reply.body).contains("没有这本书的条目"), "{path}");
+            assert!(String::from_utf8_lossy(reply.body.as_bytes()).contains("没有这本书的条目"), "{path}");
         }
         let reply = TestRequest::new(Method::Post, "/books/b/import-md").json(&serde_json::json!({"title": "t", "markdown": "m"})).dispatch(&r);
         assert_eq!(reply.status, 404);
@@ -304,6 +304,6 @@ mod tests {
         assert_eq!(TestRequest::new(Method::Post, "/books/b/chapters/9/export").dispatch(&r).status, 400, "没有这一章");
         let reply = TestRequest::new(Method::Post, "/books/b/import-md").json(&serde_json::json!({"title": "t", "markdown": "m"})).dispatch(&r);
         assert_eq!(reply.status, 500);
-        assert!(String::from_utf8_lossy(&reply.body).contains("连不上 xochitl"));
+        assert!(String::from_utf8_lossy(reply.body.as_bytes()).contains("连不上 xochitl"));
     }
 }

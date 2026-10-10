@@ -1,6 +1,6 @@
 //! 服务器：tiny_http 适配（每请求一线程、并发名额、守卫、SSE 裸 socket 流式回执、TLS）。
 use super::router::{parse_query, Router};
-use super::{header_of, Method, Reply, Request, REMOTE_IP_HEADER};
+use super::{header_of, Body, Method, Reply, Request, REMOTE_IP_HEADER};
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::Arc;
@@ -78,34 +78,44 @@ impl GuardRequest {
 
 const KEPT_HEADERS: &[&str] = &["Cookie", "Authorization", "Accept", "Host", "X-Forwarded-Proto", "User-Agent"];
 
-fn reply_to_tiny(reply: Reply) -> tiny_http::Response<Box<dyn Read + Send>> {
-    let mut headers = Vec::new();
-    if let Ok(h) = tiny_http::Header::from_bytes(&b"Content-Type"[..], reply.content_type.as_bytes()) {
-        headers.push(h);
-    }
-    for (k, v) in reply.headers {
-        if let Ok(h) = tiny_http::Header::from_bytes(k.as_bytes(), v.as_bytes()) {
-            headers.push(h);
-        }
-    }
-    let len = reply.body.len();
-    tiny_http::Response::new(tiny_http::StatusCode(reply.status), headers, Box::new(std::io::Cursor::new(reply.body)) as Box<dyn Read + Send>, Some(len), None)
+/// 回执的 `Content-Type` + 自定义头 → tiny_http 头（不合法的头名/值跳过）。三种回执体共用这一处（此前逐行重复三遍）。
+fn tiny_headers(content_type: &str, extra: Vec<(String, String)>) -> Vec<tiny_http::Header> {
+    std::iter::once(("Content-Type".to_string(), content_type.to_string()))
+        .chain(extra)
+        .filter_map(|(k, v)| tiny_http::Header::from_bytes(k.as_bytes(), v.as_bytes()).ok())
+        .collect()
 }
 
-/// 流式回执（SSE）：**不能**走 `respond`——tiny_http 的 chunked 编码器（chunked_transfer::Encoder）攒满 8 KB 才发、
+/// 发一个回执，按 [`Body`] 的形态分派：
+/// - `Bytes`：按长度一次发完；
+/// - `Sized`：交给 tiny_http 按定长边读边发，发完这条响应就结束。不能走 SSE 那条路：那是"升级成裸 socket、读到连接
+///   关闭为止"，reader 读完后连接并不会被关掉，客户端一直等（2026-09-24 真机：母版库原件下载头发出后永远收不完）；
+/// - `EventStream`：见 [`respond_event_stream`]。
+fn respond(req: tiny_http::Request, reply: Reply) {
+    let Reply { status, content_type, headers, body } = reply;
+    let code = tiny_http::StatusCode(status);
+    let headers = tiny_headers(&content_type, headers);
+    match body {
+        Body::Bytes(b) => {
+            let len = b.len();
+            let _ = req.respond(tiny_http::Response::new(code, headers, std::io::Cursor::new(b), Some(len), None));
+        }
+        Body::Sized { reader, len } => {
+            // 阈值调到最大：tiny_http 缺省超过 32 KB 就改 chunked、丢掉 Content-Length，浏览器便显示不了下载进度。
+            // 长度超过 usize（32 位平台上的 4GB+）不会出现在这台设备上；真出现就退回 chunked，不截断。
+            let len = usize::try_from(len).ok();
+            let _ = req.respond(tiny_http::Response::new(code, headers, reader, len, None).with_chunked_threshold(usize::MAX));
+        }
+        Body::EventStream(reader) => respond_event_stream(req, code, headers, reader),
+    }
+}
+
+/// 事件流回执（SSE）：**不能**走 `respond`——tiny_http 的 chunked 编码器（chunked_transfer::Encoder）攒满 8 KB 才发、
 /// 外面还套一层 1 KB BufWriter，小帧永远滞留（真机 curl 30 s 零字节）。改用 `Request::upgrade` 拿到裸 socket：
 /// 先发一个只有头的 200（Content-Type: text/event-stream，无长度、`Connection: upgrade`——浏览器/curl 对 200 忽略它，
 /// 按"读到连接关闭"处理），然后从 reader 读一帧写一帧、每帧 flush；客户端断开 → 写失败 → 退出，socket 随之关闭。
-fn respond_stream(req: tiny_http::Request, status: u16, content_type: &str, extra: Vec<(String, String)>, mut reader: Box<dyn Read + Send>) {
-    let mut resp = tiny_http::Response::empty(tiny_http::StatusCode(status));
-    if let Ok(h) = tiny_http::Header::from_bytes(&b"Content-Type"[..], content_type.as_bytes()) {
-        resp = resp.with_header(h);
-    }
-    for (k, v) in extra {
-        if let Ok(h) = tiny_http::Header::from_bytes(k.as_bytes(), v.as_bytes()) {
-            resp = resp.with_header(h);
-        }
-    }
+fn respond_event_stream(req: tiny_http::Request, code: tiny_http::StatusCode, headers: Vec<tiny_http::Header>, mut reader: Box<dyn Read + Send>) {
+    let resp = headers.into_iter().fold(tiny_http::Response::empty(code), |r, h| r.with_header(h));
     let mut sock = req.upgrade("sse", resp);
     let mut buf = [0u8; 4096];
     loop {
@@ -119,12 +129,6 @@ fn respond_stream(req: tiny_http::Request, status: u16, content_type: &str, extr
     }
 }
 
-/// 从回执头里取出（并移除）`Content-Length`：流式回执带了它 = 已知长度的文件下载。
-fn take_content_length(headers: &mut Vec<(String, String)>) -> Option<usize> {
-    let i = headers.iter().position(|(k, _)| k.eq_ignore_ascii_case("Content-Length"))?;
-    headers.remove(i).1.trim().parse().ok()
-}
-
 /// 起阻塞服务器：每请求一线程（上传大文件不阻塞其它请求）。永不返回（bind 失败返回 Err）。
 pub fn serve(bind: &str, router: Router) -> Result<(), String> {
     serve_with(bind, router, ServeOpts::default())
@@ -132,6 +136,13 @@ pub fn serve(bind: &str, router: Router) -> Result<(), String> {
 
 pub fn serve_with(bind: &str, router: Router, opts: ServeOpts) -> Result<(), String> {
     let listener = std::net::TcpListener::bind(bind).map_err(|e| format!("绑定 {bind} 失败: {e}"))?;
+    serve_listener(listener, router, opts)
+}
+
+/// 同 [`serve_with`]，在已经绑好的监听上起服务。测试用它绑 0 端口后直接交过来：此前测试先绑 0 端口取号、放掉、
+/// 再按号重绑，放掉到重绑之间并行的别的测试可能抢走这个端口，偶发失败。
+pub(crate) fn serve_listener(listener: std::net::TcpListener, router: Router, opts: ServeOpts) -> Result<(), String> {
+    let bind = listener.local_addr().map(|a| a.to_string()).unwrap_or_default();
     let ssl = opts.tls.map(|pem| tiny_http::SslConfig { certificate: pem.cert, private_key: pem.key });
     let server = tiny_http::Server::from_listener_with_read_timeout(listener, ssl, Some(READ_IDLE_TIMEOUT)).map_err(|e| format!("在 {bind} 起服务失败: {e}"))?;
     let router = Arc::new(router);
@@ -139,7 +150,7 @@ pub fn serve_with(bind: &str, router: Router, opts: ServeOpts) -> Result<(), Str
     let inflight = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     for mut req in server.incoming_requests() {
         let Some(permit) = Permit::try_acquire(&inflight, opts.max_concurrent) else {
-            let _ = req.respond(reply_to_tiny(Reply::error(503, "服务繁忙（并发请求过多），请稍后重试").with_header("Retry-After", "2")));
+            respond(req, Reply::error(503, "服务繁忙（并发请求过多），请稍后重试").with_header("Retry-After", "2"));
             continue;
         };
         let router = router.clone();
@@ -172,37 +183,19 @@ pub fn serve_with(bind: &str, router: Router, opts: ServeOpts) -> Result<(), Str
                 // 守卫也可能 panic（读配置/会话表）：同处理函数一样兜成 JSON 500，而不是让线程带着 panic 消亡、回空 500。
                 let checked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (g.check)(&GuardRequest { method, path: path.clone(), headers: headers.clone(), remote })));
                 if let Some(reply) = checked.unwrap_or_else(|_| Some(Reply::error(500, "服务内部错误（已记录到日志）"))) {
-                    let _ = req.respond(reply_to_tiny(reply));
+                    respond(req, reply);
                     return;
                 }
             }
             let query = parse_query(query);
-            let mut reply = {
+            let reply = {
                 let mut body = req.as_reader();
                 let mut r = Request { method, path, query, params: HashMap::new(), content_type, content_length, headers, body: &mut body };
                 // 处理函数 panic（release 是 panic=unwind）：线程本来会带着 panic 消亡、tiny_http 回一个空 500，网页拿不到 JSON；
                 // 这里兜住回标准的 JSON 500（panic 信息已由默认 hook 打到 stderr/journal），并发名额由 `_permit` 的 Drop 照常归还。
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| router.dispatch(&mut r))).unwrap_or_else(|_| Reply::error(500, "服务内部错误（已记录到日志）"))
             };
-            if let Some(reader) = reply.stream.take() {
-                // 带 Content-Length 的流（文件下载）：交给 tiny_http 按定长响应边读边发，发完这条响应就结束。
-                // 不能走 respond_stream：那是给 SSE 的"升级成裸 socket、读到连接关闭为止"，reader 读完后连接并不会
-                // 被关掉，客户端一直等（2026-09-24 真机：母版库原件下载头发出后永远收不完）。
-                if let Some(len) = take_content_length(&mut reply.headers) {
-                    let mut headers = Vec::new();
-                    for (k, v) in std::iter::once(("Content-Type".to_string(), reply.content_type.clone())).chain(reply.headers) {
-                        if let Ok(h) = tiny_http::Header::from_bytes(k.as_bytes(), v.as_bytes()) {
-                            headers.push(h);
-                        }
-                    }
-                    // 阈值调到最大：tiny_http 缺省超过 32 KB 就改 chunked、丢掉 Content-Length，浏览器便显示不了下载进度。
-                    let _ = req.respond(tiny_http::Response::new(tiny_http::StatusCode(reply.status), headers, reader, Some(len), None).with_chunked_threshold(usize::MAX));
-                    return;
-                }
-                respond_stream(req, reply.status, &reply.content_type, reply.headers, reader);
-                return;
-            }
-            let _ = req.respond(reply_to_tiny(reply));
+            respond(req, reply);
         });
     }
     // 走到这里＝tiny_http 的 accept 线程已退出（遇到非暂时性 accept 错误），服务再也收不到连接。此前返回 `Ok(())`，
@@ -230,16 +223,12 @@ mod tests {
         assert!(Permit::try_acquire(&c, None).is_some(), "None=不限");
     }
 
-    fn free_port_and_wait(start: impl FnOnce(String) + Send + 'static) -> u16 {
-        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-        let addr = format!("127.0.0.1:{port}");
-        std::thread::spawn(move || start(addr));
-        for _ in 0..100 {
-            if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
+    /// 绑 0 端口、把监听直接交给 `start`（不放掉再重绑，并行测试抢不走），返回端口。监听已经在 listen，
+    /// 服务线程还没开始 accept 时连进来的连接在内核队列里等着，不用轮询等它就绪。
+    fn free_port_and_wait(start: impl FnOnce(std::net::TcpListener) + Send + 'static) -> u16 {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        std::thread::spawn(move || start(l));
         port
     }
 
@@ -255,8 +244,8 @@ mod tests {
     #[test]
     fn remote_ip_reaches_guard_and_handler_and_cannot_be_spoofed() {
         let (router, guard) = ip_router_and_guard();
-        let port = free_port_and_wait(move |a| {
-            let _ = serve_with(&a, router, ServeOpts { guard: Some(guard), ..ServeOpts::default() });
+        let port = free_port_and_wait(move |l| {
+            let _ = serve_listener(l, router, ServeOpts { guard: Some(guard), ..ServeOpts::default() });
         });
         let body = ureq::get(&format!("http://127.0.0.1:{port}/ip")).set(REMOTE_IP_HEADER, "1.2.3.4").call().unwrap().into_string().unwrap();
         let v: serde_json::Value = serde_json::from_str(&body).unwrap();
@@ -270,8 +259,8 @@ mod tests {
         let pem = crate::tls::ensure_ca_signed(dir.path(), &[]).unwrap();
         let ca = crate::tls::ca_pem(dir.path()).unwrap();
         let (router, guard) = ip_router_and_guard();
-        let port = free_port_and_wait(move |a| {
-            let _ = serve_with(&a, router, ServeOpts { tls: Some(pem), guard: Some(guard), ..ServeOpts::default() });
+        let port = free_port_and_wait(move |l| {
+            let _ = serve_listener(l, router, ServeOpts { tls: Some(pem), guard: Some(guard), ..ServeOpts::default() });
         });
         let mut roots = rustls::RootCertStore::empty();
         let ca_der = x509_parser::pem::parse_x509_pem(&ca).unwrap().1.contents;
@@ -316,8 +305,8 @@ mod tests {
         }
         let dir = tempfile::tempdir().unwrap();
         let pem = crate::tls::ensure_ca_signed(dir.path(), &[]).unwrap();
-        let port = free_port_and_wait(move |a| {
-            let _ = serve_with(&a, Router::new(), ServeOpts { tls: Some(pem), ..ServeOpts::default() });
+        let port = free_port_and_wait(move |l| {
+            let _ = serve_listener(l, Router::new(), ServeOpts { tls: Some(pem), ..ServeOpts::default() });
         });
         let mut s = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
         // TLS 明文告警记录：类型 21（alert）、版本 3.3、长度 2、级别 1（warning）、描述 0（close_notify）
@@ -362,21 +351,13 @@ mod tests {
     /// 起真服务：处理函数 panic 得到 JSON 500，且并发名额归还、后续请求照常服务。
     #[test]
     fn handler_panic_becomes_json_500_and_server_keeps_serving() {
-        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
         let router = Router::new()
             .get("/boom", |_| -> ApiResult { panic!("测试用 panic") })
             .get("/ok", |_| Ok(Reply::ok(&serde_json::json!({"ok": true}))));
         let opts = ServeOpts { max_concurrent: Some(2), ..ServeOpts::default() };
-        let addr = format!("127.0.0.1:{port}");
-        std::thread::spawn(move || {
-            let _ = serve_with(&addr, router, opts);
+        let port = free_port_and_wait(move |l| {
+            let _ = serve_listener(l, router, opts);
         });
-        for _ in 0..100 {
-            if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
         for _ in 0..3 {
             // max_concurrent=2（串行客户端最多「上一请求收尾 + 当前」两条）：若 panic 后名额没归还，累计泄漏到第三轮会变 503
             match ureq::get(&format!("http://127.0.0.1:{port}/boom")).call() {
@@ -396,14 +377,57 @@ mod tests {
     fn guard_panic_becomes_json_500() {
         let router = Router::new().get("/ok", |_| Ok(Reply::ok(&serde_json::json!({"ok": true}))));
         let guard = Guard { check: Arc::new(|g: &GuardRequest| if g.path == "/boom" { panic!("测试用守卫 panic") } else { None }) };
-        let port = free_port_and_wait(move |a| {
-            let _ = serve_with(&a, router, ServeOpts { guard: Some(guard), ..ServeOpts::default() });
+        let port = free_port_and_wait(move |l| {
+            let _ = serve_listener(l, router, ServeOpts { guard: Some(guard), ..ServeOpts::default() });
         });
         match ureq::get(&format!("http://127.0.0.1:{port}/boom")).call() {
             Err(ureq::Error::Status(500, r)) => assert!(r.into_string().unwrap().contains("内部错误")),
             other => panic!("期望 JSON 500，得到 {other:?}"),
         }
         assert_eq!(ureq::get(&format!("http://127.0.0.1:{port}/ok")).call().unwrap().status(), 200);
+    }
+
+    /// 事件流（SSE）：不带长度，小帧不被缓冲、立刻到达；reader 不结束连接就一直开着（与定长下载是两条路）。
+    /// 处理函数手工加的 `Content-Length` 头也不会把它变成"定长下载"——发法只看 [`Body`] 变体（2026-10-10 前看这个头）。
+    #[test]
+    fn event_stream_delivers_small_frames_immediately_without_length() {
+        let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
+        let rx = std::sync::Mutex::new(Some(rx));
+        /// 从通道读帧的 reader：通道关闭 = 流结束。
+        struct Frames(std::sync::mpsc::Receiver<Vec<u8>>);
+        impl Read for Frames {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                let Ok(f) = self.0.recv() else { return Ok(0) };
+                buf[..f.len()].copy_from_slice(&f);
+                Ok(f.len())
+            }
+        }
+        let router = Router::new().get("/events", move |_| {
+            let rx = rx.lock().unwrap().take().unwrap();
+            Ok(Reply::event_stream("text/event-stream", Box::new(Frames(rx))).with_header("Content-Length", "3"))
+        });
+        let port = free_port_and_wait(move |l| {
+            let _ = serve_listener(l, router, ServeOpts::default());
+        });
+        let mut s = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        s.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+        s.write_all(b"GET /events HTTP/1.1\r\nHost: x\r\n\r\n").unwrap();
+        tx.send(b"data: 1\n\n".to_vec()).unwrap();
+        let mut got = Vec::new();
+        let mut buf = [0u8; 1024];
+        while !String::from_utf8_lossy(&got).contains("data: 1") {
+            let n = s.read(&mut buf).expect("小帧应在 5 秒内到达，不能滞留在缓冲里");
+            assert!(n > 0, "流还没结束，连接不该关：{}", String::from_utf8_lossy(&got));
+            got.extend_from_slice(&buf[..n]);
+        }
+        let head = String::from_utf8_lossy(&got).to_ascii_lowercase();
+        assert!(head.starts_with("http/1.1 200") && head.contains("text/event-stream"), "{head}");
+        tx.send(b"data: 2\n\n".to_vec()).unwrap();
+        let n = s.read(&mut buf).unwrap();
+        assert!(String::from_utf8_lossy(&buf[..n]).contains("data: 2"), "第二帧照样到达（没有按头里的 3 字节截断）");
+        drop(tx);
+        let mut rest = Vec::new();
+        let _ = s.read_to_end(&mut rest);
     }
 
     /// 回归：已知长度的流（文件下载）要能完整收完、响应正常结束——此前走 SSE 的"读到连接关闭"路径，
@@ -417,8 +441,8 @@ mod tests {
             let n = d.len() as u64;
             Ok(Reply::sized_stream("application/octet-stream", Box::new(std::io::Cursor::new(d)), n).with_header("Content-Disposition", "attachment; filename=\"f.bin\""))
         });
-        let port = free_port_and_wait(move |a| {
-            let _ = serve(&a, router);
+        let port = free_port_and_wait(move |l| {
+            let _ = serve_listener(l, router, ServeOpts::default());
         });
         let agent = ureq::AgentBuilder::new().timeout(std::time::Duration::from_secs(10)).build();
         let resp = agent.get(&format!("http://127.0.0.1:{port}/f")).call().unwrap();

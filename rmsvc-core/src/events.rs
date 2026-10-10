@@ -96,7 +96,7 @@ impl EventBus {
     /// 2026-10-10 前还有个不带参数的 `sse_reply()`，心跳由 `Router::dispatch` 每个请求塞进线程局部再隐式读出（http ↔ events
     /// 互相引用，审计 CORE-5）；各服务的 `/events` 路由都已改传请求，线程局部与分发钩子一并删掉。
     pub fn sse_reply_for(&self, req: &crate::http::Request<'_>) -> Reply {
-        Reply::stream("text/event-stream; charset=utf-8", Box::new(self.subscribe_with(keepalive_of(req)))).with_header("Cache-Control", "no-cache").with_header("X-Accel-Buffering", "no")
+        Reply::event_stream("text/event-stream; charset=utf-8", Box::new(self.subscribe_with(keepalive_of(req)))).with_header("Cache-Control", "no-cache").with_header("X-Accel-Buffering", "no")
     }
 }
 
@@ -362,14 +362,16 @@ mod tests {
         let bus = EventBus::new();
         let rep = TestRequest::new(Method::Get, "/events").query("ka", "120").with(|r| bus.sse_reply_for(r));
         assert_eq!(rep.content_type, "text/event-stream; charset=utf-8");
-        assert!(rep.stream.is_some() && rep.headers.iter().any(|(k, v)| k == "Cache-Control" && v == "no-cache"));
+        assert!(matches!(rep.body, crate::http::Body::EventStream(_)) && rep.headers.iter().any(|(k, v)| k == "Cache-Control" && v == "no-cache"));
         assert_eq!(bus.subscribers(), 1);
     }
 
     /// 起一个假服务（`/events` 可选）并注册进临时注册表，返回其命中计数。
     fn fake_service(p: &Paths, name: &str, with_events: bool, bus: Option<Arc<EventBus>>) -> (registry::Registration, Arc<std::sync::atomic::AtomicUsize>) {
         use crate::http::{ApiError, Router};
-        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        // 绑 0 端口后把监听直接交给服务器（不放掉再按号重绑，并行测试抢不走这个端口）
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
         let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let h2 = hits.clone();
         let mut router = Router::new();
@@ -382,17 +384,9 @@ mod tests {
                 Err(ApiError::not_found("no"))
             });
         }
-        let addr = format!("127.0.0.1:{port}");
         std::thread::spawn(move || {
-            let _ = crate::http::serve(&addr, router);
+            let _ = crate::http::serve_listener(listener, router, crate::http::ServeOpts::default());
         });
-        // 等端口起来
-        for _ in 0..100 {
-            if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
         let info = registry::ServiceInfo { name: name.into(), port, label: name.into(), version: "0".into(), pid: std::process::id(), ui: None };
         (registry::register(p, &info).unwrap(), hits)
     }

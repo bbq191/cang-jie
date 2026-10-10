@@ -281,7 +281,7 @@ mod tests {
 
     fn call(router: &Router, m: Method, path: &str, body: &str) -> (u16, serde_json::Value) {
         let rep = TestRequest::new(m, path).content_type("application/json").body(body).dispatch(router);
-        (rep.status, serde_json::from_slice(&rep.body).unwrap_or(serde_json::Value::Null))
+        (rep.status, serde_json::from_slice(rep.body.as_bytes()).unwrap_or(serde_json::Value::Null))
     }
 
     fn msg(v: &serde_json::Value) -> String {
@@ -417,7 +417,7 @@ mod tests {
         assert_eq!(file("a.epub").status, 200, "路由本身是通的");
         let missing = file("nope.epub");
         assert_eq!(missing.status, 404);
-        assert!(String::from_utf8_lossy(&missing.body).contains("没有这本书"));
+        assert!(String::from_utf8_lossy(missing.body.as_bytes()).contains("没有这本书"));
         assert_eq!(code(Method::Post, "/staging/delete", r#"{"name":"nope.epub"}"#), 404);
         assert_eq!(code(Method::Post, "/staging/delete", r#"{"name":"../x"}"#), 400);
         assert_eq!(code(Method::Post, "/mkdir/add", r#"{"name":" "}"#), 400);
@@ -492,14 +492,14 @@ mod tests {
         let rep = TestRequest::new(Method::Get, "/staging/file").query_string("name=%E4%B9%A6.PDF").content_length(None).dispatch(&router);
         assert_eq!((rep.status, rep.content_type.as_str()), (200, "application/pdf"), "扩展名大小写不敏感");
         let h = |k: &str| rep.headers.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone()).unwrap_or_default();
-        assert_eq!(h("Content-Length"), "6");
+        assert!(matches!(rep.body, rmsvc_core::http::Body::Sized { len: 6, .. }), "定长流（不是 SSE 通道）: {:?}", rep.body);
         assert!(h("Content-Disposition").contains("filename*=UTF-8''%E4%B9%A6.PDF"));
     }
 
     /// `POST /import` 带原始字节体（查询串取参）。
     fn post_raw(router: &Router, query: &str, body: &[u8]) -> (u16, serde_json::Value) {
         let rep = TestRequest::new(Method::Post, "/import").query_string(query).content_type("application/epub+zip").body(body).dispatch(router);
-        (rep.status, serde_json::from_slice(&rep.body).unwrap_or(serde_json::Value::Null))
+        (rep.status, serde_json::from_slice(rep.body.as_bytes()).unwrap_or(serde_json::Value::Null))
     }
 
     /// `POST /import` 回 202 后等任务做完，回任务查询结果。
