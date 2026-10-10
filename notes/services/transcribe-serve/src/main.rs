@@ -25,7 +25,7 @@ use worker::{Ctx, Failures, Target};
 
 pub const APP: &str = "notes";
 
-const SPEC: ServiceSpec = ServiceSpec { name: "transcribe-serve", label: "笔记·转写", version: env!("CARGO_PKG_VERSION"), default_bind: "127.0.0.1:8796", tab: None };
+const SPEC: ServiceSpec = ServiceSpec { name: "transcribe-serve", label: "笔记·转写", version: env!("CARGO_PKG_VERSION"), default_bind: "127.0.0.1:8796", tab_order: None };
 /// 事件到跑之间的防抖：合上书 ink-serve 会连发几条。
 const DEBOUNCE: Duration = Duration::from_secs(3);
 

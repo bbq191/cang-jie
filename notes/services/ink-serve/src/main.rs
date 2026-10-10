@@ -38,7 +38,7 @@ const EVENT_AREA: &str = "notes";
 /// 条目库变了（摄取、改字段、清理）。
 const EVENT_ENTRIES: &str = "entries";
 
-const SPEC: ServiceSpec = ServiceSpec { name: "ink-serve", label: "笔记·矿", version: env!("CARGO_PKG_VERSION"), default_bind: "127.0.0.1:8795", tab: None };
+const SPEC: ServiceSpec = ServiceSpec { name: "ink-serve", label: "笔记·矿", version: env!("CARGO_PKG_VERSION"), default_bind: "127.0.0.1:8795", tab_order: None };
 
 struct State {
     paths: Paths,

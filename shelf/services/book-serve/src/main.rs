@@ -31,7 +31,7 @@ const SPEC: ServiceSpec = ServiceSpec {
     label: "母版库 / 落原生",
     version: env!("CARGO_PKG_VERSION"),
     default_bind: "127.0.0.1:8790",
-    tab: None,
+    tab_order: None,
 };
 
 fn main() {

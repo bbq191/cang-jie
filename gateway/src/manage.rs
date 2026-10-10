@@ -20,6 +20,8 @@ pub struct Module {
     pub service: &'static str,
     /// `install.sh`/`uninstall.sh` 的 `--only` 令牌。
     pub only: &'static str,
+    /// 中文显示名：**只是兜底**——网页按 `manage.modules.label.<seg>` 取语言包，语言包缺这个键时才显示它（`ui.rs` 的测试
+    /// 核对两份语言包都有每个模块的键）。
     pub label: &'static str,
     /// 该服务是否提供 `GET /events`（SSE）。网关只给提供的服务起订阅线程：mind-serve 是纯被动的
     /// 问答服务（没有事件流，见其 main.rs 头注），此前网关对它每 3 秒打一个 404、白白唤醒它。

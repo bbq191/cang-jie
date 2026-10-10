@@ -22,7 +22,7 @@ const SPEC: ServiceSpec = ServiceSpec {
     label: "壁纸",
     version: env!("CARGO_PKG_VERSION"),
     default_bind: "127.0.0.1:8793",
-    tab: Some(("壁纸", 40)),
+    tab_order: Some(40),
 };
 
 struct State {

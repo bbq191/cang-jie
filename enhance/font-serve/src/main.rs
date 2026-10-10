@@ -25,7 +25,7 @@ const SPEC: ServiceSpec = ServiceSpec {
     label: "字体",
     version: env!("CARGO_PKG_VERSION"),
     default_bind: "127.0.0.1:8792",
-    tab: Some(("xochitl", 10)),
+    tab_order: Some(10),
 };
 
 struct State {

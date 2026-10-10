@@ -5,10 +5,10 @@ use crate::paths::Paths;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-/// 网关 UI 的一个 tab。
+/// 网关 UI 的一个 tab：网页只看"有没有"和排序（tab 标题来自网页语言包）。2026-10-10 前还有个 `title` 字段，网页从来
+/// 不读（审计 GW-3），删掉；带 `title` 的旧注册文件照常能读（未知字段忽略）。
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct UiTab {
-    pub title: String,
     pub order: u32,
 }
 
@@ -238,7 +238,7 @@ mod tests {
             label: name.into(),
             version: "0".into(),
             pid,
-            ui: Some(UiTab { title: name.into(), order }),
+            ui: Some(UiTab { order }),
         }
     }
 
@@ -255,6 +255,10 @@ mod tests {
         assert_eq!(list(&p).len(), 1);
         assert!(find(&p, "b-svc").is_some());
         assert!(find(&p, "a-svc").is_none());
+        // 2026-10-10 前的注册文件 ui 带 title：照常能读（网页只用 order）
+        let old: ServiceInfo = serde_json::from_str(r#"{"name":"x","port":1,"label":"x","version":"0","pid":1,"ui":{"title":"壁纸","order":40}}"#).unwrap();
+        assert_eq!(old.ui, Some(UiTab { order: 40 }));
+        assert_eq!(serde_json::to_value(info("y", 3, 1)).unwrap()["ui"], serde_json::json!({"order": 3}));
     }
 
     #[test]

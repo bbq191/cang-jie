@@ -27,7 +27,7 @@ const SPEC: ServiceSpec = ServiceSpec {
     label: "秘密花园",
     version: env!("CARGO_PKG_VERSION"),
     default_bind: "0.0.0.0:8778",
-    tab: None,
+    tab_order: None,
 };
 
 fn main() {

@@ -27,7 +27,7 @@ use worker::Ctx;
 
 pub const APP: &str = "notes";
 
-const SPEC: ServiceSpec = ServiceSpec { name: "mind-serve", label: "笔记·脑", version: env!("CARGO_PKG_VERSION"), default_bind: "127.0.0.1:8797", tab: None };
+const SPEC: ServiceSpec = ServiceSpec { name: "mind-serve", label: "笔记·脑", version: env!("CARGO_PKG_VERSION"), default_bind: "127.0.0.1:8797", tab_order: None };
 
 struct State {
     cfg: ConfigCell<MindConfig>,

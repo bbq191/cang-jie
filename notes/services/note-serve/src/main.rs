@@ -41,7 +41,7 @@ const EVENT_AREA: &str = "notes";
 /// 生成过笔记本（网页据此刷新各章的笔记本徽章）。
 const EVENT_NOTEBOOKS: &str = "notebooks";
 
-const SPEC: ServiceSpec = ServiceSpec { name: "note-serve", label: "笔记·本", version: env!("CARGO_PKG_VERSION"), default_bind: "127.0.0.1:8798", tab: Some(("笔记", 25)) };
+const SPEC: ServiceSpec = ServiceSpec { name: "note-serve", label: "笔记·本", version: env!("CARGO_PKG_VERSION"), default_bind: "127.0.0.1:8798", tab_order: Some(25) };
 
 struct State {
     paths: Paths,
