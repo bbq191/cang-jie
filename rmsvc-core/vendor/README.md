@@ -12,7 +12,7 @@
   `break`，accept 线程一退服务就再也收不到连接，而进程还活着。配套：`rmsvc-core` 的 `http::serve_with` 在 accept 线程
   退出后返回 `Err`（此前返回 `Ok`，各服务以退出码 0 结束，`Restart=on-failure` 不会拉起）。
 
-- `src/ssl/rustls.rs` 的 `RustlsContext::from_pem` 与 `Cargo.toml` 的 `rustls` 依赖：rustls 0.20 → 0.23（`default-features = false`，
+- `src/ssl/rustls.rs` 的 `RustlsContext::from_pem` 与 `Cargo.toml` 的 `rustls` 依赖：rustls 0.20 → 0.23（下限 0.23.45，避开 RUSTSEC-2026-0285 影响的 0.23.13–0.23.44；`default-features = false`，
   `std`/`ring`/`tls12`/`logging`，与 ureq 用的是同一份 rustls/ring），删掉 `rustls-pemfile` 依赖。证书链与私钥改用 rustls 再导出的
   `pki_types::pem::PemObject` 解析（PKCS#8/PKCS#1/SEC1 都认，取第一把）；`ServerConfig` 显式用 ring provider + 安全缺省协议版本
   （TLS 1.2/1.3）；私钥解析失败返回错误（上游 `expect` 直接 panic）。`RustlsStream` 的读写/克隆部分没动（0.23 的

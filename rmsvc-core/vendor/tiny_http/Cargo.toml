@@ -49,9 +49,9 @@ version = "0.10"
 optional = true
 
 # 2026-10-10：rustls 0.20 → 0.23（ring 后端，与 ureq 同一份）。0.20 整个系列受 RUSTSEC-2024-0336 影响且无补丁版；
-# PEM 解析改用 rustls 再导出的 pki-types（rustls-pemfile 已停止维护），见 rmsvc-core/vendor/README.md。
+# PEM 解析改用 rustls 再导出的 pki-types（rustls-pemfile 已停止维护）；下限 0.23.45 避开 RUSTSEC-2026-0285（0.23.13–0.23.44），见 rmsvc-core/vendor/README.md。
 [dependencies.rustls]
-version = "0.23.5"
+version = "0.23.45"
 default-features = false
 features = ["std", "ring", "tls12", "logging"]
 optional = true
