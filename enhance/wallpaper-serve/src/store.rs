@@ -1,4 +1,4 @@
-//! 壁纸仓库（`AssetStore` 实现）+ 轮换状态。真机结论（2026-09-03 bind 时代 → 2026-09-06 原生键时代）：
+//! 壁纸仓库（上传走 `UploadTarget`，列表/删除是固有方法）+ 轮换状态。真机结论（2026-09-03 bind 时代 → 2026-09-06 原生键时代）：
 //! - 休眠屏由 xochitl.conf `SleepScreenPath` 指向本仓库的 `current.png`（native.rs）；xochitl **每次休眠重读该文件**，
 //!   满屏 PreserveAspectFit、插画卡自动隐藏 → 换图零重启即时生效，不写 `/usr`、不 bind-mount；
 //! - 换图**原地覆盖 current.png**（truncate 写、保 inode，路径与 inode 都不变）；
@@ -8,7 +8,7 @@
 use image::imageops::FilterType;
 use image::{ImageFormat, RgbaImage};
 use serde::{Deserialize, Serialize};
-use rmsvc_core::asset::{AssetItem, AssetStore};
+use rmsvc_core::asset::{AssetItem, UploadTarget};
 use rmsvc_core::formats::{self, IMAGE_EXTS};
 use rmsvc_core::fs::{list_files, plain_name, write_atomic};
 use rmsvc_core::paths::Paths;
@@ -47,6 +47,45 @@ pub enum Fit {
 pub struct WpState {
     pub mode: Mode,
     pub current: Option<String>,
+}
+
+/// 壁纸池操作的错误：HTTP 层按种类映射成 400 / 404 / 409 / 500（领域模块不碰 http 类型，同 book-serve 的
+/// `ImportError`）。2026-10-10 前一律是字符串、路由统一报 400，写 current.png / 状态文件 / xochitl.conf 失败
+/// 这种设备侧故障也成了"请求不对"（审计 CORE-1）。
+#[derive(Debug, PartialEq)]
+pub enum WpError {
+    /// 名字不合法 → 400。
+    Bad(String),
+    /// 池里没有这张图 → 404。
+    NotFound(String),
+    /// 与当前状态冲突（删正在用的那张）→ 409。
+    Busy(String),
+    /// 读写盘出错 → 500。
+    Io(String),
+}
+
+impl std::fmt::Display for WpError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WpError::Bad(m) | WpError::NotFound(m) | WpError::Busy(m) | WpError::Io(m) => f.write_str(m),
+        }
+    }
+}
+
+const NOT_IN_POOL: &str = "池里没有这张图";
+
+/// 池里文件的读/删错误：文件不在 → 404，其余 → 500。
+fn pool_err(e: std::io::Error, what: &str) -> WpError {
+    if e.kind() == std::io::ErrorKind::NotFound {
+        WpError::NotFound(NOT_IN_POOL.into())
+    } else {
+        WpError::Io(format!("{what}: {e}"))
+    }
+}
+
+/// 池里的名字只能是普通文件名（不含路径分隔符、不以点开头）。
+fn pool_name(name: &str) -> Result<&str, WpError> {
+    plain_name(name).map_err(WpError::Bad)
 }
 
 pub struct WallpaperStore {
@@ -101,27 +140,43 @@ impl WallpaperStore {
         list_files(&self.pool, |n| n.ends_with(".png"))
     }
 
+    /// 网页清单：池里每张图 + 是否当前。
+    pub fn list(&self) -> Vec<AssetItem> {
+        let current = self.state().current; // 只读一次状态文件（旧实现每张图各读+解析一次）
+        self.names().into_iter().map(|n| AssetItem { name: n.clone(), bytes: std::fs::metadata(self.pool.join(&n)).map(|m| m.len()).unwrap_or(0), extra: serde_json::json!({"current": current.as_deref() == Some(n.as_str())}) }).collect()
+    }
+    /// 从池里删一张（正在用的那张不让删）。
+    pub fn remove(&self, name: &str) -> Result<(), WpError> {
+        let n = pool_name(name)?;
+        let _g = self.guard();
+        if self.state().current.as_deref() == Some(n) {
+            return Err(WpError::Busy("正在使用的壁纸不能删，先换一张".into()));
+        }
+        std::fs::remove_file(self.pool.join(n)).map_err(|e| pool_err(e, "删除失败"))
+    }
+
     /// 池里的图按名读字节（预览用）。
-    pub fn read(&self, name: &str) -> Result<Vec<u8>, String> {
-        std::fs::read(self.pool.join(plain_name(name)?)).map_err(|_| "池里没有这张图".to_string())
+    pub fn read(&self, name: &str) -> Result<Vec<u8>, WpError> {
+        std::fs::read(self.pool.join(pool_name(name)?)).map_err(|e| pool_err(e, "读取失败"))
     }
 
     /// 原地覆盖 current.png（truncate 写、保 inode；xochitl 每次休眠按 SleepScreenPath 重读）。
-    pub fn activate(&self, name: &str) -> Result<(), String> {
+    pub fn activate(&self, name: &str) -> Result<(), WpError> {
         let _g = self.guard();
         self.activate_locked(name)
     }
 
     /// 调用方已持有 [`Self::guard`]（`roll` 在同一把锁里选图+激活，不能重入）。
-    fn activate_locked(&self, name: &str) -> Result<(), String> {
-        let src = self.pool.join(plain_name(name)?);
-        let data = std::fs::read(&src).map_err(|_| "池里没有这张图".to_string())?;
-        let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).open(&self.current).map_err(|e| e.to_string())?;
-        f.write_all(&data).map_err(|e| e.to_string())?;
-        f.sync_all().map_err(|e| e.to_string())?;
+    fn activate_locked(&self, name: &str) -> Result<(), WpError> {
+        let src = self.pool.join(pool_name(name)?);
+        let data = std::fs::read(&src).map_err(|e| pool_err(e, "读池图失败"))?;
+        let io = |e: std::io::Error| WpError::Io(format!("写 {} 失败: {e}", self.current.display()));
+        let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).open(&self.current).map_err(io)?;
+        f.write_all(&data).map_err(io)?;
+        f.sync_all().map_err(io)?;
         let mut st = self.state();
         st.current = Some(name.to_string());
-        self.save_state(&st)
+        self.save_state(&st).map_err(WpError::Io)
     }
 
     /// 按 mode 选下一张并激活；返回激活的名字（fixed / 空池 / 选中的就是已在 current.png 的那张 → None）。
@@ -152,7 +207,7 @@ impl WallpaperStore {
             // 1–3MB 的图 truncate 重写 + fsync 一遍（池里只传了一张是常态），纯属白写闪存。
             return Ok(None);
         }
-        self.activate_locked(&next)?;
+        self.activate_locked(&next).map_err(|e| e.to_string())?;
         Ok(Some(next))
     }
 
@@ -213,7 +268,7 @@ pub fn fit_to_screen(src: &[u8], fit: Fit) -> Result<Vec<u8>, String> {
     Ok(out.into_inner())
 }
 
-impl AssetStore for WallpaperStore {
+impl UploadTarget for WallpaperStore {
     fn kind(&self) -> &'static str {
         "wallpaper"
     }
@@ -242,18 +297,6 @@ impl AssetStore for WallpaperStore {
     }
     fn success_message(&self, _requested: &str, _item: &AssetItem) -> String {
         format!("已入池（缩放到 {W}×{H}）")
-    }
-    fn list(&self) -> Vec<AssetItem> {
-        let current = self.state().current; // 只读一次状态文件（旧实现每张图各读+解析一次）
-        self.names().into_iter().map(|n| AssetItem { name: n.clone(), bytes: std::fs::metadata(self.pool.join(&n)).map(|m| m.len()).unwrap_or(0), extra: serde_json::json!({"current": current.as_deref() == Some(n.as_str())}) }).collect()
-    }
-    fn remove(&self, name: &str) -> Result<(), String> {
-        let n = plain_name(name)?;
-        let _g = self.guard();
-        if self.state().current.as_deref() == Some(n) {
-            return Err("正在使用的壁纸不能删，先换一张".into());
-        }
-        std::fs::remove_file(self.pool.join(n)).map_err(|e| format!("删除失败: {e}"))
     }
 }
 

@@ -228,7 +228,7 @@ battop 早于这条线存在（08-27 电池审计后建的长期耗电追踪工�
 | `wallpaper-serve`（8793） | 写 xochitl 隐藏键 `SleepScreenPath` 指向 `current.png`；xochitl 休眠时读完它就轮换（inotify，空闲零唤醒）；入池时等比放大后居中裁成 954×1696（10-09 起先裁再缩放，§03p）；旧 bind-mount 方案已退役 | [wallpaper-serve README](../wallpaper-serve/README.md)（机制与历次改动的权威描述）；书架白皮书 §03w / §03x / §03ab |
 | `lo-alias.sh` | 给 `lo` 和 `usb1` 挂 `10.11.99.1`，让不插 USB 时 xochitl 的 :80 上传口仍可达；网关 `ExecStartPre` 调用 | [lo-alias README](../lo-alias/README.md) |
 
-两个服务都依赖 [`../../rmsvc-core`](../../rmsvc-core/README.md)，由网关反向代理，随 `install-all.sh` 的 shelf 步安装。host 测试（2026-10-09 实跑）：font-serve 13 项、wallpaper-serve 12 项。
+两个服务都依赖 [`../../rmsvc-core`](../../rmsvc-core/README.md)，由网关反向代理，随 `install-all.sh` 的 shelf 步安装。host 测试（2026-10-10 实跑）：font-serve 16 项、wallpaper-serve 16 项。
 
 ## 03i｜reader-page-turn：单击翻页（2026-09-24；日漫翻页规则 2026-10-07 删除）
 
@@ -273,7 +273,7 @@ battop 早于这条线存在（08-27 电池审计后建的长期耗电追踪工�
 | 服务间事件流心跳 | rmsvc-core | 网关订阅 6 个有 `/events` 的服务（book、font、wallpaper、ink、transcribe、note；`gateway/src/manage.rs` 的 `MODULES` 里 `events: true` 的项），transcribe 再订阅 ink，共 7 条 loopback 流，各 120 秒一次心跳（09-30 前还订阅 koreader-serve，共 8 条） | `rmsvc-core/src/events.rs` `FOLLOW_KEEPALIVE_SECS` |
 | shelf-mkdir-agent.qmd | shelf | 长轮询 `GET /mkdir/pending?wait=290`：空闲约 290 秒一次往返（book-serve 上限 300 秒；09-24 前 25 秒）；若真遇到 30 秒客户端超时自动退回 25 秒 | `shelf/xovi/shelf-mkdir-agent.qmd`；`book-serve` `MKDIR_WAIT_MAX_SECS` |
 | 网关 mDNS | rmsvc-core | 09-25 起空闲零定时唤醒：改听内核 netlink 地址变化，地址增删才重扫（此前 60 秒一次）；netlink 打不开才退回 60 秒；局域网别的设备发 mDNS 查询另算 | `rmsvc-core/src/mdns.rs` `AddrWatch` / `RESCAN_INTERVAL` |
-| wallpaper-serve | 本线 | inotify 等 xochitl 休眠时读完 `current.png`：空闲零唤醒，每次休眠醒一次（09-24 前常驻 `journalctl -f -u xochitl`，xochitl 每写一行日志就醒一次） | `enhance/wallpaper-serve/src/wake.rs` |
+| wallpaper-serve | 本线 | inotify 等 xochitl 休眠时读完 `current.png`：空闲零唤醒，每次休眠醒一次（09-24 前常驻 `journalctl -f -u xochitl`，xochitl 每写一行日志就醒一次；10-10 起监听经 `rmsvc_core::fswatch::watch_with`，开发机实测空闲 30 秒该线程 0 次上下文切换，改前也是 0） | `enhance/wallpaper-serve/src/wake.rs` |
 | hl-snap | 本线 | 没有定时器，只在划线时进 handler | `enhance/hl-snap/src/hl_snap.c` |
 | reader-page-turn.qmd | 本线（源码在 shelf） | 打开书时单发 300 ms 读一次开关，不轮询 | `shelf/xovi/reader-page-turn.qmd` |
 | 其余 qmd 与服务 | shelf / notes | comic-margins 换文档单发 1.5 秒；trash-agent 与 mkdir-agent 同为 290 秒长轮询（09-25 起；book-serve 不在时出错重试 15→30→60→120 秒封顶）；book-serve / ink-serve 用 inotify 防抖（8 秒 / 4 秒）；浏览器事件流 20 秒心跳只在网页开着时有 | 各自源码 |
@@ -447,6 +447,21 @@ battop 早于这条线存在（08-27 电池审计后建的长期耗电追踪工�
 **行为变化**：hl-snap、ui-font 读配置的结果只在上面那几种不规范/罕见的 JSON 上不同；网关与设置页写出的 `reading-qol.json`、font-serve 写出的 `ui-font.json` 都是扁平对象，结果与旧版相同。hl-snap 的 hook 目标不触发新检查，加载与安装行为不变。
 
 **部署后确认**（待部署）：journal 里仍有 `荧光笔EXPAND hook 安装完成` 与 `[ui-font] 安装完成`、没有 `PC 相对寻址，…放弃 hook`；网页「系统增强」关掉再打开吸附开关，各划一段中文看效果跟着变；界面字体照常。
+
+## 03r｜重构第二阶段给两个服务的改动（2026-10-10，**未部署**）
+
+只动 font-serve、wallpaper-serve 两个 Rust 服务，把它们迁到基座第一阶段新加的接口；两个 `.so` 不变。开发机：两个服务各 16 项 `cargo test --locked`、`cargo clippy --all-targets -- -D warnings` 零告警。
+
+| 改动 | 为什么 | 验证（开发机） |
+|---|---|---|
+| wallpaper-serve 休眠读图监听改用 `rmsvc_core::fswatch::watch_with`（`WatchSpec{mask: CLOSE_NOWRITE, debounce: None}`），删掉自己那份 inotify + 退避重挂（审计 CORE-7） | 两份同构代码；原先自己写只因基座掩码写死、强制防抖 | 真 inotify 用例：别人读 `current.png` 才轮换、自己写不触发；壁纸目录整个删掉、上传把它建回来后照常轮换；开局目录不在先建再监听；按文件名筛事件。沙箱里起服务空闲 30 秒、以及读过一次 `current.png` 之后空闲 20 秒，监听线程上下文切换都是 0（改前同样是 0）：改前阻塞在 inotify `read`，改后阻塞在无超时 `poll` |
+| 两个服务的仓库改实现 `UploadTarget`，`list`/`remove` 改成固有方法（审计 CORE-6） | 上传流程用不到列表和删除；font-serve 那个只转发 `remove_family` 的 `remove` 没人调，删掉 | 原有用例 |
+| 错误分级（审计 CORE-1）：wallpaper-serve 名字不合法 400、池里没有 404、删正在用的那张 409、写 `current.png` / 状态文件 / `xochitl.conf` 失败 500；font-serve 没有这个家族 404、选没装的界面字体 400、删字体文件 / 重写索引 / 存选择失败 500 | 此前一律 400（预览缺图是 404），设备侧写盘故障也显示成"请求不对"。前端只显示 `message`、不按状态码分支，提示文字不变 | 路由抽成 `router()`，用 `TestRequest` 补路由级用例；写盘失败用"目标位置被目录占住"造出来 |
+| `/events` 改用 `sse_reply_for`（审计 CORE-5） | 心跳间隔直接读本请求的 `?ka=`，不靠路由分发时的线程局部 | 路由用例 |
+
+**与旧监听的差别**（都在 `wake.rs` 头注里）：壁纸目录被删后，旧代码重试时自己把目录建回来，现在等别人建（上传入池会建、服务重启也会建；目录不在时池是空的，本来没东西可轮换），fswatch 按 1 秒起翻倍、5 分钟封顶的间隔查目录回来没有；目录被挪走时旧代码没订 `IN_MOVE_SELF`、会一直守着挪走后的目录，现在会重挂到原路径；新接口不区分 `IN_ISDIR`，只有目录恰好叫 `current.png` 才会撞上。上传请求整体出错（基本是 multipart 解析失败）仍报 400：基座 `AssetUploadFlow::run` 只返回字符串，分不出"暂存目录建不起来"这种 500，留给基座下一步。
+
+**部署后确认**（待部署）：网页「壁纸」上传、切换、删除照常；休眠一次后壁纸轮换（journal 有 `休眠屏已读 → 轮换到 …`）；「xochitl」页上传 / 删除字体、改界面字体选择照常；网页事件流照常推送（改完列表自动刷新）。
 
 ## 04｜踩坑
 

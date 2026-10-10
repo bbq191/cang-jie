@@ -10,12 +10,12 @@ mod store;
 mod wake;
 
 use native::Native;
-use rmsvc_core::asset::{self, AssetStore, AssetUploadFlow};
+use rmsvc_core::asset::{self, AssetUploadFlow};
 use rmsvc_core::http::{bind, ApiError, Reply, Router, ServeOpts};
 use rmsvc_core::paths::Paths;
 use rmsvc_core::service::{self, ServiceSpec};
 use std::sync::Arc;
-use store::{Mode, WallpaperStore};
+use store::{Mode, WallpaperStore, WpError};
 
 const SPEC: ServiceSpec = ServiceSpec {
     name: "wallpaper-serve",
@@ -42,9 +42,20 @@ impl State {
         })
     }
     /// 激活一张并确保原生键就位（首次写键 → 需整机重启一次才生效（别单独 restart xochitl，它退出时有概率崩溃，见 packaging/devlib.sh 头注 H3），状态里 `restartPending` 能看到）。
-    fn activate(&self, name: &str) -> Result<bool, String> {
+    fn activate(&self, name: &str) -> Result<bool, WpError> {
         self.store.activate(name)?;
-        self.native.enable()
+        self.native.enable().map_err(WpError::Io)
+    }
+}
+
+impl From<WpError> for ApiError {
+    fn from(e: WpError) -> ApiError {
+        match e {
+            WpError::Bad(m) => ApiError::bad(m),
+            WpError::NotFound(m) => ApiError::not_found(m),
+            WpError::Busy(m) => ApiError::conflict(m),
+            WpError::Io(m) => ApiError::internal(m),
+        }
     }
 }
 
@@ -75,7 +86,7 @@ fn main() {
         }
         Some("disable") => exit_with(native.disable().map(|c| if c { "已删 SleepScreenPath，xochitl 重启后回原生休眠屏".to_string() } else { "本就没有 SleepScreenPath".to_string() })),
         Some("roll") => exit_with(store.roll().map(|n| n.map(|n| format!("轮换到 {n}")).unwrap_or_else(|| "不轮换（fixed、空池，或池里只有当前这一张）".into()))),
-        Some("activate") => exit_with(args.get(1).ok_or("用法: activate <name>".to_string()).and_then(|n| store.activate(n).and_then(|_| native.enable()).map(|c| format!("已激活 {n}；{}", enable_message(c))))),
+        Some("activate") => exit_with(args.get(1).ok_or("用法: activate <name>".to_string()).and_then(|n| store.activate(n).map_err(|e| e.to_string()).and_then(|_| native.enable()).map(|c| format!("已激活 {n}；{}", enable_message(c))))),
         Some("serve") | None => {}
         Some(x) => {
             eprintln!("未知子命令 {x}（serve|enable|disable|roll|activate）");
@@ -89,23 +100,32 @@ fn main() {
     }
     let bus = Arc::new(rmsvc_core::events::EventBus::new());
     let st = Arc::new(State { store, native, paths: paths.clone(), bus: bus.clone() });
-    let router = Router::new()
-        .get("/", bind(&st, |s, _| {
+    let router = router(&st);
+    wake::spawn(st.store.clone(), bus); // 与 API 共用同一个 store 实例（同一把状态锁）
+    println!("[wallpaper-serve] 池 {}，原生休眠屏键 {}；xochitl 休眠读完休眠屏即轮换", st.store.pool().display(), if st.native.enabled() { "已就位" } else { "未写（激活首张时自动写）" });
+    service::run_or_exit(&SPEC, &bind_addr, &paths, router, ServeOpts::default())
+}
+
+/// 网页 API 路由（`main` 与测试共用）。
+fn router(st: &Arc<State>) -> Router {
+    Router::new()
+        .get("/", bind(st, |s, _| {
             let w = s.store.state();
             Ok(Reply::ok(&serde_json::json!({"items": s.store.list(), "mode": w.mode, "current": w.current})))
         }))
-        .get("/status", bind(&st, |s, _| Ok(Reply::ok(&s.status()))))
-        .get("/events", bind(&st, |s, _| Ok(s.bus.sse_reply())))
-        .post("/", bind(&st, |s, r| {
+        .get("/status", bind(st, |s, _| Ok(Reply::ok(&s.status()))))
+        .get("/events", bind(st, |s, r| Ok(s.bus.sse_reply_for(r))))
+        .post("/", bind(st, |s, r| {
             let b = r.multipart_boundary()?;
             // `?activate=1` 显式激活首张成功项；池里还没有当前图时也自动激活（上传即可用）。
             let want = r.q_flag("activate") || s.store.state().current.is_none();
+            // run 的整体错误基本是 multipart 解析失败（请求体不对）→ 400；单张图装不上记在回执逐项里。
             let items = AssetUploadFlow::new(&s.paths).run(&*s.store, &mut *r.body, &b).map_err(ApiError::bad)?;
             let mut activated = None;
             let mut changed = false;
             if want {
                 if let Some(first) = items.iter().find(|i| i.ok).and_then(|i| i.item.as_ref()) {
-                    changed = s.activate(&first.name).map_err(ApiError::internal)?;
+                    changed = s.activate(&first.name)?;
                     activated = Some(first.name.clone());
                 }
             }
@@ -115,32 +135,29 @@ fn main() {
             }
             Ok(Reply::ok(&asset::receipt(&items, serde_json::json!({"activated": activated, "note": note, "restartPending": s.native.restart_pending()}))))
         }))
-        .put("/current", bind(&st, |s, r| {
+        .put("/current", bind(st, |s, r| {
             let j = r.json()?;
             let name = j.str("name")?;
-            s.activate(name).map_err(ApiError::bad)?;
+            s.activate(name)?; // 名字不合法 400、池里没有 404、写盘 / 写 xochitl.conf 失败 500
             s.bus.publish("wallpapers", "pool");
             Ok(Reply::ok(&serde_json::json!({"ok": true, "current": name, "native": s.native.status()})))
         }))
-        .put("/mode", bind(&st, |s, r| {
+        .put("/mode", bind(st, |s, r| {
             let j = r.json()?;
             let mode: Mode = serde_json::from_value(j.0.get("mode").cloned().unwrap_or_default()).map_err(|_| ApiError::bad("mode ∈ sequential|random|fixed"))?;
             s.store.set_mode(mode).map_err(ApiError::internal)?;
             s.bus.publish("wallpapers", "pool");
             Ok(Reply::ok(&serde_json::json!({"ok": true, "mode": mode})))
         }))
-        .delete("/{name}", bind(&st, |s, r| {
-            s.store.remove(r.param("name")).map_err(ApiError::bad)?;
+        .delete("/{name}", bind(st, |s, r| {
+            s.store.remove(r.param("name"))?;
             s.bus.publish("wallpapers", "pool");
             Ok(Reply::ok(&serde_json::json!({"ok": true})))
         }))
-        .get("/{name}", bind(&st, |s, r| {
+        .get("/{name}", bind(st, |s, r| {
             let name = r.param("name");
-            Ok(Reply::bytes(rmsvc_core::formats::mime_of(name), s.store.read(name).map_err(ApiError::not_found)?))
-        }));
-    wake::spawn(st.store.clone(), bus); // 与 API 共用同一个 store 实例（同一把状态锁）
-    println!("[wallpaper-serve] 池 {}，原生休眠屏键 {}；xochitl 休眠读完休眠屏即轮换", st.store.pool().display(), if st.native.enabled() { "已就位" } else { "未写（激活首张时自动写）" });
-    service::run_or_exit(&SPEC, &bind_addr, &paths, router, ServeOpts::default())
+            Ok(Reply::bytes(rmsvc_core::formats::mime_of(name), s.store.read(name)?))
+        }))
 }
 
 fn exit_with(r: Result<String, String>) -> ! {
@@ -153,5 +170,80 @@ fn exit_with(r: Result<String, String>) -> ! {
             eprintln!("[wallpaper-serve] {e}");
             std::process::exit(1)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rmsvc_core::http::{Method, TestRequest};
+
+    fn png(v: u8) -> Vec<u8> {
+        let img = image::GrayImage::from_pixel(8, 8, image::Luma([v]));
+        let mut out = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut out, image::ImageFormat::Png).unwrap();
+        out.into_inner()
+    }
+
+    /// 沙箱里的服务状态（池里放好 a.png、b.png），路径全在临时目录下。
+    fn setup() -> (tempfile::TempDir, Arc<State>, Router) {
+        let t = tempfile::tempdir().unwrap();
+        let paths = Paths::sandbox(t.path());
+        paths.ensure().unwrap();
+        let store = Arc::new(WallpaperStore::new(&paths));
+        store.ensure().unwrap();
+        for (n, v) in [("a.png", 10), ("b.png", 200)] {
+            std::fs::write(store.pool().join(n), png(v)).unwrap();
+        }
+        let native = Native::new(&paths, store.current_path());
+        let st = Arc::new(State { store, native, paths, bus: Arc::new(rmsvc_core::events::EventBus::new()) });
+        let r = router(&st);
+        (t, st, r)
+    }
+
+    fn put_current(r: &Router, name: &str) -> u16 {
+        TestRequest::new(Method::Put, "/current").json(&serde_json::json!({"name": name})).dispatch(r).status
+    }
+
+    /// 激活：名字不合法 400、池里没有 404、写 current.png 失败（设备侧故障）500——此前三种都报 400。
+    #[test]
+    fn activate_splits_bad_request_from_io_failure() {
+        let (_t, st, r) = setup();
+        assert_eq!(put_current(&r, "../a.png"), 400);
+        assert_eq!(put_current(&r, ".hidden.png"), 400);
+        assert_eq!(put_current(&r, "nope.png"), 404);
+        assert_eq!(put_current(&r, "a.png"), 200);
+        assert_eq!(st.store.state().current.as_deref(), Some("a.png"));
+        // current.png 被换成目录：打开写失败 → 500，状态不变
+        std::fs::remove_file(st.store.current_path()).unwrap();
+        std::fs::create_dir(st.store.current_path()).unwrap();
+        let reply = TestRequest::new(Method::Put, "/current").json(&serde_json::json!({"name": "b.png"})).dispatch(&r);
+        assert_eq!(reply.status, 500, "{}", String::from_utf8_lossy(&reply.body));
+        assert_eq!(st.store.state().current.as_deref(), Some("a.png"));
+    }
+
+    #[test]
+    fn delete_and_preview_status_codes() {
+        let (_t, st, r) = setup();
+        st.store.activate("a.png").unwrap();
+        let del = |name: &str| TestRequest::new(Method::Delete, &format!("/{name}")).dispatch(&r).status;
+        assert_eq!(del("a.png"), 409, "正在用的不让删");
+        assert_eq!(del(".x.png"), 400);
+        assert_eq!(del("nope.png"), 404);
+        assert_eq!(del("b.png"), 200);
+        assert!(!st.store.pool().join("b.png").exists());
+        let get = |name: &str| TestRequest::new(Method::Get, &format!("/{name}")).dispatch(&r);
+        assert_eq!(get("a.png").status, 200);
+        assert_eq!(get("b.png").status, 404);
+        assert_eq!(get(".x.png").status, 400);
+    }
+
+    /// `/events` 走 sse_reply_for（心跳读本请求的 `?ka=`，不靠线程局部）：回的是事件流。
+    #[test]
+    fn events_route_streams() {
+        let (_t, _st, r) = setup();
+        let reply = TestRequest::new(Method::Get, "/events").query("ka", "30").dispatch(&r);
+        assert_eq!(reply.status, 200);
+        assert!(reply.content_type.starts_with("text/event-stream") && reply.stream.is_some());
     }
 }

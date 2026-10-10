@@ -48,8 +48,8 @@ jobs:
       # 不再使用 PC 端，只留网页/设备端交互；源码留档在本机 oldbak/（不随仓库走），CI 这步跟着删。
       - name: pytest（packaging/tests：安装/卸载脚本的沙箱模拟，不需要真机）
         run: uv run pytest packaging/tests -q
-      - name: 网关内嵌 JS 语法检查（ui/app.js 是真文件，编译期 include_str! 进二进制）
-        run: node --check gateway/ui/app.js
+      - name: 网关内嵌 JS 语法检查（ui/*.js 是真文件，编译期 include_str! 进二进制；2026-10-10 起前端拆成多个脚本，逐个查）
+        run: for f in gateway/ui/*.js; do node --check "$f"; done
       - name: 网关前端转义回归（esc() 行为 + app.js 插值静态检查，node 内置测试、零 npm 依赖）
         run: node --test gateway/ui/test/*.test.mjs
       # enhance/shared 四个纯 C 工具文件（hl-snap 这个"涉及 xovi/mprotect 高危代码路径"的扩展用的
