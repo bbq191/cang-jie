@@ -3,6 +3,7 @@
 use super::*;
 use crate::jobs::Jobs;
 use rmsvc_core::xochitl::{ClaimError, Folder};
+use crate::events as ev;
 
 /// 大文件通道投 EPUB 后等占位 `.content` 写出 pageCount 的上限与防抖（见 `try_deliver_direct`）。
 const PLACEHOLDER_PAGES_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
@@ -125,7 +126,7 @@ impl Staging {
                 }
             }));
             drop(busy); // 先解锁再推事件：网页据事件重拉列表时这条已不是"处理中"
-            bus.publish("books", "staging");
+            bus.publish(ev::AREA, ev::STAGING);
         }));
         if let Err(e) = queued {
             // 作业连同忙锁一起被丢弃了：把边车里的 pending 收成失败，别让网页一直显示"处理中"

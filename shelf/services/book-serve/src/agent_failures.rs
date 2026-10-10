@@ -9,6 +9,7 @@ use rmsvc_core::events::EventBus;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::Arc;
+use crate::events as ev;
 
 /// 最多留几条（最旧的先丢）。
 const KEEP: usize = 20;
@@ -42,7 +43,7 @@ impl AgentFailures {
             eprintln!("[book-serve] 记录代理放弃失败: {e}");
         }
         if let Some(bus) = &self.bus {
-            bus.publish("books", "agent-failed");
+            bus.publish(ev::AREA, ev::AGENT_FAILED);
         }
     }
 
@@ -55,7 +56,7 @@ impl AgentFailures {
         let (_, n) = self.q.prune(|_| false)?;
         if n > 0 {
             if let Some(bus) = &self.bus {
-                bus.publish("books", "agent-failed");
+                bus.publish(ev::AREA, ev::AGENT_FAILED);
             }
         }
         Ok(n)

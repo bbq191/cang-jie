@@ -30,6 +30,7 @@ use rmsvc_core::asset::{self, AssetUploadFlow};
 use rmsvc_core::formats;
 use rmsvc_core::http::{bind, ApiError, ApiResult, Reply, Request, Router};
 use std::sync::Arc;
+use crate::events as ev;
 
 /// `GET /mkdir/pending?wait=`、`GET /trash/pending?wait=` 长轮询等待时长上限（秒）。QML 端（shelf-mkdir-agent.qmd）发 wait=290：设备 Qt 6.10
 /// 的 QML XHR 不设传输超时（2026-09-24 核实，见 qmd 头注；09-22 版按"缺省 30s 超时"的假设把这里定成 28）。
@@ -56,7 +57,7 @@ pub fn router(st: Arc<State>) -> Router {
         .post("/staging/rename", bind(&st, |s, r| {
             let j = r.json()?;
             let new_name = s.staging.rename(j.str("name")?, j.str("newName")?).map_err(ApiError::bad)?;
-            s.bus.publish("books", "staging");
+            s.bus.publish(ev::AREA, ev::STAGING);
             Ok(Reply::ok(&serde_json::json!({"ok": true, "name": new_name})))
         }))
         .post("/staging", bind(&st, staging_upload))
@@ -70,7 +71,7 @@ pub fn router(st: Arc<State>) -> Router {
             // folder 空＝书库根；非空＝书库根下这个名字的文件夹，没有会先经 mkdir 队列建出来再投，见 XochitlDelivery::ensure_folder。
             // 排进与直接导入共用的后台作业队列，一次一本（见 jobs.rs）。
             s.staging.spawn_deliver(&name, j.str_or("folder", ""), &s.jobs, s.bus.clone()).map_err(ApiError::bad)?;
-            s.bus.publish("books", "staging"); // 立即推一次，UI 马上看到这条目进入 busy 状态
+            s.bus.publish(ev::AREA, ev::STAGING); // 立即推一次，UI 马上看到这条目进入 busy 状态
             Ok(Reply::ok(&serde_json::json!({"ok": true, "message": format!("《{name}》已开始投递，完成后自动刷新"), "async": true})))
         }))
         // ── 漫画页边距待办（QML 代理 shelf-comic-margins.qmd 在书打开时查；见 comic_margins.rs）──
@@ -105,13 +106,13 @@ pub fn router(st: Arc<State>) -> Router {
         .post("/trash/add", bind(&st, |s, r| {
             let j = r.json()?;
             let n = s.trash.add(j.str("uuid")?, j.str("name")?).map_err(ApiError::bad)?;
-            s.bus.publish("books", "trash");
+            s.bus.publish(ev::AREA, ev::TRASH);
             Ok(Reply::ok(&serde_json::json!({"ok": true, "pending": n, "message": "已排队，xochitl 会随即移进回收站"})))
         }))
         .get("/trash/pending", bind(&st, |s, r| {
             let (uuids, pruned) = s.trash.pending_wait(agent_wait(r)).map_err(ApiError::internal)?;
             if pruned > 0 {
-                s.bus.publish("books", "trash");
+                s.bus.publish(ev::AREA, ev::TRASH);
             }
             Ok(Reply::ok(&serde_json::json!({"uuids": uuids})))
         }))
@@ -121,7 +122,7 @@ pub fn router(st: Arc<State>) -> Router {
             let n = s.mkdir.add(r.json()?.str("name")?).map_err(ApiError::bad)?;
             s.invalidate_status(); // 文件夹候选可能变了
             if n > 0 {
-                s.bus.publish("books", "mkdir");
+                s.bus.publish(ev::AREA, ev::MKDIR);
             }
             Ok(Reply::ok(&serde_json::json!({"ok": true, "pending": n})))
         }))
@@ -129,7 +130,7 @@ pub fn router(st: Arc<State>) -> Router {
         .get("/mkdir/pending", bind(&st, |s, r| {
             let (items, pruned) = s.mkdir.pending_wait(agent_wait(r)).map_err(ApiError::internal)?;
             if pruned > 0 {
-                s.bus.publish("books", "mkdir");
+                s.bus.publish(ev::AREA, ev::MKDIR);
             }
             // `items` 带上级文件夹（2026-10-07 按层建）。2026-10-10 删了只放根下项的 `names`：那是给 10-07 前的旧代理留的兼容，
             // 代理与本服务总由 shelf/install.sh 一起装，走不到。
@@ -163,7 +164,7 @@ fn agent_wait(r: &Request<'_>) -> std::time::Duration {
 
 /// 母版库变更类操作的统一收尾：推一条 `books/staging`（网页据此重拉列表，零轮询）再回 `{ok:true}`。
 fn staging_changed(s: &State) -> ApiResult {
-    s.bus.publish("books", "staging");
+    s.bus.publish(ev::AREA, ev::STAGING);
     Ok(Reply::ok(&serde_json::json!({"ok": true})))
 }
 
@@ -175,7 +176,7 @@ fn staging_upload(st: &State, r: &mut Request<'_>) -> ApiResult {
     // 由 `Staging` 内部的落名临界区串行化（见 `staging::Staging` 的 `land` 字段）。
     let items = AssetUploadFlow::in_dir(st.spool.work()).run(&StagingStore(&st.staging), &mut *r.body, &boundary).map_err(ApiError::bad)?;
     if asset::any_ok(&items) {
-        st.bus.publish("books", "staging");
+        st.bus.publish(ev::AREA, ev::STAGING);
     }
     Ok(Reply::ok(&asset::receipt(&items, serde_json::Value::Null)))
 }
@@ -226,7 +227,7 @@ fn import_book(st: &State, r: &mut Request<'_>) -> ApiResult {
         match &res {
             Ok(_) => {
                 invalidate(); // 可能新建了文件夹
-                bus.publish("books", "import");
+                bus.publish(ev::AREA, ev::IMPORT);
             }
             Err(e) => eprintln!("[book-serve] 直接导入《{name}》失败：{e:?}"),
         }

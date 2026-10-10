@@ -15,6 +15,7 @@ use rmsvc_core::paths::Paths;
 use rmsvc_core::xochitl::Xochitl;
 use std::sync::Arc;
 use std::time::Duration;
+use crate::events as ev;
 
 pub struct State {
     pub cfg: BookConfig,
@@ -183,9 +184,9 @@ impl State {
             out.push(o);
         }
         if !out.is_empty() {
-            self.bus.publish("books", "inbox");
+            self.bus.publish(ev::AREA, ev::INBOX);
             if out.iter().any(|o| o.ok) {
-                self.bus.publish("books", "staging");
+                self.bus.publish(ev::AREA, ev::STAGING);
             }
         }
         (out, deferred)
