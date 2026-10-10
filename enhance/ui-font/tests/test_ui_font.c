@@ -16,6 +16,8 @@ int main(void) {
     assert(!ui_font_parse_sans("{\"sans\":\"abc", out, sizeof out));            /* 截断 */
     assert(!ui_font_parse_sans("{\"sans\":\"0123456789\"}", out, 8));           /* 放不下 */
     assert(!ui_font_parse_sans("{\"sans\":null}", out, sizeof out));
+    /* 值恰好是 "sans" 时不能遮住真正的键（2026-10-10 前的 strstr 扫描在这里整条放弃，拿不到 Foo） */
+    assert(ui_font_parse_sans("{\"serif\":\"sans\",\"sans\":\"Foo\"}", out, sizeof out) && !strcmp(out, "Foo"));
 
     volatile double x = 0.0;
     assert(cos(x) == 1.0);

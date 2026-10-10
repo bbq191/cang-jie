@@ -24,6 +24,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include "minijson.h"
 #include "scan.h"
 #include "pattern.h"
 #include "trampoline_aarch64.h"
@@ -78,8 +79,9 @@ static int cj_hl_glyph_is_cjk(long scene, int idx) {
 
 /* 运行时开关：从 reading-qol.json 读 hlSnapCjk 到 g_hl_expand_neuter（设置页
  * 「笔记增强」/shelf 网页「管理→系统增强」都写这同一个键，两边改哪边都算数）。
- * 划线才调，非热路径，每次读一次即可，无需 mtime。极简字段扫描、不引 JSON 库。
- * fail-safe：文件缺失/字段缺失/读失败 → 不改，保持编译期默认（修复开）。 */
+ * 划线才调，非热路径，每次读一次即可，无需 mtime。解析用 shared/minijson（2026-10-10 起；
+ * 以前是这里的 strstr 扫描，值恰好等于键名、或嵌套对象里有同名键时会认错）。
+ * fail-safe：文件缺失/字段缺失/读失败/不是布尔 → 不改，保持当前值（初始为修复开）。 */
 static void cj_hl_refresh_config(void) {
     FILE *f = fopen(CJ_READING_QOL_PATH, "rb");
     if (!f) return;
@@ -87,12 +89,7 @@ static void cj_hl_refresh_config(void) {
     size_t n = fread(buf, 1, sizeof(buf) - 1, f);
     fclose(f);
     buf[n] = '\0';
-    const char *p = strstr(buf, "\"hlSnapCjk\"");
-    if (!p) return;
-    p += 11;  /* 跳过 "hlSnapCjk" 本身（含两个引号，共 11 字节） */
-    while (*p == ':' || *p == ' ' || *p == '\t') p++;
-    if (strncmp(p, "true", 4) == 0) g_hl_expand_neuter = 1;
-    else if (strncmp(p, "false", 5) == 0) g_hl_expand_neuter = 0;
+    cj_json_get_bool(buf, "hlSnapCjk", &g_hl_expand_neuter);
 }
 
 static void cj_hl_expand_handler(long scene, void *rng_v) {

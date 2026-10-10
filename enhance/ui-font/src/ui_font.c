@@ -31,6 +31,8 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+#include "minijson.h"
+
 #define TAG "[ui-font]"
 #ifndef CONFIG_PATH
 #define CONFIG_PATH "/home/root/.local/share/shelf/ui-font.json" /* host 测试用 -D 覆盖 */
@@ -73,31 +75,11 @@ static void qstr_to_ascii(const QStringRaw *q, char *out, size_t cap) {
     out[n] = 0;
 }
 
-/* 从配置文件取 "sans" 的值（UTF-8，原样）。极简扫描、不引 JSON 库：只认 \" 与 \\ 两种转义，
- * 遇到别的转义（如 \u）整条放弃——font-serve 写的是 fontconfig 家族名，不会有这些。
- * 返回 1 = 拿到非空值。 */
+/* 从配置文件取 "sans" 的值（UTF-8，原样）。解析用 shared/minijson（2026-10-10 起，逻辑就是这里原来那份：
+ * 只认 \" 与 \\ 两种转义，遇到别的转义（如 \u）整条放弃——font-serve 写的是 fontconfig 家族名，不会有这些；
+ * 另外只认顶层对象的键，值恰好是 "sans" 时不再把真正的键遮住）。返回 1 = 拿到非空值。 */
 int ui_font_parse_sans(const char *json, char *out, size_t cap) {
-    const char *k = strstr(json, "\"sans\"");
-    if (!k) return 0;
-    const char *p = k + 6;
-    while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') p++;
-    if (*p++ != ':') return 0;
-    while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') p++;
-    if (*p++ != '"') return 0;
-    size_t n = 0;
-    for (; *p && *p != '"'; p++) {
-        char c = *p;
-        if (c == '\\') {
-            p++;
-            if (*p != '"' && *p != '\\') return 0;
-            c = *p;
-        }
-        if (n + 1 >= cap) return 0;
-        out[n++] = c;
-    }
-    if (*p != '"') return 0;
-    out[n] = 0;
-    return n > 0;
+    return cj_json_get_string(json, "sans", out, cap) && out[0];
 }
 
 static int read_config_sans(char *out, size_t cap) {

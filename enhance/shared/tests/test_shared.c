@@ -1,5 +1,5 @@
-/* enhance/shared/ 四个纯工具文件（scan.c/pattern.c/trampoline_aarch64.c/trampoline_patch.c）
- * 的 host 侧单元测试——2026-09-16 补（全项目现状核查 P1 条目：这几个文件此前被
+/* enhance/shared/ 几个纯工具文件（scan.c/pattern.c/trampoline_aarch64.c/trampoline_patch.c，
+ * 2026-10-10 加 minijson.c）的 host 侧单元测试——2026-09-16 补（全项目现状核查 P1 条目：这几个文件此前被
  * hl-snap/handwriting-stroke 两个"涉及 xovi/mprotect 的高危代码路径"共用，却完全零自动化
  * 覆盖，只能靠真机验证）。
  *
@@ -16,6 +16,7 @@
  *
  * 跑法：cd enhance/shared && make test（host gcc，不需要 aarch64 交叉工具链）。
  */
+#include "../minijson.h"
 #include "../pattern.h"
 #include "../scan.h"
 #include "../trampoline_aarch64.h"
@@ -46,6 +47,49 @@ void *__wrap_mmap(void *addr, size_t len, int prot, int flags, int fd, off_t off
         failures++; \
     } \
 } while (0)
+
+/* ── minijson.c（2026-10-10，审计 EN-1：hl-snap/ui-font 各自的 strstr 扫描收进这里）──────────── */
+
+static int jbool(const char *json, int start) { /* 拿到就返回值，拿不到返回 start（扩展的用法：保持原值） */
+    int v = start;
+    cj_json_get_bool(json, "hlSnapCjk", &v);
+    return v;
+}
+
+static void test_minijson_bool(void) {
+    CHECK(jbool("{\"hlSnapCjk\":false}", 1) == 0);
+    CHECK(jbool("{ \"a\": 1,\n  \"hlSnapCjk\" :\ttrue }", 0) == 1);
+    CHECK(jbool("{\"hwStrokeNibMinRatio\":0.6,\"hlSnapCjk\":true}", 0) == 1);  /* 设备上真实的形状 */
+    /* 旧 hl-snap 实现（strstr 找 "hlSnapCjk"）的三个错，scratch 里逐字复制旧函数跑过：分别得 1 / 0 / 0 */
+    CHECK(jbool("{\"lastToggled\":\"hlSnapCjk\",\"hlSnapCjk\":false}", 1) == 0); /* 值恰好等于键名，不能遮住真键 */
+    CHECK(jbool("{\"x\":{\"hlSnapCjk\":false},\"hlSnapCjk\":true}", 1) == 1);   /* 嵌套对象里的同名键不算 */
+    CHECK(jbool("{\"hlSnapCjk\" false}", 1) == 1);                                  /* 键后没冒号：不认 */
+    CHECK(jbool("{\"s\":\"a\\\"hlSnapCjk\\\":false\",\"hlSnapCjk\":true}", 0) == 1); /* 转义引号里的"键" */
+    CHECK(jbool("[{\"hlSnapCjk\":false}]", 1) == 1);   /* 顶层不是对象 */
+    CHECK(jbool("{\"hlSnapCjk\":\"false\"}", 1) == 1); /* 字符串不是布尔 */
+    CHECK(jbool("{\"hlSnapCjk\":truex}", 0) == 0);
+    CHECK(jbool("{\"hlSnapCjk\":", 1) == 1);           /* 截断 */
+    CHECK(jbool("{\"a\":\"unterminated", 1) == 1);
+    CHECK(jbool("", 1) == 1);
+    CHECK(jbool("{}", 0) == 0);
+    CHECK(jbool("{\"a\":[1,{\"b\":2}],\"hlSnapCjk\":false}", 1) == 0); /* 数组/嵌套之后的顶层键照样找得到 */
+}
+
+static void test_minijson_string(void) {
+    char out[64];
+    CHECK(cj_json_get_string("{\"sans\":\"Sarasa UI SC\",\"serif\":\"\"}", "sans", out, sizeof out) && !strcmp(out, "Sarasa UI SC"));
+    CHECK(cj_json_get_string("{ \"serif\": \"X\",\n  \"sans\" :  \"A \\\"B\\\" \\\\C\" }", "sans", out, sizeof out) && !strcmp(out, "A \"B\" \\C"));
+    CHECK(cj_json_get_string("{\"sans\":\"\"}", "sans", out, sizeof out) && out[0] == 0);  /* 空串也算拿到 */
+    CHECK(!cj_json_get_string("{\"serif\":\"X\"}", "sans", out, sizeof out));
+    CHECK(!cj_json_get_string("{\"sans\":\"\\u4e2d\"}", "sans", out, sizeof out));        /* 不认的转义整条放弃 */
+    CHECK(!cj_json_get_string("{\"sans\":\"abc", "sans", out, sizeof out));                 /* 截断 */
+    CHECK(!cj_json_get_string("{\"sans\":\"0123456789\"}", "sans", out, 8));                /* 放不下 */
+    CHECK(!cj_json_get_string("{\"sans\":null}", "sans", out, sizeof out));
+    CHECK(!cj_json_get_string("{\"sans\":\"x\"}", "sans", out, 0));
+    /* 旧 ui-font 实现：值恰好是 "sans" 时 strstr 先撞上它、后面不是冒号就整条放弃，拿不到真正的 sans */
+    CHECK(cj_json_get_string("{\"serif\":\"sans\",\"sans\":\"Foo\"}", "sans", out, sizeof out) && !strcmp(out, "Foo"));
+    CHECK(cj_json_get_string("{\"sans\":\"中文 家族\"}", "sans", out, sizeof out) && !strcmp(out, "中文 家族")); /* UTF-8 原样 */
+}
 
 /* ── pattern.c ─────────────────────────────────────────────────────────── */
 
@@ -438,6 +482,9 @@ static void test_patch_target_stub_alloc_fail_restores_rx(void) {
 }
 
 int main(void) {
+    test_minijson_bool();
+    test_minijson_string();
+
     test_pattern_unique_hit();
     test_pattern_zero_hits_fails();
     test_pattern_multi_hits_fails();

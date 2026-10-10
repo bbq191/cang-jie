@@ -5,7 +5,7 @@ AARCH64_CC ?= aarch64-linux-gnu-gcc
 # 基础设施）。2026-09-11 起改为**剥离移植**（独立副本，不再路径引用 chinese-ime/
 # langhook/src——那边挪出仓库后不再适合当活跃路径依赖），见 ../shared/PROVENANCE.md。
 SHARED_DIR = ../shared
-SHARED_SRC = $(SHARED_DIR)/scan.c $(SHARED_DIR)/pattern.c $(SHARED_DIR)/trampoline_aarch64.c $(SHARED_DIR)/trampoline_patch.c
+SHARED_SRC = $(SHARED_DIR)/scan.c $(SHARED_DIR)/pattern.c $(SHARED_DIR)/trampoline_aarch64.c $(SHARED_DIR)/trampoline_patch.c $(SHARED_DIR)/minijson.c
 # EXTRA_CFLAGS：CI 传 -Werror（交叉编译零警告门槛）；平常为空，产物与不加时逐字节相同
 CFLAGS_COMMON = -std=gnu17 -Wall -Wextra -g -ffile-prefix-map=$(CURDIR)=. -I$(SHARED_DIR) $(EXTRA_CFLAGS)
 
