@@ -26,7 +26,7 @@ use crate::ops::OpRegistry;
 use crate::staging::{Staging, MAX_DIRECT_BYTES};
 use rmsvc_core::formats::{mime_of, sniff};
 use rmsvc_core::fs::{clean_dir, plain_name, same_content, Content, ScratchFile};
-use rmsvc_core::xochitl::{find_documents_since, is_uuid_shape, read_meta, Delivery, Metadata, Xochitl};
+use rmsvc_core::xochitl::{is_uuid_shape, read_meta, Delivery, Metadata, Xochitl};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -247,8 +247,7 @@ impl Importer {
         let _serial = rmsvc_core::sync::lock(&CLAIM);
         // xochitl 收 `/upload` 时当场排版，回 2xx 前大书能挂好几分钟（2026-10-07《阿加莎全集》8 分多钟）。
         stage("上传给 xochitl");
-        let since = rmsvc_core::clock::now_ms().saturating_sub(2_000);
-        let before: std::collections::HashSet<String> = find_documents_since(lib, since).into_iter().map(|d| d.uuid).collect();
+        let snap = crate::delivery::Claim::snapshot(lib);
         let wait = match self.xochitl.upload_file_into(part, name, mime_of(name), folder) {
             Ok(Delivery::Delivered(_)) => self.claim_wait,
             Ok(Delivery::LikelyDelivered(_)) => self.claim_wait_slow,
@@ -256,12 +255,7 @@ impl Importer {
         };
         stage("等 xochitl 排版");
         // 先查一次（真机导入当下同步渲染，回执时多半已经落盘），没有再等书库目录的变化（事件驱动，此前每 200ms 扫一遍书库）。
-        let claim = || {
-            find_documents_since(lib, since)
-                .into_iter()
-                .find(|d| !before.contains(&d.uuid) && same_content(&lib.join(format!("{}.epub", d.uuid)), Content::File(part)))
-                .map(|d| d.uuid)
-        };
+        let claim = || snap.find(lib, part);
         rmsvc_core::fswatch::wait_for(lib, CLAIM_DEBOUNCE, wait, claim).ok_or_else(|| {
             ImportError::Failed(format!("已上传给 xochitl，但 {} 秒内没在书库里认出《{name}》（可能稍后才出现；先在设备上看一眼，别马上重试，免得重复）", wait.as_secs()))
         })

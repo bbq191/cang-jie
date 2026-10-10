@@ -39,14 +39,15 @@ impl Staging {
             }
             return Err(format!("《{name}》{} MB 超过 xochitl 上传上限（{} MB），也走不了大文件通道（超过 1GB，或造不出占位文档），没有加入", size >> 20, self.native_limit >> 20));
         }
-        // 全程不把整本读进内存：上传走 `upload_file`（流式发送体，见 rmsvc_core::xochitl 文档），自检只读 OPF 里的书名。
-        // 自检计划在上传前算好（投书时刻要早于 xochitl 给文档的 createdTime）。书名和漫画页边距标记从同一次打开的 zip 里取。
+        // 全程不把整本读进内存：上传走 `upload_file_into`（流式发送体，见 rmsvc_core::xochitl 文档），自检只读 OPF 里的书名。
+        // 自检计划在上传前算好：书库快照要在 xochitl 建出这份文档之前拍（见 `delivery::Claim`）。书名和漫画页边距标记从同一次打开的 zip 里取。
         let render = (formats::ext_of(name) == "epub").then(|| {
             let mut book = shelf_conv::epub::Book::open(&p).ok();
             RenderPlan {
                 name: name.to_string(),
                 title: book.as_ref().and_then(|b| b.title()),
-                since_ms: rmsvc_core::clock::now_ms(),
+                path: p.clone(),
+                claim: crate::delivery::Claim::snapshot(self.xochitl.library_dir()),
                 comic_margins: book.as_mut().and_then(|b| b.reader_margins()),
             }
         });

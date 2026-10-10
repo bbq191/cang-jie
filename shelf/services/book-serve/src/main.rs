@@ -6,6 +6,7 @@ mod agent_failures;
 mod api;
 mod comic_margins;
 mod config;
+mod delivery;
 mod import;
 mod import_jobs;
 mod mkdir;

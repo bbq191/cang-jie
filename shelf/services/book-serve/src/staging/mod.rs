@@ -58,12 +58,16 @@ pub struct StagingEntry {
     pub busy: bool,
 }
 
-/// 投原生成功后交给自检线程的计划：投书时刻（毫秒，圈"之后进库"的候选）+ 文件名 / dc:title（认书用）+ 漫画页边距。
+/// 投原生成功后交给自检线程的计划：上传前的书库快照 + 母版路径（按字节认书）+ 文件名 / dc:title（母版已被删、改名时按书名认）
+/// + 漫画页边距。
 #[derive(Clone, Debug, PartialEq)]
 pub struct RenderPlan {
     pub name: String,
     pub title: Option<String>,
-    pub since_ms: u64,
+    /// 母版库里这本书的路径。
+    pub path: PathBuf,
+    /// 上传前拍的书库快照（见 [`crate::delivery::Claim`]）。
+    pub claim: crate::delivery::Claim,
     /// 按页边距模式排的漫画：导入完成后登记"首次打开时设成这个页边距"（见 `comic_margins.rs`）；其余 `None`。
     pub comic_margins: Option<u32>,
 }
