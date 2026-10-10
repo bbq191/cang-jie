@@ -1,26 +1,26 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 430" font-family="Noto Sans CJK SC, sans-serif">
-<defs><marker id="mk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker></defs>
-<rect x="0" y="0" width="1000" height="430" fill="#fbfbfa"/>
-<text x="500" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">改了 qmd 补丁，上机前怎么离线验证</text>
-<text x="500" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">qmldiff 有两个子命令看着都像"检查"，只有 apply-diffs 真的把补丁打到真实 QML 上（2026-09-30 实测）</text>
-<rect x="40" y="80" width="430" height="200" rx="10" fill="#fdf1ec" stroke="#c0602d" stroke-width="1.6" stroke-dasharray="6 4"/>
-<text x="255" y="104" text-anchor="middle" font-size="14" font-weight="bold" fill="#b0451f">✗ qmldiff check-compatibility</text>
-<text x="56" y="132" font-size="11.8" fill="#444">基本不做校验：</text>
-<text x="56" y="154" font-size="11.8" fill="#444">· 喂一份语法都不对的垃圾 qmd，照样报"无错误"</text>
-<text x="56" y="176" font-size="11.8" fill="#444">· 查不出 ({}) 对象字面量这类会让整份补丁</text>
-<text x="68" y="194" font-size="11.8" fill="#444">在设备上不应用的写法</text>
-<text x="56" y="216" font-size="11.8" fill="#444">· 不核对 LOCATE 锚点在真实 QML 里能不能命中</text>
-<text x="56" y="250" font-size="12" font-weight="bold" fill="#b0451f">它说"通过"什么都不说明，不要拿它验证</text>
-<rect x="530" y="80" width="430" height="200" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
-<text x="745" y="104" text-anchor="middle" font-size="14" font-weight="bold" fill="#2f7d45">✓ qmldiff apply-diffs 实跑</text>
-<text x="546" y="132" font-size="11.8" fill="#444">1  从固件 xochitl 里解出要改的真实 QML</text>
-<text x="546" y="154" font-size="11.8" fill="#444">2  放到 hashtab 里对应的资源路径下</text>
-<text x="546" y="176" font-size="11.8" fill="#444">3  用 asivery/qmldiff 的 apply-diffs 真正应用一遍</text>
-<text x="546" y="198" font-size="11.8" fill="#444">4  看每个 AFFECT 是否应用、插入位置对不对</text>
-<text x="546" y="220" font-size="11.8" fill="#444">5  qmllint 比补丁前后报错数（应一致）</text>
-<text x="546" y="250" font-size="12" font-weight="bold" fill="#2f7d45">桩 QML 只能证语法，证不了锚点命中</text>
-<rect x="40" y="306" width="920" height="96" rx="10" fill="#f1f1ef" stroke="#8a8a8a" stroke-width="1.6"/>
-<text x="56" y="330" font-size="13" font-weight="bold" fill="#1a1a1a">还要记住</text>
-<text x="56" y="354" font-size="11.8" fill="#444">· 本机新编的 qmldiff 可能比设备上的宽松：qmd 里照旧不写 ({})，handler 一律用 { … } 块</text>
-<text x="56" y="376" font-size="11.8" fill="#444">· 离线过了也只是"能打上"；qmd 要整机重启才被 xochitl 读进去，真机上看 journal 里自己打的加载日志才算生效</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 400" font-family="Noto Sans SC, Noto Sans CJK SC, PingFang SC, sans-serif">
+<defs><marker id="qv-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#64748B"/></marker></defs>
+<rect width="100%" height="100%" fill="#FFFFFF"/>
+<text xml:space="preserve" x="600.0" y="36" font-size="18" font-weight="bold" fill="#1F2937" text-anchor="middle">改了 qmd 补丁，上机前怎么离线验证</text>
+<text xml:space="preserve" x="600.0" y="60" font-size="12" fill="#6B7280" text-anchor="middle">qmldiff 有两个子命令看着都像「检查」，只有 apply-diffs 真的把补丁打到真实 QML 上（2026-09-30 实测）</text>
+<rect x="30" y="90" width="540" height="170" rx="8" fill="#FEF2F2" stroke="#EF4444" stroke-width="1.5"/>
+<text xml:space="preserve" x="44" y="112" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">× qmldiff check-compatibility：不能用来验证</text>
+<text xml:space="preserve" x="44" y="133" font-size="12" fill="#1F2937" text-anchor="start">基本不做校验：</text>
+<text xml:space="preserve" x="44" y="152" font-size="12" fill="#1F2937" text-anchor="start">· 喂一份语法都不对的垃圾 qmd，照样报「无错误」</text>
+<text xml:space="preserve" x="44" y="171" font-size="12" fill="#1F2937" text-anchor="start">· 查不出 ({}) 这类会让整份补丁在设备上不应用的写法</text>
+<text xml:space="preserve" x="44" y="190" font-size="12" fill="#1F2937" text-anchor="start">· 不核对 LOCATE 锚点在真实 QML 里能不能命中</text>
+<text xml:space="preserve" x="44" y="209" font-size="12" fill="#1F2937" text-anchor="start"></text>
+<text xml:space="preserve" x="44" y="228" font-size="12" fill="#1F2937" text-anchor="start">它说「通过」，什么都不说明</text>
+<rect x="630" y="90" width="540" height="170" rx="8" fill="#ECFDF5" stroke="#10B981" stroke-width="1.5"/>
+<text xml:space="preserve" x="644" y="112" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">✓ qmldiff apply-diffs 实跑</text>
+<text xml:space="preserve" x="644" y="133" font-size="12" fill="#1F2937" text-anchor="start">1. 从设备固件的 xochitl 二进制里解出要改的真实 QML</text>
+<text xml:space="preserve" x="644" y="152" font-size="12" fill="#1F2937" text-anchor="start">2. 按 hashtab 放到对应的资源路径下</text>
+<text xml:space="preserve" x="644" y="171" font-size="12" fill="#1F2937" text-anchor="start">3. 用 asivery/qmldiff 的 apply-diffs 真正应用一遍</text>
+<text xml:space="preserve" x="644" y="190" font-size="12" fill="#1F2937" text-anchor="start">4. 看每个 AFFECT 是否应用、插入位置对不对</text>
+<text xml:space="preserve" x="644" y="209" font-size="12" fill="#1F2937" text-anchor="start">5. qmllint 比补丁前后的报错数</text>
+<text xml:space="preserve" x="644" y="228" font-size="12" fill="#1F2937" text-anchor="start">桩 QML 只能证明语法，证明不了锚点命中</text>
+<rect x="30" y="284" width="1140" height="92" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text xml:space="preserve" x="44" y="306" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">还要记住</text>
+<text xml:space="preserve" x="44" y="327" font-size="12" fill="#1F2937" text-anchor="start">· 本机新编的 qmldiff 可能比设备上的宽松：qmd 里照旧不写 ({})，handler 一律用 { … } 块</text>
+<text xml:space="preserve" x="44" y="346" font-size="12" fill="#1F2937" text-anchor="start">· 离线过了只说明「能打上」；qmd 要整机重启才被 xochitl 读进去，真机上看 journal 里自己打的加载日志才算生效</text>
 </svg>

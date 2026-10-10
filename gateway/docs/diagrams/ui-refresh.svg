@@ -1,88 +1,74 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 630" font-family="Noto Sans CJK SC, sans-serif">
-<defs><marker id="mk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker></defs>
-<rect x="0" y="0" width="1240" height="630" fill="#fbfbfa"/>
-<text x="620.0" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">网页什么时候向网关要数据（gateway/ui/*.js）</text>
-<text x="620.0" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">原则：不轮询；只在“第一次看到”“切回来”“收到事件”三种时刻取数，而且只取受影响的那一块</text>
-<rect x="40" y="80" width="360" height="125" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
-<text x="52" y="100" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">① 打开页面</text>
-<text x="52" y="122" text-anchor="start" font-size="10.5" fill="#3a3a3a">取语言包 → /api/services（每项带 seg）</text>
-<text x="52" y="137" text-anchor="start" font-size="10.5" fill="#3a3a3a">（10-09 起不再为映射另取 /api/manage）</text>
-<text x="52" y="152" text-anchor="start" font-size="10.5" fill="#3a3a3a">只渲染第一个 tab「传书」，其余 tab 只建按钮</text>
-<text x="52" y="167" text-anchor="start" font-size="10.5" fill="#3a3a3a">打开页面 09-24 实测 7 个请求（此前 33 个：</text>
-<text x="52" y="182" text-anchor="start" font-size="10.5" fill="#3a3a3a">后台 tab 全部渲染取数，首个 tab 还重复取一遍）</text>
-<rect x="440" y="80" width="360" height="125" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
-<text x="452" y="100" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">② 点某个 tab</text>
-<text x="452" y="122" text-anchor="start" font-size="10.5" fill="#3a3a3a">第一次点：渲染它（渲染本身就取一次数据）</text>
-<text x="452" y="137" text-anchor="start" font-size="10.5" fill="#3a3a3a">以后再点：只刷新（refresh）</text>
-<text x="452" y="152" text-anchor="start" font-size="10.5" fill="#3a3a3a">刷新都经 coalesce 合并：同一区块同一时刻</text>
-<text x="452" y="167" text-anchor="start" font-size="10.5" fill="#3a3a3a">最多一个刷新在飞，突发事件不会叠请求</text>
-<text x="452" y="182" text-anchor="start" font-size="10.5" fill="#3a3a3a">逛完四个 tab 共约 35 个请求（原 69）</text>
-<rect x="840" y="80" width="360" height="125" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
-<text x="852" y="100" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">③ 事件到达（SSE /api/events?ka=60）</text>
-<text x="852" y="122" text-anchor="start" font-size="10.5" fill="#3a3a3a">一条长连接收所有服务的“该刷新了”信号</text>
-<text x="852" y="137" text-anchor="start" font-size="10.5" fill="#3a3a3a">页面隐藏：只记“当前 tab 待刷”，不取数</text>
-<text x="852" y="152" text-anchor="start" font-size="10.5" fill="#3a3a3a">隐藏超过 60 秒：主动断开 SSE</text>
-<text x="852" y="167" text-anchor="start" font-size="10.5" fill="#3a3a3a">重新可见：重连，连上后补刷当前 tab</text>
-<text x="852" y="182" text-anchor="start" font-size="10.5" fill="#3a3a3a">浏览器放弃重连（如网关重启后 401）：先查登录，</text>
-<text x="852" y="197" text-anchor="start" font-size="10.5" fill="#3a3a3a">否则 5 秒起翻倍、封顶 5 分钟退避重开（09-30）</text>
-<polyline points="400,142 440,142" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
-<polyline points="800,142 840,142" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
-<text x="620" y="224" text-anchor="middle" font-size="12" fill="#1a1a1a" font-weight="bold">事件怎么分派：先按 area 找到 tab，前台 tab 再按事件来源决定取多少（09-25 第四轮审计起）</text>
-<rect x="40" y="280" width="224" height="170" rx="10" fill="#f3effa" stroke="#7a5cb0" stroke-width="1.6"/>
-<text x="52" y="300" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">area = manage</text>
-<text x="52" y="322" text-anchor="start" font-size="10.5" fill="#3a3a3a">服务启停 / 上下线</text>
-<text x="52" y="337" text-anchor="start" font-size="10.5" fill="#3a3a3a">重取 /api/services：</text>
-<text x="52" y="352" text-anchor="start" font-size="10.5" fill="#3a3a3a">tab 集合变了 → 整页重载</text>
-<text x="52" y="367" text-anchor="start" font-size="10.5" fill="#3a3a3a">没变 → 只刷管理台</text>
-<text x="52" y="390" text-anchor="start" font-size="10.5" fill="#3a3a3a">页面隐藏时只记一笔，</text>
-<text x="52" y="405" text-anchor="start" font-size="10.5" fill="#3a3a3a">可见或重连后补查（10-09）</text>
-<rect x="274" y="280" width="224" height="170" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
-<text x="286" y="300" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">目标 tab 不在前台</text>
-<text x="286" y="322" text-anchor="start" font-size="10.5" fill="#3a3a3a">只记“待刷”（dirty）</text>
-<text x="286" y="337" text-anchor="start" font-size="10.5" fill="#3a3a3a">切过去时再刷</text>
-<text x="286" y="352" text-anchor="start" font-size="10.5" fill="#3a3a3a">不在后台白白取数</text>
-<rect x="508" y="280" width="224" height="170" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
-<text x="520" y="300" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">「传书」母版库：分三档</text>
-<text x="520" y="322" text-anchor="start" font-size="10" fill="#3a3a3a">① 网关自己的批量事件（没有 svc）</text>
-<text x="520" y="337" text-anchor="start" font-size="10" fill="#3a3a3a">   → 1 个请求：batch/status</text>
-<text x="520" y="352" text-anchor="start" font-size="10" fill="#3a3a3a">② book-serve 的 staging / render 事件</text>
-<text x="520" y="367" text-anchor="start" font-size="10" fill="#3a3a3a">   （入库、忙态开始/结束、落库结果）</text>
-<text x="520" y="382" text-anchor="start" font-size="10" fill="#3a3a3a">   → 2 个：母版库列表 + batch/status</text>
-<text x="520" y="397" text-anchor="start" font-size="10" fill="#3a3a3a">③ 其余（mkdir/trash/inbox、切tab、</text>
-<text x="520" y="412" text-anchor="start" font-size="10" fill="#3a3a3a">   重连、操作后）→ 全量 3 个（加 books/status）</text>
-<text x="520" y="432" text-anchor="start" font-size="10" fill="#8a8a8a">（10-07 删闸门前 2/3/4 个；09-29 前全量 6）</text>
-<rect x="742" y="280" width="224" height="170" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
-<text x="754" y="300" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">「其他」：只刷发事件的那块</text>
-<text x="754" y="322" text-anchor="start" font-size="10.5" fill="#3a3a3a">字体 / 壁纸两块子面板</text>
-<text x="754" y="337" text-anchor="start" font-size="10.5" fill="#3a3a3a">事件来自哪个服务就只刷哪块</text>
-<text x="754" y="352" text-anchor="start" font-size="10.5" fill="#3a3a3a">（各 2～3 个请求；09-25 前整块一起刷，</text>
-<text x="754" y="367" text-anchor="start" font-size="10.5" fill="#3a3a3a">约 7 个；KOReader 子面板 09-29 已撤）</text>
-<text x="754" y="382" text-anchor="start" font-size="10.5" fill="#3a3a3a">认不出来源时退回整块刷新</text>
-<rect x="976" y="280" width="224" height="170" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
-<text x="988" y="300" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">「笔记」：不打断打字</text>
-<text x="988" y="322" text-anchor="start" font-size="10.5" fill="#3a3a3a">事件刷新不再查 /api/enhance/status</text>
-<text x="988" y="337" text-anchor="start" font-size="10.5" fill="#3a3a3a">（切回 tab 时才查「导入 md」开关）</text>
-<text x="988" y="352" text-anchor="start" font-size="10.5" fill="#3a3a3a">焦点在本 tab 的输入框里时先不重画，</text>
-<text x="988" y="367" text-anchor="start" font-size="10.5" fill="#3a3a3a">只记一笔；失焦后补刷一次</text>
-<text x="988" y="382" text-anchor="start" font-size="10.5" fill="#3a3a3a">（此前重画会把光标连输入框一起换掉）</text>
-<polyline points="152.0,240 1088.0,240" fill="none" stroke="#555" stroke-width="1.6"/>
-<polyline points="1020,205 1020,240" fill="none" stroke="#555" stroke-width="1.6"/>
-<polyline points="152.0,240 152.0,280" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
-<polyline points="386.0,240 386.0,280" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
-<polyline points="620.0,240 620.0,280" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
-<polyline points="854.0,240 854.0,280" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
-<polyline points="1088.0,240 1088.0,280" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
-<rect x="40" y="480" width="560" height="125" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
-<text x="52" y="500" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">管理页一次刷新取什么</text>
-<text x="52" y="522" text-anchor="start" font-size="10.5" fill="#3a3a3a">/api/foundation、/api/enhance/status、/api/manage 三个并行</text>
-<text x="52" y="537" text-anchor="start" font-size="10.5" fill="#3a3a3a">/api/enhance/status 只取一次，结果同时给「基石与模块」和</text>
-<text x="52" y="552" text-anchor="start" font-size="10.5" fill="#3a3a3a">「系统增强 / 实验室」的“已加载”徽章</text>
-<rect x="640" y="480" width="560" height="125" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
-<text x="652" y="500" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">网关侧：/api/enhance/status 为什么很便宜（09-24）</text>
-<text x="652" y="522" text-anchor="start" font-size="10.5" fill="#3a3a3a">reading-qol.json 一次请求只读一次（原来 6 个开关各读一遍）</text>
-<text x="652" y="537" text-anchor="start" font-size="10.5" fill="#3a3a3a">xochitl 扩展扫描按 (pid, starttime) 缓存：同一个进程只全量扫一次</text>
-<text x="652" y="552" text-anchor="start" font-size="10.5" fill="#3a3a3a">  /proc + maps，之后每次只读一次 /proc/&lt;pid&gt;/stat 核对（253→1.7µs，host）</text>
-<text x="652" y="567" text-anchor="start" font-size="10.5" fill="#3a3a3a">xochitl 启动不到 30 秒不缓存（xovi 还在逐个加载扩展）</text>
-<text x="652" y="582" text-anchor="start" font-size="10.5" fill="#3a3a3a">qmd 补丁状态照旧每次现算（看文件修改时间）</text>
-<polyline points="600,542 640,542" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 566" font-family="Noto Sans SC, Noto Sans CJK SC, PingFang SC, sans-serif">
+<rect width="100%" height="100%" fill="#FFFFFF"/>
+<defs>
+<marker id="ur-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#64748B"/></marker>
+<marker id="ur-arr-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EF4444"/></marker>
+</defs>
+<text x="620.0" y="34" text-anchor="middle" font-size="18" font-weight="700" fill="#1F2937">网页什么时候向网关要数据（gateway/ui/*.js）</text>
+<text x="620.0" y="56" text-anchor="middle" font-size="12" fill="#6B7280">不轮询；只在"第一次看到""切回来""收到事件"三种时刻取数，而且只取受影响的那一块</text>
+<rect x="30" y="78" width="370" height="108" rx="8" fill="#EFF6FF" stroke="#2563EB" stroke-width="1.5"/>
+<text x="42" y="100" text-anchor="start" font-size="13" font-weight="700" fill="#1F2937">① 打开页面</text>
+<text x="42" y="120" text-anchor="start" font-size="11.5" fill="#1F2937">取语言包 → /api/services（每项带 seg）</text>
+<text x="42" y="137" text-anchor="start" font-size="11.5" fill="#1F2937">只渲染第一个标签「传书」</text>
+<text x="42" y="154" text-anchor="start" font-size="11.5" fill="#1F2937">其余标签第一次切过去才渲染</text>
+<text x="42" y="171" text-anchor="start" font-size="11.5" fill="#1F2937">后台标签不取数</text>
+<rect x="435" y="78" width="370" height="108" rx="8" fill="#EFF6FF" stroke="#2563EB" stroke-width="1.5"/>
+<text x="447" y="100" text-anchor="start" font-size="13" font-weight="700" fill="#1F2937">② 切换标签</text>
+<text x="447" y="120" text-anchor="start" font-size="11.5" fill="#1F2937">第一次：渲染（渲染本身取一次数据）</text>
+<text x="447" y="137" text-anchor="start" font-size="11.5" fill="#1F2937">之后：只刷新</text>
+<text x="447" y="154" text-anchor="start" font-size="11.5" fill="#1F2937">每块刷新经 coalesce 合并：</text>
+<text x="447" y="171" text-anchor="start" font-size="11.5" fill="#1F2937">同一块同一时刻最多一个刷新在飞</text>
+<rect x="840" y="78" width="370" height="108" rx="8" fill="#FFFBEB" stroke="#F59E0B" stroke-width="1.5"/>
+<text x="852" y="100" text-anchor="start" font-size="13" font-weight="700" fill="#1F2937">③ 事件到达（/api/events?ka=60）</text>
+<text x="852" y="120" text-anchor="start" font-size="11.5" fill="#1F2937">按事件的 tab 找顶层标签</text>
+<text x="852" y="137" text-anchor="start" font-size="11.5" fill="#1F2937">不在前台：只记"待刷"</text>
+<text x="852" y="154" text-anchor="start" font-size="11.5" fill="#1F2937">页面隐藏：只记一笔，重新可见再补</text>
+<text x="852" y="171" text-anchor="start" font-size="11.5" fill="#1F2937">agent-failed：全站横幅，与标签无关</text>
+<text x="620" y="214" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1F2937">前台标签自己的 onEvent 按事件来源决定取多少</text>
+<rect x="30" y="232" width="280" height="140" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="42" y="254" text-anchor="start" font-size="13" font-weight="700" fill="#1F2937">管理（manage 事件）</text>
+<text x="42" y="274" text-anchor="start" font-size="11.5" fill="#1F2937">服务上下线 →</text>
+<text x="42" y="291" text-anchor="start" font-size="11.5" fill="#1F2937">重取 /api/services</text>
+<text x="42" y="308" text-anchor="start" font-size="11.5" fill="#1F2937">tab 集合变了整页重载</text>
+<text x="42" y="325" text-anchor="start" font-size="11.5" fill="#1F2937">没变只刷管理台</text>
+<rect x="330" y="232" width="280" height="140" rx="8" fill="#ECFDF5" stroke="#10B981" stroke-width="1.5"/>
+<text x="342" y="254" text-anchor="start" font-size="13" font-weight="700" fill="#1F2937">传书 · 母版库三档</text>
+<text x="342" y="274" text-anchor="start" font-size="11.5" fill="#1F2937">QUEUE：网关 batch 事件</text>
+<text x="342" y="291" text-anchor="start" font-size="11.5" fill="#1F2937">→ 只取 /api/batch/status</text>
+<text x="342" y="308" text-anchor="start" font-size="11.5" fill="#1F2937">LIST：staging / render</text>
+<text x="342" y="325" text-anchor="start" font-size="11.5" fill="#1F2937">→ 母版库列表 + 批量状态</text>
+<text x="342" y="342" text-anchor="start" font-size="11.5" fill="#1F2937">FULL：其余 → 再加</text>
+<text x="342" y="359" text-anchor="start" font-size="11.5" fill="#1F2937">/api/books/status</text>
+<rect x="630" y="232" width="280" height="140" rx="8" fill="#ECFDF5" stroke="#10B981" stroke-width="1.5"/>
+<text x="642" y="254" text-anchor="start" font-size="13" font-weight="700" fill="#1F2937">其他（字体 / 壁纸）</text>
+<text x="642" y="274" text-anchor="start" font-size="11.5" fill="#1F2937">按 svc 只刷发事件</text>
+<text x="642" y="291" text-anchor="start" font-size="11.5" fill="#1F2937">那个服务的子面板</text>
+<text x="642" y="308" text-anchor="start" font-size="11.5" fill="#1F2937">认不出来源才整块刷新</text>
+<rect x="930" y="232" width="280" height="140" rx="8" fill="#ECFDF5" stroke="#10B981" stroke-width="1.5"/>
+<text x="942" y="254" text-anchor="start" font-size="13" font-weight="700" fill="#1F2937">笔记（refreshGate）</text>
+<text x="942" y="274" text-anchor="start" font-size="11.5" fill="#1F2937">hold：动作在跑或结果提示</text>
+<text x="942" y="291" text-anchor="start" font-size="11.5" fill="#1F2937">停留中，挡住事件刷新</text>
+<text x="942" y="308" text-anchor="start" font-size="11.5" fill="#1F2937">quiet：刚自己重取过，</text>
+<text x="942" y="325" text-anchor="start" font-size="11.5" fill="#1F2937">1 秒内 entries 事件不理</text>
+<text x="942" y="342" text-anchor="start" font-size="11.5" fill="#1F2937">editing：正在输入先记一笔</text>
+<text x="942" y="359" text-anchor="start" font-size="11.5" fill="#1F2937">notebooks：只刷同步状态</text>
+<polyline points="1025,186 1025,222 170,222 170,230" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#ur-arr)"/>
+<polyline points="470,222 470,230" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#ur-arr)"/>
+<polyline points="770,222 770,230" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#ur-arr)"/>
+<polyline points="1070,222 1070,230" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#ur-arr)"/>
+<rect x="30" y="400" width="580" height="140" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="42" y="422" text-anchor="start" font-size="13" font-weight="700" fill="#1F2937">事件流连接（dom.js liveStream）</text>
+<text x="42" y="442" text-anchor="start" font-size="11.5" fill="#1F2937">页面隐藏超过 60 秒主动断开 SSE，重新可见时重连</text>
+<text x="42" y="459" text-anchor="start" font-size="11.5" fill="#1F2937">重连成功：补查 /api/services、补刷当前标签</text>
+<text x="42" y="476" text-anchor="start" font-size="11.5" fill="#1F2937">浏览器放弃重连（连上时回 401 / 503 → CLOSED）：</text>
+<text x="42" y="493" text-anchor="start" font-size="11.5" fill="#1F2937">先查一次 /api/session（401 跳登录页），</text>
+<text x="42" y="510" text-anchor="start" font-size="11.5" fill="#1F2937">否则 5 秒起、翻倍、封顶 5 分钟退避重开</text>
+<text x="42" y="527" text-anchor="start" font-size="11.5" fill="#1F2937">页头圆点：绿 = 已连上，红 = 断开 / 重连中</text>
+<rect x="640" y="400" width="570" height="140" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="652" y="422" text-anchor="start" font-size="13" font-weight="700" fill="#1F2937">管理页一次刷新取什么</text>
+<text x="652" y="442" text-anchor="start" font-size="11.5" fill="#1F2937">并行取 /api/foundation、/api/enhance/status、/api/manage</text>
+<text x="652" y="459" text-anchor="start" font-size="11.5" fill="#1F2937">/api/enhance/status 只取一次，结果同时给「基石与模块」、</text>
+<text x="652" y="476" text-anchor="start" font-size="11.5" fill="#1F2937">「系统增强」「实验室」的开关与"已加载"徽章</text>
+<text x="652" y="493" text-anchor="start" font-size="11.5" fill="#1F2937">设备健康：只在切到它或点刷新时取 health + ota；</text>
+<text x="652" y="510" text-anchor="start" font-size="11.5" fill="#1F2937">「清理」二级标签在前台时才取 cleanup</text>
 </svg>

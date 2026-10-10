@@ -4,8 +4,8 @@
 
 - **怎么用**：网关网页「其他 → 壁纸」上传。第一次启用后要**整机重启一次**，之后上传、切换都不用重启。
 - **是什么**：Web 服务，只听本机 `127.0.0.1:8793`，经网关 `/api/wallpapers` 访问；随 `install-all.sh` 的 shelf 步安装。
-- **现状**：真机通（3.28.0.172，2026-09-06 定稿）。2026-10-09 第六轮审计的改动（见下文"最近的改动"）已部署，功能未手测。
-- 代码：`src/main.rs` 路由与子命令，`store.rs` 壁纸池与缩放，`native.rs` 写 xochitl 配置键，`wake.rs` 轮换触发；服务单元 `wallpaper-serve.service`。host 测试 `cargo test`（16 项，2026-10-10 实跑）。
+- **现状**：真机通（3.28.0.172，2026-09-06 定稿；09-24 真机验证"监听休眠读图"轮换）。2026-10-09 的改动已部署、功能未手测；2026-10-10 的改动**未部署**（见下文"最近的改动"）。在整条系统增强线里的位置见[白皮书 3.6 节](../docs/reMarkable系统增强线白皮书.md#36-wallpaper-serve休眠壁纸)。
+- 代码：`src/main.rs` 路由与子命令，`store.rs` 壁纸池与缩放，`native.rs` 写 xochitl 配置键（键名常量 `SLEEP_SCREEN_KEY` 10-10 起在这里），`wake.rs` 轮换触发；服务单元 `wallpaper-serve.service`（`MemoryMax=192M`）。host 测试 `cargo test --locked`（16 项，2026-10-10 实跑）。
 
 ## 接口（经网关前缀 `/api/wallpapers`）
 
@@ -43,19 +43,19 @@ xochitl 有一个隐藏配置键 `xochitl.conf` → `[General] SleepScreenPath=<
 
 **出错与自愈**：10-10 起监听交给基座 `rmsvc_core::fswatch::watch_with`（只听 `IN_CLOSE_NOWRITE`、不防抖）。一开始监听建不起来（如目录不在）时先建目录，再按 5 秒到 5 分钟指数退避重试。壁纸目录被删、被挪走或被卸载时监听失效（`IN_IGNORED` / `IN_MOVE_SELF`），fswatch 按 1 秒起翻倍、5 分钟封顶的间隔等目录回来再挂上；与 09-30 起的旧做法不同，目录不再由监听线程自己建回来，而是等上传入池或服务重启时建（目录不在时池是空的，没东西可轮换）。这条路径没在真机上专门触发过。
 
-**错误码**（10-10 起）：名字不合法 400、池里没有这张图 404、删正在用的那张 409、写 `current.png` / 状态文件 / `xochitl.conf` 失败 500（此前一律 400）。
+**错误码**（10-10 起，未部署）：名字不合法 400、池里没有这张图 404、删正在用的那张 409、写 `current.png` / 状态文件 / `xochitl.conf` 失败 500（此前一律 400）。上传：请求体不是合法 multipart 400、暂存目录建不起来 500（基座 `asset::FlowError`）；单张图装不上记在回执里逐项列出。
 
 不写 `/usr`、不做 bind-mount、没有开机单元和 sleep 钩子，也不起 `journalctl` 子进程。
 
 **首次写键后要整机重启一次** 才会读进这个键；网页壁纸页和 `GET /status` 的 `native.restartPending` 会提示。统一用整机重启（`reboot`）：单独 `systemctl restart xochitl` 有概率在它退出时崩溃，xovi 已生效时更**别**跑 `xovi/start`（见 [`../../docs/INSTALL.md`](../../docs/INSTALL.md)「常见问题」）。
 
-**改 `xochitl.conf` 的纪律**：`rmsvc_core::xochitl_conf` 只动 `[General]` 下这一个键，先写临时文件再 rename、保留原文件权限，首次改前留 `xochitl.conf.shelf-bak`。这个文件里有 DeveloperPassword 和 UserToken，**任何地方都不打印它的行内容**。
+**改 `xochitl.conf` 的纪律**：读写走基座 `rmsvc_core::xochitl_conf`（只管 `[General]` 单键读写，不认识具体键名），只动 `[General]` 下这一个键，先写临时文件再 rename、保留原文件权限，首次改前留 `xochitl.conf.shelf-bak`。这个文件里有 DeveloperPassword 和 UserToken，**任何地方都不打印它的行内容**。
 
 ## 最近的改动
 
 | 日期 | 改动 | 状态 |
 |---|---|---|
-| 2026-10-10 | 监听改用基座 `fswatch::watch_with`（见上"出错与自愈"）；错误码分级；`/events` 心跳读本请求的 `?ka=` | 未部署 |
+| 2026-10-10 | 监听改用基座 `fswatch::watch_with`（见上"出错与自愈"）；错误码分级（含上传整体错误 400 / 500）；`/events` 心跳读本请求的 `?ka=`；`SleepScreenPath` 键名常量从基座搬回本服务 | 未部署 |
 | 2026-10-09 | cover 先裁再缩放（见上表）；壁纸池只认普通文件（目录、半成品不再被轮换选中而报错）；找 xochitl 主进程改读 `/proc`，不再每次 fork `systemctl show`；测试改用 `Paths::sandbox` | 10-09 已部署（部署自检通过），功能未手测 |
 | 2026-09-30 | 收到 `IN_IGNORED` 当出错重建监听 | 已部署，未专门触发 |
 | 2026-09-25 | 去重改按 `/proc/uptime`；退避复位；上传暂存移到 `~/.local/state/shelf/upload/`（/home 分区，启动时清 `.part` 半成品；此前可能落到 tmpfs 占内存） | 已部署，未专门核 |

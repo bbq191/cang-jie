@@ -1,84 +1,76 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 830" font-family="Noto Sans CJK SC, sans-serif">
-<defs><marker id="xh-m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker></defs>
-<rect x="0" y="0" width="1000" height="830" fill="#fbfbfa"/>
-<text x="500" y="32" text-anchor="middle" font-size="20" font-weight="bold" fill="#1a1a1a">xovi 扩展怎么生效：从 xochitl 启动到 hook 起作用</text>
-<text x="500" y="56" text-anchor="middle" font-size="13" fill="#666">hl-snap.so 走这套流程（代码在 enhance/shared/；hw-stroke.so 原也用它，2026-09-30 已移除）；任何一步不满足都退回原生行为</text>
-
-<!-- ① -->
-<rect x="30" y="76" width="600" height="84" rx="10" fill="#eef3fa" stroke="#4a72b0" stroke-width="1.6"/>
-<text x="46" y="99" font-size="14" font-weight="bold" fill="#1a1a1a">① xochitl 启动，xovi 加载扩展</text>
-<text x="46" y="122" font-size="12" fill="#444">systemd drop-in 00-xovi.conf 用 LD_PRELOAD 把 xovi.so 带进 xochitl</text>
-<text x="46" y="142" font-size="12" fill="#444">xovi 把 ~/xovi/extensions.d/ 下每个文件都当扩展加载（备份绝不能放这里）</text>
-<rect x="660" y="76" width="310" height="84" rx="10" fill="#fdf0ec" stroke="#b0553a" stroke-width="1.4"/>
-<text x="674" y="99" font-size="12.5" font-weight="bold" fill="#1a1a1a">✗ xovi 没生效</text>
-<text x="674" y="120" font-size="11.8" fill="#444">真重启后 /etc 被清，所有扩展都不加载</text>
-<text x="674" y="140" font-size="11.8" fill="#444">恢复：xovi-reenable.service 或 xovi/start</text>
-<polyline points="630,118 660,118" fill="none" stroke="#b0553a" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#xh-m)"/>
-<polyline points="65,160 65,182" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#xh-m)"/>
-
-<!-- ② -->
-<rect x="30" y="182" width="600" height="100" rx="10" fill="#eef3fa" stroke="#4a72b0" stroke-width="1.6"/>
-<text x="46" y="205" font-size="14" font-weight="bold" fill="#1a1a1a">② _xovi_shouldLoad：认不认识这版固件？</text>
-<text x="46" y="228" font-size="12" fill="#444">读 /proc/self/maps，找到 /usr/bin/xochitl 的可执行段（连同被 mprotect 切开的续段）</text>
-<text x="46" y="248" font-size="12" fill="#444">在段里搜「特征码」：目标函数开头 32~40 字节的原始机器码</text>
-<text x="46" y="268" font-size="12" fill="#444">恰好命中 1 处才返回 1（加载）——不认地址，只认代码长相</text>
-<rect x="660" y="182" width="310" height="100" rx="10" fill="#fdf0ec" stroke="#b0553a" stroke-width="1.4"/>
-<text x="674" y="205" font-size="12.5" font-weight="bold" fill="#1a1a1a">✗ 命中 0 处或多处</text>
-<text x="674" y="226" font-size="11.8" fill="#444">（新固件改了这个函数）→ 返回 0，</text>
-<text x="674" y="245" font-size="11.8" fill="#444">不加载，xochitl 按原生行为跑</text>
-<text x="674" y="266" font-size="11.8" fill="#444">PDF 渲染子进程里也走这条，属正常</text>
-<polyline points="630,232 660,232" fill="none" stroke="#b0553a" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#xh-m)"/>
-<polyline points="65,282 65,304" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#xh-m)"/>
-
-<!-- ③ -->
-<rect x="30" y="304" width="600" height="100" rx="10" fill="#eaf5ee" stroke="#2f7d45" stroke-width="1.6"/>
-<text x="46" y="327" font-size="14" font-weight="bold" fill="#1a1a1a">③ _xovi_construct：装 hook（cj_patch_target）</text>
-<text x="46" y="350" font-size="12" fill="#444">再扫一次拿到目标地址，mprotect 让那一页可写</text>
-<text x="46" y="370" font-size="12" fill="#444">把开头 20 字节抄进新分配的「调用桩」，桩尾跳回原函数第 21 字节</text>
-<text x="46" y="390" font-size="12" fill="#444">再把目标开头改写成跳到我们 handler 的远跳转（这就是 trampoline，见下图）</text>
-<rect x="660" y="304" width="310" height="100" rx="10" fill="#fdf0ec" stroke="#b0553a" stroke-width="1.4"/>
-<text x="674" y="327" font-size="12.5" font-weight="bold" fill="#1a1a1a">✗ 目标没找到 / mprotect / 桩分配失败</text>
-<text x="674" y="348" font-size="11.8" fill="#444">打日志、放弃这个 hook（09-24 起找不到</text>
-<text x="674" y="367" font-size="11.8" fill="#444">目标也打日志），一个字节都不改</text>
-<text x="674" y="388" font-size="11.8" fill="#444">多 hook 的扩展：次要 hook 找不到只跳过自己</text>
-<polyline points="630,354 660,354" fill="none" stroke="#b0553a" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#xh-m)"/>
-
-<!-- inset: patch before/after -->
-<rect x="100" y="424" width="870" height="168" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.3" stroke-dasharray="6 4"/>
-<text x="116" y="447" font-size="13" font-weight="bold" fill="#1a1a1a">patch 前后（ARM64 远跳转正好 20 字节，所以只动函数开头 20 字节）</text>
-<text x="116" y="482" font-size="12" fill="#444">目标函数（patch 前）</text>
-<rect x="330" y="466" width="200" height="26" fill="#f2f2f4" stroke="#7a7a88"/>
-<text x="430" y="484" text-anchor="middle" font-size="11.5" fill="#333">开头 20 字节（序言）</text>
-<rect x="530" y="466" width="420" height="26" fill="#f2f2f4" stroke="#7a7a88"/>
-<text x="740" y="484" text-anchor="middle" font-size="11.5" fill="#333">函数其余部分（不动）</text>
-<text x="116" y="522" font-size="12" fill="#444">目标函数（patch 后）</text>
-<rect x="330" y="506" width="200" height="26" fill="#eaf5ee" stroke="#2f7d45"/>
-<text x="430" y="524" text-anchor="middle" font-size="11.5" fill="#1a1a1a">远跳转 → handler</text>
-<rect x="530" y="506" width="420" height="26" fill="#f2f2f4" stroke="#7a7a88"/>
-<text x="740" y="524" text-anchor="middle" font-size="11.5" fill="#333">函数其余部分（不动）</text>
-<text x="116" y="562" font-size="12" fill="#444">调用桩（新分配内存）</text>
-<rect x="330" y="546" width="200" height="26" fill="#f2f2f4" stroke="#7a7a88"/>
-<text x="430" y="564" text-anchor="middle" font-size="11.5" fill="#333">原来的 20 字节序言</text>
-<rect x="530" y="546" width="200" height="26" fill="#eef3fa" stroke="#4a72b0"/>
-<text x="630" y="564" text-anchor="middle" font-size="11.5" fill="#1a1a1a">远跳转 → 原函数第 21 字节</text>
-<text x="742" y="564" font-size="11.2" fill="#666">⇒ 序言不能含分支/PC 相对寻址</text>
-
-<polyline points="65,404 65,612" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#xh-m)"/>
-
-<!-- ④ -->
-<rect x="30" y="612" width="600" height="90" rx="10" fill="#eaf5ee" stroke="#2f7d45" stroke-width="1.6"/>
-<text x="46" y="635" font-size="14" font-weight="bold" fill="#1a1a1a">④ 运行时：xochitl 每次调这个函数，都先进 handler</text>
-<text x="46" y="658" font-size="12" fill="#444">handler 读 reading-qol.json 的开关（hl-snap 每次划线读）</text>
-<text x="46" y="678" font-size="12" fill="#444">开：改参数或跳过原逻辑；关：原样经调用桩调回原函数</text>
-<rect x="660" y="612" width="310" height="90" rx="10" fill="#fdf0ec" stroke="#b0553a" stroke-width="1.4"/>
-<text x="674" y="635" font-size="12.5" font-weight="bold" fill="#1a1a1a">✗ 配置缺失 / 解析失败 / 越界</text>
-<text x="674" y="657" font-size="11.8" fill="#444">保持默认值：</text>
-<text x="674" y="677" font-size="11.8" fill="#444">hl-snap 默认开</text>
-<polyline points="630,657 660,657" fill="none" stroke="#b0553a" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#xh-m)"/>
-
-<!-- bottom note -->
-<rect x="30" y="722" width="940" height="84" rx="10" fill="#fdf3dc" stroke="#b8860b" stroke-width="1.5"/>
-<text x="46" y="745" font-size="13" font-weight="bold" fill="#1a1a1a">网页上的「已加载 / 未加载」徽章怎么来的</text>
-<text x="46" y="768" font-size="12" fill="#444">网关读 xochitl 主进程的 /proc/&lt;pid&gt;/maps，看里面有没有 extensions.d/&lt;名&gt;.so（gateway/src/enhance/loaded.rs）</text>
-<text x="46" y="789" font-size="12" fill="#444">它只证明 .so 进了进程，走完了 ②；③ 有没有装上要看 journal 里的「hook 安装完成」</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 930" font-family="Noto Sans SC, Noto Sans CJK SC, PingFang SC, sans-serif">
+<defs><marker id="hk-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#64748B"/></marker></defs>
+<rect width="100%" height="100%" fill="#FFFFFF"/>
+<text xml:space="preserve" x="600.0" y="36" font-size="18" font-weight="bold" fill="#1F2937" text-anchor="middle">xovi 扩展怎么生效：从 xochitl 启动到 hook 起作用（以 hl-snap 为例）</text>
+<text xml:space="preserve" x="600.0" y="60" font-size="12" fill="#6B7280" text-anchor="middle">代码在 enhance/shared/；任何一步不满足都退回 xochitl 原生行为，不改一个字节</text>
+<rect x="30" y="84" width="720" height="84" rx="8" fill="#FFFBEB" stroke="#F59E0B" stroke-width="1.5"/>
+<text xml:space="preserve" x="44" y="106" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">① xochitl 启动，xovi 加载扩展</text>
+<text xml:space="preserve" x="44" y="127" font-size="12" fill="#1F2937" text-anchor="start">systemd drop-in（00-xovi.conf）用 LD_PRELOAD 把 xovi.so 带进 xochitl</text>
+<text xml:space="preserve" x="44" y="146" font-size="12" fill="#1F2937" text-anchor="start">xovi 把 ~/xovi/extensions.d/ 下每个文件都当扩展加载 —— 备份绝不能放在这里</text>
+<rect x="790" y="84" width="380" height="84" rx="8" fill="#FEF2F2" stroke="#EF4444" stroke-width="1.5"/>
+<text xml:space="preserve" x="804" y="106" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">× xovi 没生效</text>
+<text xml:space="preserve" x="804" y="127" font-size="12" fill="#1F2937" text-anchor="start">/etc 是 tmpfs，真重启后 drop-in 被清，扩展全不加载</text>
+<text xml:space="preserve" x="804" y="146" font-size="12" fill="#1F2937" text-anchor="start">恢复：xovi-reenable.service 开机自动跑 xovi/start</text>
+<polyline points="750,126 788,126" fill="none" stroke="#64748B" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#hk-arr)"/>
+<rect x="30" y="196" width="720" height="104" rx="8" fill="#EFF6FF" stroke="#2563EB" stroke-width="1.5"/>
+<text xml:space="preserve" x="44" y="218" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">② _xovi_shouldLoad：认不认识这版固件？</text>
+<text xml:space="preserve" x="44" y="239" font-size="12" fill="#1F2937" text-anchor="start">读 /proc/self/maps，找 /usr/bin/xochitl 的可执行段（连同被 mprotect 切开的续段）</text>
+<text xml:space="preserve" x="44" y="258" font-size="12" fill="#1F2937" text-anchor="start">在段里搜「特征码」：目标函数开头 40 字节的原始机器码</text>
+<text xml:space="preserve" x="44" y="277" font-size="12" fill="#1F2937" text-anchor="start">恰好命中 1 处才返回 1（加载）—— 认代码长相，不认写死的地址</text>
+<rect x="790" y="196" width="380" height="104" rx="8" fill="#FEF2F2" stroke="#EF4444" stroke-width="1.5"/>
+<text xml:space="preserve" x="804" y="218" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">× 命中 0 处或多处</text>
+<text xml:space="preserve" x="804" y="239" font-size="12" fill="#1F2937" text-anchor="start">新固件改了这个函数 → 返回 0，不加载，</text>
+<text xml:space="preserve" x="804" y="258" font-size="12" fill="#1F2937" text-anchor="start">xochitl 按原生行为跑</text>
+<text xml:space="preserve" x="804" y="277" font-size="12" fill="#1F2937" text-anchor="start">xochitl 拉起的子进程也走这一步，被拒属正常</text>
+<polyline points="750,248 788,248" fill="none" stroke="#64748B" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#hk-arr)"/>
+<polyline points="390,168 390,194" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#hk-arr)"/>
+<rect x="30" y="328" width="720" height="168" rx="8" fill="#ECFDF5" stroke="#10B981" stroke-width="1.5"/>
+<text xml:space="preserve" x="44" y="350" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">③ _xovi_construct → cj_patch_target：装 hook</text>
+<text xml:space="preserve" x="44" y="371" font-size="12" fill="#1F2937" text-anchor="start">再搜一次特征码拿地址；从 maps 记下目标页原来的权限</text>
+<text xml:space="preserve" x="44" y="390" font-size="12" fill="#1F2937" text-anchor="start">mprotect 把那一页改成可读写执行</text>
+<text xml:space="preserve" x="44" y="409" font-size="12" fill="#1F2937" text-anchor="start">逐条检查要被覆盖的 5 条指令（cj_insn_pc_relative）：有 PC 相对寻址就放弃</text>
+<text xml:space="preserve" x="44" y="428" font-size="12" fill="#1F2937" text-anchor="start">把开头 20 字节抄进新分配的「调用桩」，桩尾接一条跳回原函数第 21 字节的远跳转</text>
+<text xml:space="preserve" x="44" y="447" font-size="12" fill="#1F2937" text-anchor="start">把目标开头改写成跳到我们的 handler 的远跳转 → 刷指令缓存</text>
+<text xml:space="preserve" x="44" y="466" font-size="12" fill="#1F2937" text-anchor="start">原本是 r-x 的页恢复成 r-x（2026-10-09 起）</text>
+<rect x="790" y="328" width="380" height="168" rx="8" fill="#FEF2F2" stroke="#EF4444" stroke-width="1.5"/>
+<text xml:space="preserve" x="804" y="350" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">× 任一步失败</text>
+<text xml:space="preserve" x="804" y="371" font-size="12" fill="#1F2937" text-anchor="start">特征码不再唯一（多半被别的扩展先改了）、</text>
+<text xml:space="preserve" x="804" y="390" font-size="12" fill="#1F2937" text-anchor="start">mprotect 失败、调用桩分配失败、</text>
+<text xml:space="preserve" x="804" y="409" font-size="12" fill="#1F2937" text-anchor="start">被覆盖的指令里有 PC 相对寻址（2026-10-10 起）</text>
+<text xml:space="preserve" x="804" y="428" font-size="12" fill="#1F2937" text-anchor="start">→ 打日志、放弃这个 hook，一个字节都不改，</text>
+<text xml:space="preserve" x="804" y="447" font-size="12" fill="#1F2937" text-anchor="start">页权限恢复原样</text>
+<polyline points="750,412 788,412" fill="none" stroke="#64748B" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#hk-arr)"/>
+<polyline points="390,300 390,326" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#hk-arr)"/>
+<rect x="30" y="520" width="1140" height="176" rx="8" fill="none" stroke="#CBD5E1" stroke-width="1.5" stroke-dasharray="6 4"/>
+<text xml:space="preserve" x="44" y="542" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">改写前后（ARM64 远跳转正好 5 条指令 = 20 字节，所以只动函数开头 20 字节）</text>
+<text xml:space="preserve" x="46" y="577" font-size="12" fill="#1F2937" text-anchor="start">目标函数（改写前）</text>
+<rect x="230" y="558" width="260" height="30" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text xml:space="preserve" x="360.0" y="578" font-size="12" fill="#1F2937" text-anchor="middle">开头 20 字节（原序言）</text>
+<rect x="490" y="558" width="420" height="30" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text xml:space="preserve" x="700.0" y="578" font-size="12" fill="#1F2937" text-anchor="middle">函数其余部分（不动）</text>
+<text xml:space="preserve" x="46" y="619" font-size="12" fill="#1F2937" text-anchor="start">目标函数（改写后）</text>
+<rect x="230" y="600" width="260" height="30" rx="8" fill="#ECFDF5" stroke="#10B981" stroke-width="1.5"/>
+<text xml:space="preserve" x="360.0" y="620" font-size="12" fill="#1F2937" text-anchor="middle">远跳转 → handler</text>
+<rect x="490" y="600" width="420" height="30" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text xml:space="preserve" x="700.0" y="620" font-size="12" fill="#1F2937" text-anchor="middle">函数其余部分（不动）</text>
+<text xml:space="preserve" x="46" y="661" font-size="12" fill="#1F2937" text-anchor="start">调用桩（新分配内存）</text>
+<rect x="230" y="642" width="260" height="30" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text xml:space="preserve" x="360.0" y="662" font-size="12" fill="#1F2937" text-anchor="middle">原来的 20 字节序言</text>
+<rect x="490" y="642" width="420" height="30" rx="8" fill="#EFF6FF" stroke="#2563EB" stroke-width="1.5"/>
+<text xml:space="preserve" x="700.0" y="662" font-size="12" fill="#1F2937" text-anchor="middle">远跳转 → 原函数第 21 字节</text>
+<text xml:space="preserve" x="930" y="662" font-size="12" fill="#6B7280" text-anchor="start">⇒ 序言里不能有分支和 PC 相对寻址</text>
+<polyline points="390,496 390,518" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#hk-arr)"/>
+<polyline points="390,696 390,722" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#hk-arr)"/>
+<rect x="30" y="724" width="720" height="84" rx="8" fill="#ECFDF5" stroke="#10B981" stroke-width="1.5"/>
+<text xml:space="preserve" x="44" y="746" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">④ 运行时：xochitl 每次调这个函数，都先进 handler</text>
+<text xml:space="preserve" x="44" y="767" font-size="12" fill="#1F2937" text-anchor="start">handler 现读 reading-qol.json 的 hlSnapCjk（每次划线读一次）</text>
+<text xml:space="preserve" x="44" y="786" font-size="12" fill="#1F2937" text-anchor="start">开：选区第一个字是汉字 → 不调原函数；关或不是汉字 → 经调用桩调原函数</text>
+<rect x="790" y="724" width="380" height="84" rx="8" fill="#FEF2F2" stroke="#EF4444" stroke-width="1.5"/>
+<text xml:space="preserve" x="804" y="746" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">× 配置缺失 / 读不了 / 不是布尔</text>
+<text xml:space="preserve" x="804" y="767" font-size="12" fill="#1F2937" text-anchor="start">保持上一次的值（初始为开）</text>
+<polyline points="750,766 788,766" fill="none" stroke="#64748B" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#hk-arr)"/>
+<rect x="30" y="834" width="1140" height="80" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text xml:space="preserve" x="44" y="856" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">ui-font 走另一条路</text>
+<text xml:space="preserve" x="44" y="877" font-size="12" fill="#1F2937" text-anchor="start">setFont 开头第 3 条就是 PC 相对的 adrp，不能用上面的跳板；ui-font 改的是 xochitl 导入表（.got.plt）里 setFont 那一格，</text>
+<text xml:space="preserve" x="44" y="896" font-size="12" fill="#1F2937" text-anchor="start">不扫特征码、不改代码段。它的 _xovi_shouldLoad 判据是「本进程导入 setFont、Qt 符号齐、dlsym 结果不落在主程序里」。</text>
 </svg>

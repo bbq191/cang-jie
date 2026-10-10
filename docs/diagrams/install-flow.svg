@@ -1,80 +1,194 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 880" font-family="Noto Sans SC, Noto Sans CJK SC, sans-serif">
-<defs><marker id="if-m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker></defs>
-<rect x="0" y="0" width="1000" height="880" fill="#fbfbfa"/>
-<text x="500.0" y="32" text-anchor="middle" font-size="20" font-weight="bold" fill="#1a1a1a">一条命令装完：install-all.sh 的流程</text>
-<text x="500.0" y="56" text-anchor="middle" font-size="13" fill="#666">电脑通过 USB 连设备（10.11.99.1）；可先 --dry-run 纯本机预演；每步幂等，失败不自动重试、不静默跳过</text>
-<rect x="30" y="76" width="940" height="132" rx="10" fill="#f2f2f4" stroke="#7a7a88" stroke-width="1.6" stroke-dasharray="6 4"/>
-<text x="46" y="98" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">① 手动前置（2 样）：属于设备生态、不属于本项目，install-all.sh 不代装；2026-09-29 起不再需要 appload / KOReader</text>
-<rect x="46" y="110" width="449" height="84" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
-<text x="270.5" y="132" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">vellum add xovi</text>
-<text x="270.5" y="154" text-anchor="middle" font-size="12" fill="#444">扩展加载框架：hl-snap / ui-font 插件、开机自动恢复都靠它</text>
-<text x="270.5" y="171" text-anchor="middle" font-size="12" fill="#444">缺了：依赖 xovi 的步骤直接失败</text>
-<rect x="505" y="110" width="449" height="84" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
-<text x="729.5" y="132" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">vellum add qt-resource-rebuilder</text>
-<text x="729.5" y="154" text-anchor="middle" font-size="12" fill="#444">界面补丁（qmd）加载器：字体菜单、界面字体令牌、回收站/建夹代理、翻页等</text>
-<text x="729.5" y="171" text-anchor="middle" font-size="12" fill="#444">缺了：只跳过这几个补丁，网页服务照装</text>
-<polyline points="500,208 500,232" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#if-m)"/>
-<rect x="30" y="232" width="940" height="112" rx="10" fill="#fdf3dc" stroke="#b8860b" stroke-width="1.6"/>
-<text x="500" y="254" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">装前检查（任一项不过：一步都不执行，设备上什么都没改）</text>
-<text x="46" y="276" text-anchor="start" font-size="12.3" fill="#444">① ssh 连通（require_device）：连不上 → 中文排查步骤，退出 1；整轮只查这一次，各步骤直接复用</text>
-<text x="46" y="296" text-anchor="start" font-size="12.3" fill="#444">② 固件安全门：sha256(/usr/bin/xochitl) 对照 firmware-allowlist.txt；不在表内默认拒装，确认无误后 --force</text>
-<text x="46" y="316" text-anchor="start" font-size="12.3" fill="#444">③ 设备预检（只读）：root、/home 可写、剩余空间 &lt;50MB 拒装 / &lt;200MB 警告；报告 xovi · QML 补丁加载器 · dm-verity 现状</text>
-<text x="46" y="336" text-anchor="start" font-size="12.3" fill="#444">④ 全程：设备持带超时的唤醒锁（1200 秒，CJ_AWAKE=0 关）· ssh 保活约 15 秒判断线 · 设备端脚本整份传完才执行</text>
-<polyline points="500,344 500,368" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#if-m)"/>
-<rect x="30" y="368" width="940" height="348" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6" stroke-dasharray="6 4"/>
-<text x="46" y="390" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">② 按步骤表（lib.sh 的 STEP_ORDER）依次执行 —— 共 9 步，卸载用同一张表<tspan font-weight="bold">逆序</tspan>做</text>
-<rect x="46" y="404" width="217" height="264" rx="10" fill="#eaf5ee" stroke="#2f7d45" stroke-width="1.6"/>
-<text x="154" y="428" text-anchor="middle" font-size="14.5" font-weight="bold" fill="#1a1a1a">A · 系统小配置</text>
-<text x="154" y="447" text-anchor="middle" font-size="12" fill="#555">不依赖 xovi</text>
-<text x="58" y="476" text-anchor="start" font-size="12.2" fill="#222">1  chrony-cn</text>
-<text x="58" y="498" text-anchor="start" font-size="12.2" fill="#222">2  chrony-boot-wakelock</text>
-<text x="58" y="520" text-anchor="start" font-size="12.2" fill="#222">3  timezone-cn</text>
-<text x="58" y="542" text-anchor="start" font-size="12.2" fill="#222">4  wifi-watch</text>
-<rect x="273" y="404" width="217" height="264" rx="10" fill="#eef3fa" stroke="#4a72b0" stroke-width="1.6"/>
-<text x="381" y="428" text-anchor="middle" font-size="14.5" font-weight="bold" fill="#1a1a1a">B · xovi 层</text>
-<text x="381" y="447" text-anchor="middle" font-size="12" fill="#555">需要 vellum add xovi</text>
-<text x="285" y="476" text-anchor="start" font-size="12.2" fill="#222">5  xovi-persist（开机补 xovi）</text>
-<text x="285" y="498" text-anchor="start" font-size="12.2" fill="#222">6  hl-snap *（荧光笔吸附）</text>
-<text x="285" y="520" text-anchor="start" font-size="12.2" fill="#222">7  ui-font *（界面字体）</text>
-<rect x="500" y="404" width="217" height="264" rx="10" fill="#f1edf9" stroke="#6d4ab0" stroke-width="1.6"/>
-<text x="608" y="428" text-anchor="middle" font-size="14.5" font-weight="bold" fill="#1a1a1a">C · shelf</text>
-<text x="608" y="447" text-anchor="middle" font-size="12" fill="#555">网关 + 7 个领域服务</text>
-<text x="512" y="476" text-anchor="start" font-size="12.2" fill="#222">8  shelf *（仅其 qmd）</text>
-<text x="512" y="498" text-anchor="start" font-size="12.2" fill="#222">   gateway :443</text>
-<text x="512" y="520" text-anchor="start" font-size="12.2" fill="#222">   book</text>
-<text x="512" y="542" text-anchor="start" font-size="12.2" fill="#222">   font · wallpaper</text>
-<text x="512" y="564" text-anchor="start" font-size="12.2" fill="#222">   ink · transcribe</text>
-<text x="512" y="586" text-anchor="start" font-size="12.2" fill="#222">   mind · note</text>
-<rect x="727" y="404" width="217" height="264" rx="10" fill="#fdf0eb" stroke="#c0602d" stroke-width="1.6"/>
-<text x="835" y="428" text-anchor="middle" font-size="14.5" font-weight="bold" fill="#1a1a1a">D · 按需生效</text>
-<text x="835" y="447" text-anchor="middle" font-size="12" fill="#555">看"待生效标记"，最多整机重启一次</text>
-<text x="739" y="466" text-anchor="start" font-size="11.8" fill="#8a4b00">先清已移除功能的残留：</text>
-<text x="739" y="483" text-anchor="start" font-size="11.8" fill="#8a4b00">   battop、handwriting-stroke</text>
-<text x="739" y="500" text-anchor="start" font-size="11.8" fill="#8a4b00">   （没有就什么都不动）</text>
-<text x="739" y="520" text-anchor="start" font-size="12.2" fill="#222">9  xovi-apply</text>
-<text x="739" y="537" text-anchor="start" font-size="12.2" fill="#222">   有标记/待换入或 xovi 未生效才动：</text>
-<text x="739" y="554" text-anchor="start" font-size="12.2" fill="#222">   先提示“将打断阅读”，等 5 秒</text>
-<text x="739" y="571" text-anchor="start" font-size="12.2" fill="#222">   换入待换入区里的新 .so</text>
-<text x="739" y="588" text-anchor="start" font-size="12.2" fill="#222">   → systemctl reboot 整机重启</text>
-<text x="739" y="605" text-anchor="start" font-size="12.2" fill="#222">   回来后自动跑 verify-on-device</text>
-<text x="739" y="622" text-anchor="start" font-size="12.2" fill="#222">   没装 xovi-persist 时改跑 xovi/start</text>
-<text x="739" y="639" text-anchor="start" font-size="12.2" fill="#222">   无标记且已生效 → 不重启</text>
-<text x="739" y="656" text-anchor="start" font-size="12.2" fill="#a33">   无 xovi 也无 xovi/start → 报错</text>
-<polyline points="263,520 273,520" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#if-m)"/>
-<polyline points="490,520 500,520" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#if-m)"/>
-<polyline points="717,520 727,520" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#if-m)"/>
-<text x="500" y="688" text-anchor="middle" font-size="11.8" fill="#555">* 只落盘（DEFER_XOVI_START=1），且仅在文件内容真的变了时，在设备 /run/cangjie-pending-apply/ 记一个"待生效标记"（设备重启即清）。</text>
-<text x="500" y="706" text-anchor="middle" font-size="11.8" fill="#555">xovi 没有"只重载一个扩展"的机制：全部落盘后由第 9 步统一整机重启一次（不单独重启 xochitl：它退出时可能崩溃）；重复运行、无改动时不重启。</text>
-<polyline points="500,716 500,740" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#if-m)"/>
-<rect x="30" y="740" width="460" height="96" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
-<text x="260" y="762" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">③ 收尾汇总</text>
-<text x="260" y="784" text-anchor="middle" font-size="12.5" fill="#444">已安装 / 已跳过（--skip）/ 已跳过（前置条件不满足）/ 失败</text>
-<text x="260" y="801" text-anchor="middle" font-size="12.5" fill="#444">"前置条件不满足"会写明原因（如 dm-verity 开着）</text>
-<text x="260" y="818" text-anchor="middle" font-size="12.5" fill="#444">失败项看该步骤的原始报错，修好后整条重跑即可</text>
-<rect x="510" y="740" width="460" height="96" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
-<text x="740" y="762" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">④ 浏览器验证</text>
-<text x="740" y="784" text-anchor="middle" font-size="12.5" fill="#444">https://10.11.99.1/  默认密码 shelf，首次登录强制改密</text>
-<text x="740" y="801" text-anchor="middle" font-size="12.5" fill="#444">自动核对里的 ⚠ 遗留项（已移除组件的残留）按提示清</text>
-<text x="500" y="858" text-anchor="middle" font-size="12.5" fill="#555">反悔：sh uninstall-all.sh &lt;host&gt;（先 --dry-run；逆序；最后连已移除组件的残留一起清；chrony-cn / timezone-cn / xovi-apply 不卸）</text>
-<text x="500" y="874" text-anchor="middle" font-size="11.8" fill="#555">真机：整轮安装 09-22/24/25/30 通过、整轮卸载 09-25 通过；10-09 的保活 / 唤醒锁 / 整组传输只有本机模拟，未上真机</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1300 1650" font-family="Noto Sans SC, Noto Sans CJK SC, PingFang SC, sans-serif">
+<rect width="100%" height="100%" fill="#FFFFFF"/>
+<defs><marker id="if-n" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#64748B"/></marker><marker id="if-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EF4444"/></marker><marker id="if-g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#10B981"/></marker></defs>
+<text x="650" y="36" font-size="18" fill="#1F2937" text-anchor="middle" font-weight="bold">安装与卸载流程：install-all.sh / uninstall-all.sh</text>
+<text x="650" y="60" font-size="12" fill="#6B7280" text-anchor="middle">脚本在电脑上跑，经 ssh 把文件推到设备并在设备上执行；任何一步都可以重跑（幂等）</text>
+<rect x="30" y="84" width="1240" height="112" rx="8" fill="none" stroke="#CBD5E1" stroke-width="1.5" stroke-dasharray="6 4"/>
+<text x="44" y="104" font-size="12.5" fill="#6B7280" text-anchor="start" font-weight="bold">① 电脑上</text>
+<rect x="50" y="116" width="330" height="66" rx="8" fill="#EFF6FF" stroke="#2563EB" stroke-width="1.5"/>
+<text x="215" y="142.688" font-size="13" fill="#1F2937" text-anchor="middle" font-weight="bold">sh shelf/build.sh</text>
+<text x="215" y="160.988" font-size="11.5" fill="#6B7280" text-anchor="middle">交叉编译 8 个网页服务（可以先单独跑）</text>
+<rect x="430" y="116" width="400" height="66" rx="8" fill="#EFF6FF" stroke="#2563EB" stroke-width="1.5"/>
+<text x="630" y="142.688" font-size="13" fill="#1F2937" text-anchor="middle" font-weight="bold">sh packaging/install-all.sh &lt;设备&gt;</text>
+<text x="630" y="160.988" font-size="11.5" fill="#6B7280" text-anchor="middle">设备缺省 10.11.99.1（USB）；先加 --dry-run 看计划</text>
+<polyline points="380,149 428,149" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#if-n)"/>
+<rect x="880" y="116" width="370" height="66" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="1065" y="133.775" font-size="13" fill="#1F2937" text-anchor="middle" font-weight="bold">前提</text>
+<text x="1065" y="152.075" font-size="11.5" fill="#6B7280" text-anchor="middle">电脑能免密 ssh 到设备 root</text>
+<text x="1065" y="169.9" font-size="11.5" fill="#6B7280" text-anchor="middle">设备上已手动装好 xovi、qt-resource-rebuilder</text>
+<rect x="30" y="216" width="1240" height="158" rx="8" fill="none" stroke="#CBD5E1" stroke-width="1.5" stroke-dasharray="6 4"/>
+<text x="44" y="236" font-size="12.5" fill="#6B7280" text-anchor="start" font-weight="bold">② 装前检查：任何一项不过就一步都不执行，设备上什么都没改</text>
+<rect x="50" y="250" width="270" height="108" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="185" y="279.863" font-size="13" fill="#1F2937" text-anchor="middle" font-weight="bold">连通检查</text>
+<text x="185" y="298.163" font-size="11.5" fill="#6B7280" text-anchor="middle">ssh 执行 true，8 秒连不上就停</text>
+<text x="185" y="315.988" font-size="11.5" fill="#6B7280" text-anchor="middle">打印排查步骤（休眠/IP/host key/免密）</text>
+<text x="185" y="333.812" font-size="11.5" fill="#6B7280" text-anchor="middle">退出码 1</text>
+<rect x="360" y="250" width="470" height="108" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="595" y="270.95" font-size="13" fill="#1F2937" text-anchor="middle" font-weight="bold">预检（一次 ssh 往返做完）</text>
+<text x="595" y="289.25" font-size="11.5" fill="#6B7280" text-anchor="middle">取 /usr/bin/xochitl 的 sha256；必须是 root、/home 可写</text>
+<text x="595" y="307.075" font-size="11.5" fill="#6B7280" text-anchor="middle">/home 剩余不到 50MB 拒装、不到 200MB 警告</text>
+<text x="595" y="324.9" font-size="11.5" fill="#6B7280" text-anchor="middle">报告 xovi、qt-resource-rebuilder、dm-verity 现状（只报告）</text>
+<text x="595" y="342.725" font-size="11.5" fill="#6B7280" text-anchor="middle">都通过才拿唤醒锁 cangjie-deploy（20 分钟后自动释放）</text>
+<rect x="870" y="250" width="380" height="108" rx="8" fill="#FFFBEB" stroke="#F59E0B" stroke-width="1.5"/>
+<text x="1060" y="279.863" font-size="13" fill="#1F2937" text-anchor="middle" font-weight="bold">固件安全门</text>
+<text x="1060" y="298.163" font-size="11.5" fill="#6B7280" text-anchor="middle">sha256 对照仓库白名单 + 本机白名单</text>
+<text x="1060" y="315.988" font-size="11.5" fill="#6B7280" text-anchor="middle">不在名单里：拒装</text>
+<text x="1060" y="333.812" font-size="11.5" fill="#6B7280" text-anchor="middle">加 --force 才装，并把哈希记进本机白名单</text>
+<polyline points="320,304 358,304" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#if-n)"/>
+<polyline points="830,304 868,304" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#if-n)"/>
+<rect x="30" y="394" width="1240" height="400" rx="8" fill="none" stroke="#CBD5E1" stroke-width="1.5" stroke-dasharray="6 4"/>
+<text x="44" y="414" font-size="12.5" fill="#6B7280" text-anchor="start" font-weight="bold">③ 按步骤表 STEP_ORDER 依次执行（每步也能单独跑 packaging/deploy-&lt;步骤名&gt;.sh）</text>
+<rect x="50" y="430" width="230" height="60" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="165" y="453.688" font-size="13" fill="#1F2937" text-anchor="middle" font-weight="bold">1 chrony-cn</text>
+<text x="165" y="471.988" font-size="11.5" fill="#6B7280" text-anchor="middle">改 /etc：国内校时服务器</text>
+<rect x="295" y="430" width="230" height="60" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="410" y="453.688" font-size="13" fill="#1F2937" text-anchor="middle" font-weight="bold">2 chrony-boot-wakelock</text>
+<text x="410" y="471.988" font-size="11.5" fill="#6B7280" text-anchor="middle">/usr 单元：开机等首次校时</text>
+<polyline points="280,460 294,460" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#if-n)"/>
+<rect x="540" y="430" width="230" height="60" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="655" y="453.688" font-size="13" fill="#1F2937" text-anchor="middle" font-weight="bold">3 timezone-cn</text>
+<text x="655" y="471.988" font-size="11.5" fill="#6B7280" text-anchor="middle">改 /etc：时区 Asia/Shanghai</text>
+<polyline points="525,460 539,460" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#if-n)"/>
+<rect x="785" y="430" width="230" height="60" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="900" y="453.688" font-size="13" fill="#1F2937" text-anchor="middle" font-weight="bold">4 wifi-watch</text>
+<text x="900" y="471.988" font-size="11.5" fill="#6B7280" text-anchor="middle">/usr 单元：WiFi 假死看护</text>
+<polyline points="770,460 784,460" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#if-n)"/>
+<rect x="1030" y="430" width="230" height="60" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="1145" y="453.688" font-size="13" fill="#1F2937" text-anchor="middle" font-weight="bold">5 xovi-persist</text>
+<text x="1145" y="471.988" font-size="11.5" fill="#6B7280" text-anchor="middle">/usr 单元：开机自动恢复 xovi</text>
+<polyline points="1015,460 1029,460" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#if-n)"/>
+<rect x="50" y="526" width="293" height="60" rx="8" fill="#EFF6FF" stroke="#2563EB" stroke-width="1.5"/>
+<text x="196.5" y="549.688" font-size="13" fill="#1F2937" text-anchor="middle" font-weight="bold">6 hl-snap</text>
+<text x="196.5" y="567.987" font-size="11.5" fill="#6B7280" text-anchor="middle">荧光笔吸附 .so，只落盘</text>
+<rect x="356" y="526" width="293" height="60" rx="8" fill="#EFF6FF" stroke="#2563EB" stroke-width="1.5"/>
+<text x="502.5" y="549.688" font-size="13" fill="#1F2937" text-anchor="middle" font-weight="bold">7 ui-font</text>
+<text x="502.5" y="567.987" font-size="11.5" fill="#6B7280" text-anchor="middle">界面字体 .so，只落盘</text>
+<polyline points="343,556 355,556" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#if-n)"/>
+<rect x="662" y="526" width="293" height="60" rx="8" fill="#EFF6FF" stroke="#2563EB" stroke-width="1.5"/>
+<text x="808.5" y="549.688" font-size="13" fill="#1F2937" text-anchor="middle" font-weight="bold">8 shelf</text>
+<text x="808.5" y="567.987" font-size="11.5" fill="#6B7280" text-anchor="middle">8 个服务 + 7 个界面补丁（补丁只落盘）</text>
+<polyline points="649,556 661,556" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#if-n)"/>
+<rect x="968" y="526" width="293" height="60" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="1114.5" y="549.688" font-size="13" fill="#1F2937" text-anchor="middle" font-weight="bold">清理已移除的组件</text>
+<text x="1114.5" y="567.987" font-size="11.5" fill="#6B7280" text-anchor="middle">battop、handwriting-stroke 的残留</text>
+<polyline points="955,556 967,556" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#if-n)"/>
+<polyline points="1145,490 1145,508 196.5,508 196.5,525" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#if-n)"/>
+<rect x="50" y="610" width="385" height="140" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="62" y="646.95" font-size="13" fill="#1F2937" text-anchor="start" font-weight="bold">推单个文件（/usr 单元、扩展 .so）</text>
+<text x="62" y="665.25" font-size="11.5" fill="#6B7280" text-anchor="start">设备端先比对暂存文件的 md5</text>
+<text x="62" y="683.075" font-size="11.5" fill="#6B7280" text-anchor="start">一致：不传，同一次往返直接安装</text>
+<text x="62" y="700.9" font-size="11.5" fill="#6B7280" text-anchor="start">不一致：只 scp 变了的，再复核 md5</text>
+<text x="62" y="718.725" font-size="11.5" fill="#6B7280" text-anchor="start">复核不过：删暂存，安装一条都不执行</text>
+<rect x="457" y="610" width="385" height="140" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="469" y="646.95" font-size="13" fill="#1F2937" text-anchor="start" font-weight="bold">推书架载荷（shelf 步）</text>
+<text x="469" y="665.25" font-size="11.5" fill="#6B7280" text-anchor="start">tar 确定性打包：同一份内容 = 同一个 md5</text>
+<text x="469" y="683.075" font-size="11.5" fill="#6B7280" text-anchor="start">设备上记的 .payload-md5 相同：不重传</text>
+<text x="469" y="700.9" font-size="11.5" fill="#6B7280" text-anchor="start">否则整包传过去，md5 + 解包核对</text>
+<text x="469" y="718.725" font-size="11.5" fill="#6B7280" text-anchor="start">核对通过才换掉 shelf-pkg，否则旧的不动</text>
+<rect x="864" y="610" width="386" height="140" rx="8" fill="#FFFBEB" stroke="#F59E0B" stroke-width="1.5"/>
+<text x="876" y="646.95" font-size="13" fill="#1F2937" text-anchor="start" font-weight="bold">“只落盘”是什么意思</text>
+<text x="876" y="665.25" font-size="11.5" fill="#6B7280" text-anchor="start">xochitl 正用旧 .so：新版先放进待换入区</text>
+<text x="876" y="683.075" font-size="11.5" fill="#6B7280" text-anchor="start">~/.cangjie-stage/so-pending/（不在 extensions.d）</text>
+<text x="876" y="700.9" font-size="11.5" fill="#6B7280" text-anchor="start">真写入了新内容才记待生效标记</text>
+<text x="876" y="718.725" font-size="11.5" fill="#6B7280" text-anchor="start">/run/cangjie-pending-apply/（设备重启即清）</text>
+<text x="650" y="776" font-size="11.5" fill="#6B7280" text-anchor="middle">扩展和界面补丁只在 xochitl 启动时读取，所以 6–8 步先把文件放好，最后由第 9 步统一整机重启一次</text>
+<rect x="30" y="814" width="1240" height="150" rx="8" fill="none" stroke="#CBD5E1" stroke-width="1.5" stroke-dasharray="6 4"/>
+<text x="44" y="834" font-size="12.5" fill="#6B7280" text-anchor="start" font-weight="bold">④ 某一步失败（退出码非 0）时：不自动重试、不回滚</text>
+<rect x="50" y="848" width="250" height="98" rx="8" fill="#FEF2F2" stroke="#EF4444" stroke-width="1.5"/>
+<text x="175" y="881.775" font-size="13" fill="#1F2937" text-anchor="middle" font-weight="bold">这一步记“失败”</text>
+<text x="175" y="900.075" font-size="11.5" fill="#6B7280" text-anchor="middle">打印原始报错</text>
+<text x="175" y="917.9" font-size="11.5" fill="#6B7280" text-anchor="middle">再用 ssh 探一次设备</text>
+<rect x="350" y="848" width="430" height="98" rx="8" fill="#FEF2F2" stroke="#EF4444" stroke-width="1.5"/>
+<text x="565" y="872.862" font-size="13" fill="#1F2937" text-anchor="middle" font-weight="bold">设备连不上了（休眠/拔线/WiFi 掉线）</text>
+<text x="565" y="891.162" font-size="11.5" fill="#6B7280" text-anchor="middle">后面的步骤都不执行，汇总里记“未执行”</text>
+<text x="565" y="908.987" font-size="11.5" fill="#6B7280" text-anchor="middle">设备回来后重跑同一条命令即可补齐</text>
+<text x="565" y="926.812" font-size="11.5" fill="#6B7280" text-anchor="middle">唤醒锁不去放，到点自动释放</text>
+<rect x="830" y="848" width="420" height="98" rx="8" fill="#FFFBEB" stroke="#F59E0B" stroke-width="1.5"/>
+<text x="1040" y="872.862" font-size="13" fill="#1F2937" text-anchor="middle" font-weight="bold">设备还连得上</text>
+<text x="1040" y="891.162" font-size="11.5" fill="#6B7280" text-anchor="middle">继续执行后面互不相干的步骤</text>
+<text x="1040" y="908.987" font-size="11.5" fill="#6B7280" text-anchor="middle">但最后不整机重启：xovi-apply 记“前置条件不满足”</text>
+<text x="1040" y="926.812" font-size="11.5" fill="#6B7280" text-anchor="middle">已落盘的改动留着，修好后重跑时一起生效</text>
+<polyline points="300,884 348,884" fill="none" stroke="#EF4444" stroke-width="1.5" marker-end="url(#if-r)"/>
+<text x="324" y="876" font-size="10.5" fill="#6B7280" text-anchor="middle">连不上</text>
+<polyline points="300,918 315,918 315,956 1040,956 1040,947" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#if-n)"/>
+<text x="800" y="951" font-size="10.5" fill="#6B7280" text-anchor="middle">连得上</text>
+<rect x="30" y="984" width="1240" height="268" rx="8" fill="none" stroke="#CBD5E1" stroke-width="1.5" stroke-dasharray="6 4"/>
+<text x="44" y="1004" font-size="12.5" fill="#6B7280" text-anchor="start" font-weight="bold">⑤ 第 9 步 xovi-apply（前面各步都成功时才执行）：让落盘的改动生效</text>
+<rect x="50" y="1018" width="300" height="92" rx="8" fill="#EFF6FF" stroke="#2563EB" stroke-width="1.5"/>
+<text x="200" y="1048.78" font-size="13" fill="#1F2937" text-anchor="middle" font-weight="bold">需要生效吗？</text>
+<text x="200" y="1067.08" font-size="11.5" fill="#6B7280" text-anchor="middle">有待生效标记，或待换入区里有 .so，</text>
+<text x="200" y="1084.9" font-size="11.5" fill="#6B7280" text-anchor="middle">或 xovi 还没在 xochitl 里生效</text>
+<rect x="50" y="1144" width="300" height="80" rx="8" fill="#ECFDF5" stroke="#10B981" stroke-width="1.5"/>
+<text x="200" y="1177.69" font-size="13" fill="#1F2937" text-anchor="middle" font-weight="bold">不需要：不重启</text>
+<text x="200" y="1195.99" font-size="11.5" fill="#6B7280" text-anchor="middle">同一次往返放掉唤醒锁，结束</text>
+<polyline points="200,1110 200,1142" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#if-n)"/>
+<text x="212" y="1130" font-size="11" fill="#6B7280" text-anchor="start">否</text>
+<rect x="400" y="1018" width="200" height="92" rx="8" fill="#FFFBEB" stroke="#F59E0B" stroke-width="1.5"/>
+<text x="500" y="1057.69" font-size="13" fill="#1F2937" text-anchor="middle" font-weight="bold">提示“将打断阅读”</text>
+<text x="500" y="1075.99" font-size="11.5" fill="#6B7280" text-anchor="middle">等 5 秒（可 Ctrl-C）</text>
+<polyline points="350,1064 398,1064" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#if-n)"/>
+<text x="374" y="1056" font-size="11" fill="#6B7280" text-anchor="middle">是</text>
+<rect x="640" y="1018" width="270" height="92" rx="8" fill="#FFFBEB" stroke="#F59E0B" stroke-width="1.5"/>
+<text x="775" y="1048.78" font-size="13" fill="#1F2937" text-anchor="middle" font-weight="bold">换入 .so → 清标记 → reboot</text>
+<text x="775" y="1067.08" font-size="11.5" fill="#6B7280" text-anchor="middle">这一段忽略断线信号：</text>
+<text x="775" y="1084.9" font-size="11.5" fill="#6B7280" text-anchor="middle">电脑断开也会把重启排上</text>
+<polyline points="600,1064 638,1064" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#if-n)"/>
+<rect x="950" y="1018" width="300" height="92" rx="8" fill="#ECFDF5" stroke="#10B981" stroke-width="1.5"/>
+<text x="1100" y="1048.78" font-size="13" fill="#1F2937" text-anchor="middle" font-weight="bold">开机：xovi-reenable</text>
+<text x="1100" y="1067.08" font-size="11.5" fill="#6B7280" text-anchor="middle">换入剩下的 .so，恢复 xovi</text>
+<text x="1100" y="1084.9" font-size="11.5" fill="#6B7280" text-anchor="middle">扩展和界面补丁随 xochitl 载入</text>
+<polyline points="910,1064 948,1064" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#if-n)"/>
+<text x="929" y="1124" font-size="10.5" fill="#6B7280" text-anchor="middle">整机重启 20–60 秒</text>
+<rect x="640" y="1144" width="610" height="80" rx="8" fill="#EFF6FF" stroke="#2563EB" stroke-width="1.5"/>
+<text x="945" y="1168.78" font-size="13" fill="#1F2937" text-anchor="middle" font-weight="bold">电脑端等设备回来后自动核对</text>
+<text x="945" y="1187.08" font-size="11.5" fill="#6B7280" text-anchor="middle">等断开（≤60 秒）→ 等回来（≤240 秒）→ 再等 20 秒</text>
+<text x="945" y="1204.9" font-size="11.5" fill="#6B7280" text-anchor="middle">跑 verify-on-device.sh：9 节只读检查，逐项 ✓/⚠/✗，有 ✗ 这一步记失败</text>
+<polyline points="1100,1110 1100,1142" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#if-n)"/>
+<text x="400" y="1180" font-size="11" fill="#6B7280" text-anchor="start">例外：没装 xovi-reenable 且 xovi 未生效 →</text>
+<text x="400" y="1198" font-size="11" fill="#6B7280" text-anchor="start">改跑 xovi/start；连 xovi/start 都没有 →</text>
+<text x="400" y="1216" font-size="11" fill="#6B7280" text-anchor="start">报错、不重启（先 vellum add xovi）</text>
+<rect x="30" y="1272" width="1240" height="62" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="650" y="1296.69" font-size="13" fill="#1F2937" text-anchor="middle" font-weight="bold">收尾汇总（五栏）</text>
+<text x="650" y="1314.99" font-size="11.5" fill="#6B7280" text-anchor="middle">已安装 · 已跳过（--skip）· 已跳过（前置条件不满足，非失败）· 失败 · 未执行（设备连不上）</text>
+<rect x="30" y="1354" width="1240" height="276" rx="8" fill="none" stroke="#CBD5E1" stroke-width="1.5" stroke-dasharray="6 4"/>
+<text x="44" y="1374" font-size="12.5" fill="#6B7280" text-anchor="start" font-weight="bold">⑥ 卸载：sh packaging/uninstall-all.sh &lt;设备&gt;（同一张步骤表，倒过来执行）</text>
+<rect x="50" y="1390" width="230" height="46" rx="8" fill="#EFF6FF" stroke="#2563EB" stroke-width="1.5"/>
+<text x="165" y="1415.6" font-size="13" fill="#1F2937" text-anchor="middle" font-weight="bold">连通检查 + 拿唤醒锁</text>
+<rect x="295" y="1390" width="230" height="46" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="410" y="1415.6" font-size="13" fill="#1F2937" text-anchor="middle" font-weight="bold">shelf</text>
+<polyline points="280,1413 294,1413" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#if-n)"/>
+<rect x="540" y="1390" width="230" height="46" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="655" y="1415.6" font-size="13" fill="#1F2937" text-anchor="middle" font-weight="bold">ui-font</text>
+<polyline points="525,1413 539,1413" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#if-n)"/>
+<rect x="785" y="1390" width="230" height="46" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="900" y="1415.6" font-size="13" fill="#1F2937" text-anchor="middle" font-weight="bold">hl-snap</text>
+<polyline points="770,1413 784,1413" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#if-n)"/>
+<rect x="1030" y="1390" width="230" height="46" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="1145" y="1415.6" font-size="13" fill="#1F2937" text-anchor="middle" font-weight="bold">xovi-persist</text>
+<polyline points="1015,1413 1029,1413" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#if-n)"/>
+<rect x="50" y="1466" width="185" height="50" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="142.5" y="1493.4" font-size="12" fill="#1F2937" text-anchor="middle" font-weight="bold">wifi-watch</text>
+<rect x="253" y="1466" width="185" height="50" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="345.5" y="1493.4" font-size="12" fill="#1F2937" text-anchor="middle" font-weight="bold">chrony-boot-wakelock</text>
+<polyline points="235,1491 252,1491" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#if-n)"/>
+<rect x="456" y="1466" width="185" height="50" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="548.5" y="1484.88" font-size="12" fill="#1F2937" text-anchor="middle" font-weight="bold">handwriting-stroke</text>
+<text x="548.5" y="1502.08" font-size="11" fill="#6B7280" text-anchor="middle">已移除，清旧设备残留</text>
+<polyline points="438,1491 455,1491" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#if-n)"/>
+<rect x="659" y="1466" width="185" height="50" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="751.5" y="1484.88" font-size="12" fill="#1F2937" text-anchor="middle" font-weight="bold">battop</text>
+<text x="751.5" y="1502.08" font-size="11" fill="#6B7280" text-anchor="middle">已移除，清旧设备残留</text>
+<polyline points="641,1491 658,1491" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#if-n)"/>
+<rect x="862" y="1466" width="185" height="50" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="954.5" y="1484.88" font-size="12" fill="#1F2937" text-anchor="middle" font-weight="bold">sidebar-entry</text>
+<text x="954.5" y="1502.08" font-size="11" fill="#6B7280" text-anchor="middle">已退役，清旧设备残留</text>
+<polyline points="844,1491 861,1491" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#if-n)"/>
+<rect x="1065" y="1466" width="185" height="50" rx="8" fill="#ECFDF5" stroke="#10B981" stroke-width="1.5"/>
+<text x="1157.5" y="1493.4" font-size="12" fill="#1F2937" text-anchor="middle" font-weight="bold">清暂存 + 放唤醒锁</text>
+<polyline points="1047,1491 1064,1491" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#if-n)"/>
+<polyline points="1145,1436 1145,1451 142.5,1451 142.5,1465" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#if-n)"/>
+<rect x="50" y="1534" width="1200" height="78" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="650" y="1557.42" font-size="11" fill="#6B7280" text-anchor="middle">不卸：chrony-cn、timezone-cn（改的是配置，备份在 cangjie-backups/）、xovi-apply（只是个动作）；vellum、xovi、qt-resource-rebuilder 不是本项目装的，也不卸</text>
+<text x="650" y="1574.47" font-size="11" fill="#6B7280" text-anchor="middle">默认保留：母版库、配置、证书、字体/壁纸池、cangjie-backups/。dm-verity 开着时 /usr 单元删不掉，会保留它们要用的程序，等可写后再跑一次</text>
+<text x="650" y="1591.52" font-size="11" fill="#6B7280" text-anchor="middle">卸完不重启：已加载的扩展和界面补丁要等下次重启才停用。想马上停：在设备上 reboot（不要 systemctl restart xochitl）</text>
 </svg>

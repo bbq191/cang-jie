@@ -1,88 +1,77 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 744" font-family="Noto Sans CJK SC, Source Han Sans SC, sans-serif">
-<defs>
-<marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker>
-</defs>
-<rect x="0" y="0" width="1100" height="744" fill="#fbfbfa"/>
-<text x="550" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">书架怎么让 xochitl "自己动手"：四个 qmd 代理（按 2026-10-09 的代码）</text>
-<text x="550" y="54" text-anchor="middle" font-size="12.5" fill="#6a6a6a">外部进程改书库文件（.metadata / .content）会被运行中 xochitl 的内存状态盖回去 → 只能注入 qmd，在 xochitl 进程里调它自己的函数</text>
-
-<!-- 列标题 -->
-<text x="140" y="92" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#4a6fa5">谁发起</text>
-<text x="490" y="92" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#c9971f">book-serve（127.0.0.1:8790）只管排队</text>
-<text x="880" y="92" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#3f9a55">xochitl 进程里的 qmd 代理动手</text>
-
-<!-- 行 1 建文件夹 -->
-<rect x="20" y="106" width="240" height="86" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
-<text x="140" y="134" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">建文件夹</text>
-<text x="140" y="156" text-anchor="middle" font-size="11.5" fill="#3a3a3a">「加入 xochitl」填了不存在的名字；</text>
-<text x="140" y="174" text-anchor="middle" font-size="11.5" fill="#3a3a3a">直接导入逐级建多级文件夹</text>
-<rect x="340" y="106" width="300" height="86" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
-<text x="490" y="132" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">MkdirQueue（mkdir-pending.json）</text>
-<text x="490" y="154" text-anchor="middle" font-size="11.5" fill="#3a3a3a">按（上级, 名字）记；投递线程先挂监听再等</text>
-<text x="490" y="172" text-anchor="middle" font-size="11.5" fill="#3a3a3a">（≤20 秒，超时落书库根）；建出即出队</text>
-<rect x="720" y="106" width="360" height="86" rx="10" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.6"/>
-<text x="900" y="132" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">shelf-mkdir-agent.qmd（MainView）</text>
-<text x="900" y="154" text-anchor="middle" font-size="11.5" fill="#3a3a3a">长轮询 GET /mkdir/pending?wait=290</text>
-<text x="900" y="172" text-anchor="middle" font-size="11.5" fill="#3a3a3a">→ Library.createCollection(上级, 名字)</text>
-<line x1="260" y1="149" x2="338" y2="149" stroke="#555" stroke-width="1.6" marker-end="url(#ar)"/>
-<line x1="718" y1="149" x2="642" y2="149" stroke="#555" stroke-width="1.6" marker-end="url(#ar)"/>
-
-<!-- 行 2 回收站 -->
-<rect x="20" y="210" width="240" height="86" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
-<text x="140" y="238" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">移进原生回收站</text>
-<text x="140" y="260" text-anchor="middle" font-size="11.5" fill="#3a3a3a">「管理 → 设备健康 → 清理」、</text>
-<text x="140" y="278" text-anchor="middle" font-size="11.5" fill="#3a3a3a">笔记线旧版笔记本</text>
-<rect x="340" y="210" width="300" height="86" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
-<text x="490" y="236" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">TrashQueue（trash-pending.json）</text>
-<text x="490" y="258" text-anchor="middle" font-size="11.5" fill="#3a3a3a">POST /trash/add 入队时按书名核对 uuid</text>
-<text x="490" y="276" text-anchor="middle" font-size="11.5" fill="#3a3a3a">（防错删）；进了回收站 / 条目真没了才出队</text>
-<rect x="720" y="210" width="360" height="86" rx="10" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.6"/>
-<text x="900" y="236" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">shelf-trash-agent.qmd（MainView，09-25 重写）</text>
-<text x="900" y="258" text-anchor="middle" font-size="11.5" fill="#3a3a3a">长轮询 GET /trash/pending?wait=290</text>
-<text x="900" y="276" text-anchor="middle" font-size="11.5" fill="#3a3a3a">→ moveEntriesToTrash([Library.entryForId(uuid).id])</text>
-<line x1="260" y1="253" x2="338" y2="253" stroke="#555" stroke-width="1.6" marker-end="url(#ar)"/>
-<line x1="718" y1="253" x2="642" y2="253" stroke="#555" stroke-width="1.6" marker-end="url(#ar)"/>
-
-<!-- 行 3 漫画页边距 -->
-<rect x="20" y="314" width="240" height="86" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
-<text x="140" y="342" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">漫画页边距≈0</text>
-<text x="140" y="364" text-anchor="middle" font-size="11.5" fill="#3a3a3a">带 sheng-ren 页边距标记的漫画</text>
-<text x="140" y="382" text-anchor="middle" font-size="11.5" fill="#3a3a3a">加入 xochitl（10-07 起没有开关）</text>
-<rect x="340" y="314" width="300" height="86" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
-<text x="490" y="340" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">ComicMargins（comic-margins.json）</text>
-<text x="490" y="362" text-anchor="middle" font-size="11.5" fill="#3a3a3a">记下新书 uuid；设过一次</text>
-<text x="490" y="380" text-anchor="middle" font-size="11.5" fill="#3a3a3a">（POST /margins/applied）即出队</text>
-<rect x="720" y="314" width="360" height="86" rx="10" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.6"/>
-<text x="900" y="340" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">shelf-comic-margins.qmd（DocumentView）</text>
-<text x="900" y="362" text-anchor="middle" font-size="11.5" fill="#3a3a3a">首次打开书时 GET /margins/{uuid}</text>
-<text x="900" y="380" text-anchor="middle" font-size="11.5" fill="#3a3a3a">→ epub.setMargins(1)（用户之后改回不再覆盖）</text>
-<line x1="260" y1="357" x2="338" y2="357" stroke="#555" stroke-width="1.6" marker-end="url(#ar)"/>
-<line x1="718" y1="357" x2="642" y2="357" stroke="#555" stroke-width="1.6" marker-end="url(#ar)"/>
-
-<!-- 行 4 找回阅读位置（2026-10-09） -->
-<rect x="20" y="418" width="240" height="86" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
-<text x="140" y="446" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">原地替换后找回阅读位置</text>
-<text x="140" y="468" text-anchor="middle" font-size="11.5" fill="#3a3a3a">sheng-ren 经 POST /import?uuid=</text>
-<text x="140" y="486" text-anchor="middle" font-size="11.5" fill="#3a3a3a">替换一本在读的 EPUB</text>
-<rect x="340" y="418" width="300" height="86" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
-<text x="490" y="444" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">Progress（progress/&lt;uuid&gt;.json）</text>
-<text x="490" y="466" text-anchor="middle" font-size="11.5" fill="#3a3a3a">替换前拍快照：所在章节文件 + 文件内比例；</text>
-<text x="490" y="484" text-anchor="middle" font-size="11.5" fill="#3a3a3a">跳完 / 放弃（POST /progress/applied）即删</text>
-<rect x="720" y="418" width="360" height="86" rx="10" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.6"/>
-<text x="900" y="444" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">shelf-keep-progress.qmd（DocumentView）</text>
-<text x="900" y="466" text-anchor="middle" font-size="11.5" fill="#3a3a3a">开书 / 页数变 / 目录到达后 2 秒 GET /progress/{uuid}</text>
-<text x="900" y="484" text-anchor="middle" font-size="11.5" fill="#3a3a3a">→ sceneView.goToPage(page)（图见 sh-keep-progress.svg）</text>
-<line x1="260" y1="461" x2="338" y2="461" stroke="#555" stroke-width="1.6" marker-end="url(#ar)"/>
-<line x1="718" y1="461" x2="642" y2="461" stroke="#555" stroke-width="1.6" marker-end="url(#ar)"/>
-
-<text x="550" y="532" text-anchor="middle" font-size="12" fill="#8a8a8a">（以前还有「日漫翻页」reader-page-turn.qmd → GET /reading-direction，2026-10-07 删除；同一 qmd 的单击翻页保留，不经书架）</text>
-
-<!-- 底部说明 -->
-<rect x="20" y="550" width="1060" height="166" rx="10" fill="#f0f0ee" stroke="#8a8a8a" stroke-width="1.6"/>
-<text x="40" y="576" font-size="12.5" fill="#1a1a1a">• 箭头方向 = 谁找谁：代理（右）主动向 book-serve（中）要活，book-serve 从不主动调 xochitl。</text>
-<text x="40" y="600" font-size="12.5" fill="#1a1a1a">• 上两行是长轮询，共用 pending_queue::Handout：有待办立即返回，没有就睡到有人入队、290 秒到期，或某项“交出后静默期”到期；空闲约每 5 分钟往返一次。</text>
-<text x="40" y="624" font-size="12.5" fill="#1a1a1a">• 交出后 15 秒（建文件夹）/ 30 秒（回收站）内不重复交；过了静默期还没做成就再交，同一项最多交 5 次，仍不成就放弃、移出队列、记一行日志（09-25）。</text>
-<text x="40" y="648" font-size="12.5" fill="#1a1a1a">• 代理请求出错（书架服务停了/重启中）时退避 15 → 30 → 60 → 120 秒封顶，成功一次复位（09-25；此前固定 15 秒，每小时白醒 240 次）。</text>
-<text x="40" y="672" font-size="12.5" fill="#1a1a1a">• 下两行不轮询：只在打开一本书时问（页边距问一次；阅读位置最多问约 60 秒），平时费电为零。</text>
-<text x="40" y="696" font-size="12.5" fill="#1a1a1a">• qmd 只在 xochitl 启动时注入：装/改了 qmd 要整机重启才生效（2026-09-25 起，不再单独重启 xochitl）。shelf-keep-progress.qmd 10-09 已部署，真机验证过一次。</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 615" font-family="Noto Sans SC, Noto Sans CJK SC, PingFang SC, sans-serif">
+<defs><marker id="shxoch-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#64748B"/></marker><marker id="shxoch-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EF4444"/></marker><marker id="shxoch-g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#10B981"/></marker></defs>
+<rect width="100%" height="100%" fill="#FFFFFF"/>
+<text x="600.0" y="32.0" font-size="18" font-weight="bold" fill="#1F2937" text-anchor="middle">让 xochitl 自己动手：四个 qmd 代理</text>
+<text x="600.0" y="54.0" font-size="12" fill="#6B7280" text-anchor="middle">外部进程改书库文件会被运行中的 xochitl 盖回去 → book-serve 只排队，注入 xochitl 的 qmd 来取活、调 xochitl 自己的函数</text>
+<text x="30.0" y="100.0" font-size="12" font-weight="bold" fill="#6B7280" text-anchor="start">谁发起</text>
+<text x="320.0" y="100.0" font-size="12" font-weight="bold" fill="#6B7280" text-anchor="start">book-serve（127.0.0.1:8790）排队</text>
+<text x="760.0" y="100.0" font-size="12" font-weight="bold" fill="#6B7280" text-anchor="start">xochitl 进程里的 qmd 动手</text>
+<rect x="30" y="112" width="250" height="86" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="42.0" y="132.0" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">建文件夹</text>
+<text x="42.0" y="151.0" font-size="11.5" fill="#1F2937" text-anchor="start">网页「加入 → 文件夹」填了</text>
+<text x="42.0" y="167.5" font-size="11.5" fill="#1F2937" text-anchor="start">不存在的名字；直接导入逐级建</text>
+<rect x="320" y="112" width="380" height="86" rx="8" fill="#EFF6FF" stroke="#2563EB" stroke-width="1.5"/>
+<text x="332.0" y="132.0" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">MkdirQueue（mkdir-pending.json）</text>
+<text x="332.0" y="151.0" font-size="11.5" fill="#1F2937" text-anchor="start">按（上级, 名字）记；投递那边先挂监听再等</text>
+<text x="332.0" y="167.5" font-size="11.5" fill="#1F2937" text-anchor="start">（每级 ≤ 20 秒）；建出来即出队</text>
+<rect x="760" y="112" width="410" height="86" rx="8" fill="#FFFBEB" stroke="#F59E0B" stroke-width="1.5"/>
+<text x="772.0" y="132.0" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">shelf-mkdir-agent.qmd（MainView）</text>
+<text x="772.0" y="151.0" font-size="11.5" fill="#1F2937" text-anchor="start">长轮询 GET /mkdir/pending?wait=290</text>
+<text x="772.0" y="167.5" font-size="11.5" fill="#1F2937" text-anchor="start">→ Library.createCollection(上级, 名字)</text>
+<path d="M280.0,155.0 L320.0,155.0" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#shxoch-a)"/>
+<text x="300.0" y="149.0" font-size="11" fill="#6B7280" text-anchor="middle">入队</text>
+<path d="M760.0,155.0 L700.0,155.0" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#shxoch-a)"/>
+<text x="730.0" y="149.0" font-size="11" fill="#6B7280" text-anchor="middle">来取</text>
+<rect x="30" y="212" width="250" height="86" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="42.0" y="232.0" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">移进回收站</text>
+<text x="42.0" y="251.0" font-size="11.5" fill="#1F2937" text-anchor="start">「管理 → 设备健康 → 清理」；</text>
+<text x="42.0" y="267.5" font-size="11.5" fill="#1F2937" text-anchor="start">笔记线挪走旧版笔记本</text>
+<rect x="320" y="212" width="380" height="86" rx="8" fill="#EFF6FF" stroke="#2563EB" stroke-width="1.5"/>
+<text x="332.0" y="232.0" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">TrashQueue（trash-pending.json）</text>
+<text x="332.0" y="251.0" font-size="11.5" fill="#1F2937" text-anchor="start">入队按书名核对 uuid（防错删）；</text>
+<text x="332.0" y="267.5" font-size="11.5" fill="#1F2937" text-anchor="start">进了回收站 / .metadata 真没了才出队</text>
+<rect x="760" y="212" width="410" height="86" rx="8" fill="#FFFBEB" stroke="#F59E0B" stroke-width="1.5"/>
+<text x="772.0" y="232.0" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">shelf-trash-agent.qmd（MainView）</text>
+<text x="772.0" y="251.0" font-size="11.5" fill="#1F2937" text-anchor="start">长轮询 GET /trash/pending?wait=290</text>
+<text x="772.0" y="267.5" font-size="11.5" fill="#1F2937" text-anchor="start">→ moveEntriesToTrash([entryForId(uuid).id])</text>
+<path d="M280.0,255.0 L320.0,255.0" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#shxoch-a)"/>
+<text x="300.0" y="249.0" font-size="11" fill="#6B7280" text-anchor="middle">入队</text>
+<path d="M760.0,255.0 L700.0,255.0" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#shxoch-a)"/>
+<text x="730.0" y="249.0" font-size="11" fill="#6B7280" text-anchor="middle">来取</text>
+<rect x="30" y="312" width="250" height="86" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="42.0" y="332.0" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">漫画页边距 ≈ 0</text>
+<text x="42.0" y="351.0" font-size="11.5" fill="#1F2937" text-anchor="start">加入 / 导入一本带 sheng-ren</text>
+<text x="42.0" y="367.5" font-size="11.5" fill="#1F2937" text-anchor="start">页边距标记的漫画（没有开关）</text>
+<rect x="320" y="312" width="380" height="86" rx="8" fill="#EFF6FF" stroke="#2563EB" stroke-width="1.5"/>
+<text x="332.0" y="332.0" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">ComicMargins（comic-margins.json）</text>
+<text x="332.0" y="351.0" font-size="11.5" fill="#1F2937" text-anchor="start">记 uuid → 页边距；设过一次</text>
+<text x="332.0" y="367.5" font-size="11.5" fill="#1F2937" text-anchor="start">（POST /margins/applied）即出队</text>
+<rect x="760" y="312" width="410" height="86" rx="8" fill="#FFFBEB" stroke="#F59E0B" stroke-width="1.5"/>
+<text x="772.0" y="332.0" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">shelf-comic-margins.qmd（DocumentView）</text>
+<text x="772.0" y="351.0" font-size="11.5" fill="#1F2937" text-anchor="start">开书 1.5 秒后 GET /margins/{uuid}</text>
+<text x="772.0" y="367.5" font-size="11.5" fill="#1F2937" text-anchor="start">→ setMargins(1)；之后用户改回不再干预</text>
+<path d="M280.0,355.0 L320.0,355.0" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#shxoch-a)"/>
+<text x="300.0" y="349.0" font-size="11" fill="#6B7280" text-anchor="middle">入队</text>
+<path d="M760.0,355.0 L700.0,355.0" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#shxoch-a)"/>
+<text x="730.0" y="349.0" font-size="11" fill="#6B7280" text-anchor="middle">来取</text>
+<rect x="30" y="412" width="250" height="86" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="42.0" y="432.0" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">找回阅读位置</text>
+<text x="42.0" y="451.0" font-size="11.5" fill="#1F2937" text-anchor="start">sheng-ren 经 POST /import?uuid=</text>
+<text x="42.0" y="467.5" font-size="11.5" fill="#1F2937" text-anchor="start">原地替换一本在读的 EPUB</text>
+<rect x="320" y="412" width="380" height="86" rx="8" fill="#EFF6FF" stroke="#2563EB" stroke-width="1.5"/>
+<text x="332.0" y="432.0" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">progress/&lt;uuid&gt;.json（快照）</text>
+<text x="332.0" y="451.0" font-size="11.5" fill="#1F2937" text-anchor="start">替换前记：所在章节文件 + 文件内比例</text>
+<text x="332.0" y="467.5" font-size="11.5" fill="#1F2937" text-anchor="start">跳完 / 放弃（POST /progress/applied）即删</text>
+<rect x="760" y="412" width="410" height="86" rx="8" fill="#FFFBEB" stroke="#F59E0B" stroke-width="1.5"/>
+<text x="772.0" y="432.0" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">shelf-keep-progress.qmd（DocumentView）</text>
+<text x="772.0" y="451.0" font-size="11.5" fill="#1F2937" text-anchor="start">开书后 GET /progress/{uuid}（≤ 约 60 秒）</text>
+<text x="772.0" y="467.5" font-size="11.5" fill="#1F2937" text-anchor="start">→ sceneView.goToPage(page)</text>
+<path d="M280.0,455.0 L320.0,455.0" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#shxoch-a)"/>
+<text x="300.0" y="449.0" font-size="11" fill="#6B7280" text-anchor="middle">入队</text>
+<path d="M760.0,455.0 L700.0,455.0" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#shxoch-a)"/>
+<text x="730.0" y="449.0" font-size="11" fill="#6B7280" text-anchor="middle">来取</text>
+<text x="30.0" y="530.0" font-size="11.5" fill="#6B7280" text-anchor="start">• 箭头方向 = 谁找谁：qmd 主动向 book-serve 要活，book-serve 从不主动调 xochitl。前两个长轮询共用 Handout：有待办立即回，否则睡到有人入队、290 秒到期或某项静默期到期。</text>
+<text x="30.0" y="550.0" font-size="11.5" fill="#6B7280" text-anchor="start">• 交出后 15 秒（建文件夹）/ 30 秒（回收站）内不重交；同一项最多交 5 次，仍不成就放弃、记进 agent-failures.json，网页页头横幅提示。</text>
+<text x="30.0" y="570.0" font-size="11.5" fill="#6B7280" text-anchor="start">• qmd 请求出错（book-serve 不在）时退避 15 → 30 → 60 → 120 秒；后两个不轮询，只在打开一本书时问，平时不耗电。</text>
+<text x="30.0" y="590.0" font-size="11.5" fill="#6B7280" text-anchor="start">• qmd 只在 xochitl 启动时注入：装 / 改了要整机重启才生效。另一个 qmd reader-page-turn（单击翻页）不经 book-serve，归系统增强线。</text>
 </svg>

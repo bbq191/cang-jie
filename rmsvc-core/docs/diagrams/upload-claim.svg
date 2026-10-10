@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 624" font-family="Noto Sans SC, Noto Sans CJK SC, PingFang SC, sans-serif">
+<rect width="100%" height="100%" fill="#FFFFFF"/>
+<defs>
+<marker id="uc-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#64748B"/></marker>
+<marker id="uc-arr-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EF4444"/></marker>
+</defs>
+<text x="620.0" y="34" text-anchor="middle" font-size="18" font-weight="700" fill="#1F2937">往 xochitl 投文件：上传并认领（rmsvc-core xochitl/）</text>
+<text x="620.0" y="56" text-anchor="middle" font-size="12" fill="#6B7280">xochitl 的 /upload 不回新文档的 uuid，调用方要自己在书库里把它认出来；"当前文件夹"又是 xochitl 的全局状态</text>
+<text x="30" y="86" font-size="12.5" font-weight="700" fill="#6B7280">upload_and_claim（book-serve 投书、note-serve 投笔记本、大文件通道都走它）</text>
+<rect x="30" y="98" width="270" height="110" rx="8" fill="#EFF6FF" stroke="#2563EB" stroke-width="1.5"/>
+<text x="42" y="120" text-anchor="start" font-size="13" font-weight="700" fill="#1F2937">① 快照</text>
+<text x="42" y="140" text-anchor="start" font-size="11.5" fill="#1F2937">记下最近 2 秒内建的文档</text>
+<text x="42" y="157" text-anchor="start" font-size="11.5" fill="#1F2937">（快照里的不算候选）</text>
+<rect x="326" y="98" width="270" height="110" rx="8" fill="#FFFBEB" stroke="#F59E0B" stroke-width="1.5"/>
+<text x="338" y="120" text-anchor="start" font-size="13" font-weight="700" fill="#1F2937">② 设文件夹 → /upload</text>
+<text x="338" y="140" text-anchor="start" font-size="11.5" fill="#1F2937">进程内锁 + flock 锁文件</text>
+<text x="338" y="157" text-anchor="start" font-size="11.5" fill="#1F2937">xochitl-upload.lock（跨进程）</text>
+<text x="338" y="174" text-anchor="start" font-size="11.5" fill="#1F2937">设文件夹失败 → 退回书库根</text>
+<polyline points="300,153 324,153" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#uc-arr)"/>
+<rect x="622" y="98" width="270" height="110" rx="8" fill="#EFF6FF" stroke="#2563EB" stroke-width="1.5"/>
+<text x="634" y="120" text-anchor="start" font-size="13" font-weight="700" fill="#1F2937">③ 等书库目录变化</text>
+<text x="634" y="140" text-anchor="start" font-size="11.5" fill="#1F2937">fswatch::wait_for</text>
+<text x="634" y="157" text-anchor="start" font-size="11.5" fill="#1F2937">静默 150ms 再查一次</text>
+<polyline points="596,153 620,153" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#uc-arr)"/>
+<rect x="918" y="98" width="270" height="110" rx="8" fill="#ECFDF5" stroke="#10B981" stroke-width="1.5"/>
+<text x="930" y="120" text-anchor="start" font-size="13" font-weight="700" fill="#1F2937">④ 按 ClaimBy 认领</text>
+<text x="930" y="140" text-anchor="start" font-size="11.5" fill="#1F2937">只在快照之外的新文档里找：</text>
+<text x="930" y="157" text-anchor="start" font-size="11.5" fill="#1F2937">SameBytes / VisibleName / SameSize</text>
+<text x="930" y="174" text-anchor="start" font-size="11.5" fill="#1F2937">绝不"取最新一本"兜底</text>
+<polyline points="892,153 916,153" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#uc-arr)"/>
+<rect x="30" y="236" width="560" height="92" rx="8" fill="#FEF2F2" stroke="#EF4444" stroke-width="1.5"/>
+<text x="42" y="258" text-anchor="start" font-size="13" font-weight="700" fill="#1F2937">失败分两种（ClaimError）</text>
+<text x="42" y="278" text-anchor="start" font-size="11.5" fill="#1F2937">Upload：没传上去 → 可以重试</text>
+<text x="42" y="295" text-anchor="start" font-size="11.5" fill="#1F2937">NotFound：已上传但没认出来 → 别马上重试（重试就是两份）</text>
+<rect x="620" y="236" width="590" height="92" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="632" y="258" text-anchor="start" font-size="13" font-weight="700" fill="#1F2937">"很可能已送达"不重试（防复制风暴）</text>
+<text x="632" y="278" text-anchor="start" font-size="11.5" fill="#1F2937">连接阶段失败 → 可重试</text>
+<text x="632" y="295" text-anchor="start" font-size="11.5" fill="#1F2937">连上后读写超时、408、拿到 2xx 但读回执出错 → 当作已送达</text>
+<text x="632" y="312" text-anchor="start" font-size="11.5" fill="#1F2937">同一进程内"快照 → 上传 → 认领"整段串行</text>
+<text x="30" y="364" font-size="12.5" font-weight="700" fill="#6B7280">upload_large：绕过 /upload 约 100MB 的硬限（只有 book-serve 用，2026-09-20 真机验证 154MB PDF、153MB EPUB）</text>
+<rect x="30" y="376" width="270" height="110" rx="8" fill="#EFF6FF" stroke="#2563EB" stroke-width="1.5"/>
+<text x="42" y="398" text-anchor="start" font-size="13" font-weight="700" fill="#1F2937">① 传占位</text>
+<text x="42" y="418" text-anchor="start" font-size="11.5" fill="#1F2937">几 KB 的占位文档</text>
+<text x="42" y="435" text-anchor="start" font-size="11.5" fill="#1F2937">（EPUB 带真书名和封面）</text>
+<text x="42" y="452" text-anchor="start" font-size="11.5" fill="#1F2937">走 upload_and_claim</text>
+<rect x="326" y="376" width="270" height="110" rx="8" fill="#EFF6FF" stroke="#2563EB" stroke-width="1.5"/>
+<text x="338" y="398" text-anchor="start" font-size="13" font-weight="700" fill="#1F2937">② 按 SameSize 认领</text>
+<text x="338" y="418" text-anchor="start" font-size="11.5" fill="#1F2937">等书库变化最多 20 秒</text>
+<text x="338" y="435" text-anchor="start" font-size="11.5" fill="#1F2937">认出"我们这一份"占位</text>
+<polyline points="300,431 324,431" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#uc-arr)"/>
+<rect x="622" y="376" width="270" height="110" rx="8" fill="#EFF6FF" stroke="#2563EB" stroke-width="1.5"/>
+<text x="634" y="398" text-anchor="start" font-size="13" font-weight="700" fill="#1F2937">③ 复制真文件</text>
+<text x="634" y="418" text-anchor="start" font-size="11.5" fill="#1F2937">复制到隐藏临时名</text>
+<text x="634" y="435" text-anchor="start" font-size="11.5" fill="#1F2937">.&lt;uuid&gt;.&lt;扩展名&gt;.new</text>
+<text x="634" y="452" text-anchor="start" font-size="11.5" fill="#1F2937">核对大小</text>
+<polyline points="596,431 620,431" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#uc-arr)"/>
+<rect x="918" y="376" width="270" height="110" rx="8" fill="#ECFDF5" stroke="#10B981" stroke-width="1.5"/>
+<text x="930" y="398" text-anchor="start" font-size="13" font-weight="700" fill="#1F2937">④ 改缓存 / 页表 → 改名替换</text>
+<text x="930" y="418" text-anchor="start" font-size="11.5" fill="#1F2937">EPUB：删渲染缓存，首次打开重渲染</text>
+<text x="930" y="435" text-anchor="start" font-size="11.5" fill="#1F2937">PDF：改 .content 页数与页表</text>
+<polyline points="892,431 916,431" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#uc-arr)"/>
+<rect x="30" y="512" width="1180" height="92" rx="8" fill="#FFFBEB" stroke="#F59E0B" stroke-width="1.5"/>
+<text x="42" y="534" text-anchor="start" font-size="13" font-weight="700" fill="#1F2937">为什么要整段加锁（static LARGE，从传占位一直拿到替换完成）</text>
+<text x="42" y="554" text-anchor="start" font-size="11.5" fill="#1F2937">PDF 的占位是同一份固定字节，认领只凭"刚进库 + 大小等于占位"。两本大 PDF 同时走这条路会认到同一个 uuid：</text>
+<text x="42" y="571" text-anchor="start" font-size="11.5" fill="#1F2937">一本被覆盖进别人的条目，另一份占位永远留在书库里。锁拿到替换完成，因为替换前那份文件仍是占位大小。</text>
+<text x="42" y="588" text-anchor="start" font-size="11.5" fill="#1F2937">代价：第二本要等第一本复制完。失败时占位可能留在书库里（回执里说明），不做危险的回滚删除。</text>
+</svg>
