@@ -14,7 +14,7 @@ use config::TranscribeConfig;
 use notesvc::InkClient;
 use ledger::Ledger;
 use rmsvc_core::events::{follow, Event, EventBus};
-use rmsvc_core::http::{bind, ApiError, Reply, Router, ServeOpts};
+use rmsvc_core::http::{bind, ApiError, ApiResult, Reply, Router, ServeOpts};
 use rmsvc_core::paths::Paths;
 use rmsvc_core::service::{self, ServiceSpec};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
@@ -108,6 +108,17 @@ fn work_loop(st: Arc<State>, rx: Receiver<()>) {
     }
 }
 
+/// 强制转写一条的回执：成功 → token 消耗（点「重转」弹出的是这一次调用的实际数字，不是账本累计）；真调了模型却失败
+/// （取裁图 / 视觉模型 / 写回草稿，`failed > 0`）是下游故障 → 502；其余（没这条、没手写、终态、没配 key、取不到条目库）
+/// 一轮报告里只剩一句 `note`，分不出是哪一类，仍回 400（2026-10-10 审计 CORE-1：此前连模型失败也是 400）。
+fn force_reply(rep: ledger::RunReport) -> ApiResult {
+    if rep.done == 1 {
+        return Ok(Reply::ok(&serde_json::json!({"ok": true, "promptTokens": rep.prompt_tokens, "completionTokens": rep.completion_tokens})));
+    }
+    let msg = if rep.note.is_empty() { "没有这条目或它没有手写".to_string() } else { rep.note };
+    Err(if rep.failed > 0 { ApiError::bad_gateway(msg) } else { ApiError::bad(msg) })
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let bind_addr = service::parse_bind(&args, SPEC.default_bind);
@@ -161,15 +172,25 @@ fn main() {
         }))
         .post("/books/{uuid}/entries/{id}", bind(&st, |s, r| {
             let (uuid, id) = (r.param("uuid").to_string(), r.param("id").to_string());
-            let rep = s.run(Some(Target { uuid: &uuid, id: &id }));
-            if rep.done == 1 {
-                // 点「重转」弹出这次调用的消耗（token）——不是账本累计，是这一次调用的实际数字。
-                Ok(Reply::ok(&serde_json::json!({"ok": true, "promptTokens": rep.prompt_tokens, "completionTokens": rep.completion_tokens})))
-            } else {
-                Err(ApiError::bad(if rep.note.is_empty() { "没有这条目或它没有手写".to_string() } else { rep.note }))
-            }
+            force_reply(s.run(Some(Target { uuid: &uuid, id: &id })))
         }));
     let c = st.cfg();
     println!("[transcribe-serve] 配置 {}；模型 {}（{} @ {}）；key {:?}", st.cfg.path().display(), c.usage_key(), c.model(), c.base_url(), c.key_source());
     service::run_or_exit(&SPEC, &bind_addr, &paths, router, ServeOpts::default())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn force_reply_status_by_outcome() {
+        let Ok(ok) = force_reply(ledger::RunReport { done: 1, prompt_tokens: 3, completion_tokens: 4, ..Default::default() }) else { panic!("应成功") };
+        assert_eq!((ok.status, serde_json::from_slice::<serde_json::Value>(&ok.body).unwrap()["promptTokens"].as_u64()), (200, Some(3)));
+        let err = |r| force_reply(r).err().unwrap();
+        let e = err(ledger::RunReport { failed: 1, note: "模型超时".into(), ..Default::default() });
+        assert_eq!((e.status, e.message.as_str()), (502, "模型超时"), "调了模型却失败是下游故障");
+        let e = err(ledger::RunReport::default());
+        assert_eq!((e.status, e.message.as_str()), (400, "没有这条目或它没有手写"));
+    }
 }
