@@ -45,7 +45,9 @@ const routes = {
   '/api/books/status': () => ({ok:true, xochitlFolders:[]}),
   '/api/session': () => ({ok:true, mustChange:false}),
   '/api/batch/status': () => ({running:false,total:0,done:0,queued:[],failed:[]}),
-  '/api/foundation': () => ({}), '/api/enhance/status': () => ({}),
+  '/api/foundation': () => ({}),
+  '/api/enhance/status': () => ({hlSnapCjk:true, notesImportMdEnabled:false, tapPageTurn:false, loaded:{xochitl:true, xovi:true, extensions:[], qmds:[], qmdsPending:[]},
+    toggles:[{key:'hlSnapCjk', on:true, kind:'extension', loaded:'on'}, {key:'tapPageTurn', on:false, kind:'patch', loaded:'pending'}, {key:'notesImportMdEnabled', on:false, kind:'web', loaded:null}]}),
   '/api/books/agent-failures': () => ({items: window.__fails}),
   '/api/device/wifi': () => ({ssid: evil, state:'portal', code:'302', at:1}),
   '/api/device/cleanup': () => ({files:[{area:'books-done', name:'旧.epub', bytes:1, mtime:1}], library:[], trashAgent:true, xochitl:true}),
@@ -213,6 +215,8 @@ out.otherWalls = (await hits('/api/wallpapers')) - w0;
 // 「管理 → 设备健康 → 清理」：部分失败（partial:true）按 {name,message} 列出原因（FE-4）
 await page.evaluate(() => document.querySelectorAll('#tabs button')[3].click());
 await new Promise(r => setTimeout(r, 400));
+// 「管理 → 系统增强/实验室」：卡片按开关表循环出来，勾选状态与加载徽章来自 toggles（网页不认识 .so/.qmd 文件名，GW-2）
+out.toggles = await page.evaluate(() => ['enhance', 'lab'].map(p => [...document.querySelectorAll(`[data-toggles="${p}"] .card`)].map(c => [c.querySelector('input').checked, c.querySelector('.badge').textContent])));
 out.cleanupPartial = await page.evaluate(async () => {
   document.querySelector('[data-sub="health"]').click();
   await new Promise(r => setTimeout(r, 300));
@@ -276,6 +280,7 @@ assert.equal(out.reopenSvc, 1, '重连成功应补查一次服务集合（断线
 assert.deepEqual(out.svcCheck, [0, 1], '隐藏时 manage 事件不取 /api/services，可见后补查一次');
 assert.deepEqual(out.closedRecovery, [1, 1, true], 'EventSource 进 CLOSED：关掉旧的、查一次会话、退避后新开一条');
 assert.equal(out.connectingUntouched, 1, '浏览器自己在重连（CONNECTING）时不另开连接');
+assert.deepEqual(out.toggles, [[[true, '已加载'], [false, '待重启']], [[false, '网页功能']]], '系统增强/实验室开关按 toggles 渲染');
 assert.ok(out.cleanupPartial.includes('旧.epub') && out.cleanupPartial.includes('拒绝原因'), `清理部分失败应列出 {name,message}：${out.cleanupPartial}`);
 assert.equal(out.idleHits, 0, '空闲时不该有轮询');
 assert.deepEqual(errs, [], '不该有 JS 报错');

@@ -90,6 +90,19 @@ function mountModelPanel(root,seg,title,icon,showAuto){
    可见性开关；漫画页边距开关 2026-10-07 删除）。2026-09-30 移除：电池刺客（原「系统增强」里的开关卡 + 运行时才出现的「电池刺客」
    二级 tab）与实验室里的「CJK 手写笔迹优化」开关。
    （曾在这页的 shelf push 命令卡片已随 2026-09-18 砍掉 host CLI 一并删除。）另有「设备健康」（2026-09-25）。 */
+/* 系统增强/实验室开关的文案与所在子标签（键 = 网关 enhance/mod.rs TOGGLES 的 key；顶层只存 i18n 键名，T() 在渲染时查）。 */
+const TOGGLE_UI={
+  hlSnapCjk:{panel:'enhance',title:'manage.enhance.hlSnap.title',desc:'manage.enhance.hlSnap.desc',label:'manage.enhance.hlSnap.toggle'},
+  tapPageTurn:{panel:'enhance',title:'manage.enhance.pageTurn.title',desc:'manage.enhance.pageTurn.desc',label:'manage.enhance.pageTurn.tapToggle',hint:'manage.enhance.pageTurn.tapHint'},
+  notesImportMdEnabled:{panel:'lab',title:'manage.lab.importMd.title',desc:'manage.lab.importMd.desc',label:'manage.lab.importMd.toggle'},
+};
+/* 开关旁的加载状态徽章：`kind`（extension 扩展 / patch qmd 补丁 / web 纯网页功能）只决定说明文字，状态由网关判定（`loaded`）。 */
+const LOADED_TITLE={extension:{on:'manage.loaded.onTitle',off:'manage.loaded.offTitle'},patch:{on:'manage.loaded.qmdOnTitle',off:'manage.loaded.qmdOffTitle'}};
+const loadedBadge=t=>t.kind==='web'?`<span class="badge" title="${T('manage.loaded.webOnlyTitle')}">${T('manage.loaded.webOnly')}</span>`
+  :t.loaded==='unknown'?`<span class="badge" title="${T('manage.loaded.noXochitlTitle')}">${T('manage.loaded.unknown')}</span>`
+  :t.loaded==='on'?`<span class="badge on" title="${T(LOADED_TITLE[t.kind].on)}">${T('manage.loaded.on')}</span>`
+  :t.loaded==='pending'?`<span class="badge" title="${T('manage.loaded.qmdPendingTitle')}">${T('manage.loaded.pending')}</span>`
+  :`<span class="badge off" title="${T((LOADED_TITLE[t.kind]||LOADED_TITLE.extension).off)}">${T('manage.loaded.off')}</span>`;
 /* 模块管理动作（start / stop / uninstall），「基石与模块」列表与「全部开启/关闭」共用。 */
 const modAct=(seg,act,loud)=>(loud?sendT:jsend)('/api/manage/'+seg+'/'+act,'POST');
 function renderManage(sec){sec.innerHTML=`
@@ -124,19 +137,8 @@ function renderManage(sec){sec.innerHTML=`
     <div class="card"><h2>${T('manage.models.title')}</h2><p class="lead">${T('manage.models.lead')}</p></div>
     <div id="modelcards" style="display:flex;flex-direction:column;gap:1em"></div>
   </div>
-  <div class="subpanel">
-    <div class="card"><h3 style="margin-top:0">${T('manage.enhance.hlSnap.title')}</h3>
-      <p class="small">${T('manage.enhance.hlSnap.desc')}</p>
-      <label class="toggle"><input type="checkbox" id="erHlSnap"> ${T('manage.enhance.hlSnap.toggle')}</label> <span id="erHlSnapLoaded"></span></div>
-    <div class="card"><h3 style="margin-top:0">${T('manage.enhance.pageTurn.title')} <span id="erPageTurnLoaded"></span></h3>
-      <p class="small">${T('manage.enhance.pageTurn.desc')}</p>
-      <label class="toggle"><input type="checkbox" id="erTapPageTurn"> ${T('manage.enhance.pageTurn.tapToggle')}</label>
-      <p class="small">${T('manage.enhance.pageTurn.tapHint')}</p></div>
-  </div>
-  <div class="subpanel">
-    <div class="card"><h3 style="margin-top:0">${T('manage.lab.importMd.title')}</h3>
-      <p class="small">${T('manage.lab.importMd.desc')}</p>
-      <label class="toggle"><input type="checkbox" id="labImportMd"> ${T('manage.lab.importMd.toggle')}</label> <span class="badge" title="${T('manage.loaded.webOnlyTitle')}">${T('manage.loaded.webOnly')}</span></div>
+  <div class="subpanel" data-toggles="enhance"></div>
+  <div class="subpanel" data-toggles="lab"></div>
   </div>`;
   const mvRefresh=mountModelPanel($('#modelcards',sec),'transcribe',T('manage.models.visionTitle'),'👁',true);
   const mtRefresh=mountModelPanel($('#modelcards',sec),'mind',T('manage.models.textTitle'),'✎');
@@ -168,34 +170,23 @@ function renderManage(sec){sec.innerHTML=`
     if(es.ok!==false)await erApply(es)});
   guardClick($('#allon',sec),async()=>{const d=await j('/api/manage');for(const m of (d.modules||[]))if(m.installed&&!m.running)await modAct(m.seg,'start');refresh()});
   guardClick($('#alloff',sec),async()=>{if(!await confirmDialog(T('manage.modules.confirmAllOff')))return;const d=await j('/api/manage');for(const m of (d.modules||[]))if(m.installed&&m.running)await modAct(m.seg,'stop');refresh()});
-  /* 系统增强/实验室（Track 3，2026-09-09；实验室 2026-09-10 加）：CJK 画线吸附/翻页/
-     导入md文档可见性都是真开关（写 reading-qol.json，走同一个 /api/enhance/qol）。电池刺客与 CJK 手写笔迹优化
-     2026-09-30 已移除；「漫画页边距」开关 2026-10-07 删除（带 sheng-ren 页边距标记的漫画一律登记）。 */
-  const tapBox=$('#erTapPageTurn',sec);
-  const hlBox=$('#erHlSnap',sec),importMdBox=$('#labImportMd',sec);
-  const manageNav=sec.querySelector(':scope > .subnav');
+  /* 系统增强/实验室（Track 3，2026-09-09；实验室 2026-09-10 加）：开关表在网关 enhance/mod.rs 的 TOGGLES，
+     /api/enhance/status 的 toggles 给出每个开关的开/关与"xochitl 里实际加载了没有"（2026-10-10 起由网关判定，网页不再认识
+     .so/.qmd 文件名）。这里按 TOGGLE_UI 循环出卡片，写都走同一个 /api/enhance/qol。 */
+  const toggleBox={},toggleBadge={};
+  for(const [key,ui] of Object.entries(TOGGLE_UI)){
+    const box=el('input',{type:'checkbox'}),badgeEl=el('span');
+    const card=el('div',{class:'card'},[el('h3',{style:'margin-top:0',text:T(ui.title)}),el('p',{class:'small',text:T(ui.desc)}),
+      el('label',{class:'toggle'},[box,' '+T(ui.label)]),' ',badgeEl].concat(ui.hint?[el('p',{class:'small',text:T(ui.hint)})]:[]));
+    sec.querySelector(`[data-toggles="${ui.panel}"]`).appendChild(card);
+    bindToggle(box,'/api/enhance/qol',key);toggleBox[key]=box;toggleBadge[key]=badgeEl}
   const erApply=async r=>{
-    hlBox.checked=!!r.hlSnapCjk;
-    importMdBox.checked=!!r.notesImportMdEnabled;
-    tapBox.checked=!!r.tapPageTurn;
-    // 开关旁边标"xochitl 里实际有没有加载这个扩展"（查主进程 maps，见 gateway enhance/loaded.rs）：开关只是配置，
-    // 扩展没加载时开了也不生效——历史上两次"看着装了、其实没生效"就是这种情况。
-    const ld=r.loaded||{},exts=ld.extensions||[];
-    const loadedBadge=so=>!ld.xochitl?`<span class="badge" title="${T('manage.loaded.noXochitlTitle')}">${T('manage.loaded.unknown')}</span>`
-      :exts.includes(so)?`<span class="badge on" title="${T('manage.loaded.onTitle')}">${T('manage.loaded.on')}</span>`
-      :`<span class="badge off" title="${T('manage.loaded.offTitle')}">${T('manage.loaded.off')}</span>`;
-    $('#erHlSnapLoaded',sec).innerHTML=loadedBadge('hl-snap.so');
-    // 阅读器翻页靠 qmd 补丁（xochitl 启动时由 qt-resource-rebuilder 读一次），不是 .so：看 loaded.qmds / qmdsPending。
-    const qmdBadge=qmd=>!ld.xochitl?loadedBadge(qmd)
-      :(ld.qmds||[]).includes(qmd)?`<span class="badge on" title="${T('manage.loaded.qmdOnTitle')}">${T('manage.loaded.on')}</span>`
-      :(ld.qmdsPending||[]).includes(qmd)?`<span class="badge" title="${T('manage.loaded.qmdPendingTitle')}">${T('manage.loaded.pending')}</span>`
-      :`<span class="badge off" title="${T('manage.loaded.qmdOffTitle')}">${T('manage.loaded.off')}</span>`;
-    $('#erPageTurnLoaded',sec).innerHTML=qmdBadge('reader-page-turn.qmd')};
-  bindToggle(hlBox,'/api/enhance/qol','hlSnapCjk');bindToggle(importMdBox,'/api/enhance/qol','notesImportMdEnabled');
-  bindToggle(tapBox,'/api/enhance/qol','tapPageTurn');
+    // 开关旁边标"xochitl 里实际有没有加载这个扩展/补丁"：开关只是配置，产物没加载时开了也不生效——历史上两次
+    // "看着装了、其实没生效"就是这种情况。
+    for(const t of r.toggles||[]){if(!toggleBox[t.key])continue;toggleBox[t.key].checked=!!t.on;toggleBadge[t.key].innerHTML=loadedBadge(t)}};
   /* 设备健康：切到这个子标签时才取数（每次切过去都取一次，网关侧有 15 秒缓存），不跟着管理页的 SSE 刷新走；
      清理那组只在它是当前二级 tab 时一起取（见 mountHealth）。 */
   const healthLoad=mountHealth($('#healthBox',sec));
-  const healthNavBtn=manageNav.querySelector('[data-sub="health"]');
+  const healthNavBtn=sec.querySelector(':scope > .subnav [data-sub="health"]');
   refresh();sec.refresh=()=>Promise.all([refresh(),mvRefresh(),mtRefresh()]);subtabs(sec);
   const tabClick=healthNavBtn.onclick;healthNavBtn.onclick=()=>{tabClick();healthLoad(false)};}
