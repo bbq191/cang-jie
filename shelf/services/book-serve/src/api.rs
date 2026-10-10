@@ -8,8 +8,8 @@
 //!   优化全部在电脑上用 sheng-ren 做；剩下的投递没有能中途停的步骤）。
 //! · `GET /events`（SSE：母版库/inbox 变更即推，网页零轮询）。
 //! 原生回收站队列：`POST /trash/add {uuid, name}`（name 必须与书库 visibleName 相符）· `GET /trash/pending?wait=` → `{uuids}`（MainView 代理 qmd 长轮询拉取执行）· `GET /trash`（只供调试：ssh 上 curl 看队列）。
-//! 原生建文件夹队列：`POST /mkdir/add {name}`（建在书库根）· `GET /mkdir/pending?wait=` → `{names, items: [{name, parent}]}`（MainView 代理
-//! shelf-mkdir-agent.qmd 长轮询拉取执行；`items` 带上级文件夹 uuid，`names` 只放建在根的、给旧代理兼容）· `GET /mkdir`（只供调试）。
+//! 原生建文件夹队列：`POST /mkdir/add {name}`（建在书库根）· `GET /mkdir/pending?wait=` → `{items: [{name, parent}]}`（MainView 代理
+//! shelf-mkdir-agent.qmd 长轮询拉取执行；`parent` 是上级文件夹 uuid，空串＝书库根）· `GET /mkdir`（只供调试）。
 //! 代理放弃记录：`GET /agent-failures` → `{items:[{kind,name,uuid?,at}]}` · `POST /agent-failures/clear`（两个队列交满次数仍没做成的项）。
 //! 2026-09-05 起规则统一"所有书只落母版库"：旧 `POST /?target=` 直投路已删（`/staging*` 是网页的唯一入口）。
 //! 直接导入 xochitl、不进母版库（2026-10-07，电脑上的 sheng-ren `booklib sync` 经 SSH 端口转发直连 8790 调，见 import.rs）。
@@ -100,11 +100,13 @@ pub fn router(st: Arc<State>) -> Router {
             Ok(Reply::ok(&serde_json::json!({"ok": true, "removed": removed})))
         }))
         // ── 原生书库回收站队列（真正的软删由 xochitl 自己的 selectionMoveToTrash 执行，见 trash.rs / shelf-trash-agent.qmd）──
+        // 回执文案（2026-10-10 改）：09-25 起代理全局常驻、长轮询，入队即由 xochitl 内的代理执行；此前写的是旧机制
+        // "书库视图下次有动静时移进回收站"。
         .post("/trash/add", bind(&st, |s, r| {
             let j = r.json()?;
             let n = s.trash.add(j.str("uuid")?, j.str("name")?).map_err(ApiError::bad)?;
             s.bus.publish("books", "trash");
-            Ok(Reply::ok(&serde_json::json!({"ok": true, "pending": n, "message": "已排队：书库视图下次有动静时移进回收站"})))
+            Ok(Reply::ok(&serde_json::json!({"ok": true, "pending": n, "message": "已排队，xochitl 会随即移进回收站"})))
         }))
         .get("/trash/pending", bind(&st, |s, r| {
             let (uuids, pruned) = s.trash.pending_wait(agent_wait(r)).map_err(ApiError::internal)?;
@@ -129,10 +131,9 @@ pub fn router(st: Arc<State>) -> Router {
             if pruned > 0 {
                 s.bus.publish("books", "mkdir");
             }
-            // `items` 带上级文件夹（2026-10-07 按层建）；`names` 只放建在根的，给还没更新的旧代理用——旧代理一律建在根，
-            // 把子文件夹的名字交给它会建错地方，所以不放进去（那几项交满次数后放弃）。
-            let names: Vec<&str> = items.iter().filter(|i| i.parent.is_empty()).map(|i| i.name.as_str()).collect();
-            Ok(Reply::ok(&serde_json::json!({"names": names, "items": items})))
+            // `items` 带上级文件夹（2026-10-07 按层建）。2026-10-10 删了只放根下项的 `names`：那是给 10-07 前的旧代理留的兼容，
+            // 代理与本服务总由 shelf/install.sh 一起装，走不到。
+            Ok(Reply::ok(&serde_json::json!({"items": items})))
         }))
         .get("/mkdir", bind(&st, |s, _| Ok(Reply::ok(&serde_json::json!({"items": s.mkdir.list()})))))
         // ── 代理执行不成、已放弃的记录（网页页头横幅；「知道了」→ clear），见 agent_failures.rs ──
@@ -569,9 +570,9 @@ mod tests {
         assert_eq!((code, v), (200, serde_json::json!({"uuid": U, "name": "书", "folder": "漫画/死亡筆記(愛藏版)", "deleted": false, "replacing": false})));
     }
 
-    /// `GET /mkdir/pending`：`items` 带上级，`names` 只放建在根的（旧代理一律建在根，不能把子文件夹交给它）。
+    /// `GET /mkdir/pending`：`items` 带上级（空串＝根）；不再有给旧代理的 `names`。
     #[test]
-    fn mkdir_pending_returns_items_and_root_only_names() {
+    fn mkdir_pending_returns_items_with_parent() {
         const P: &str = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
         let t = tempfile::tempdir().unwrap();
         let st = state(&t);
@@ -580,7 +581,7 @@ mod tests {
         st.mkdir.add_in(P, "卷01").unwrap();
         let (code, v) = call(&router, Method::Get, "/mkdir/pending", "");
         assert_eq!(code, 200);
-        assert_eq!(v, serde_json::json!({"names": ["漫画/卷01"], "items": [{"name": "漫画/卷01", "parent": ""}, {"name": "卷01", "parent": P}]}));
+        assert_eq!(v, serde_json::json!({"items": [{"name": "漫画/卷01", "parent": ""}, {"name": "卷01", "parent": P}]}));
     }
 
     #[test]

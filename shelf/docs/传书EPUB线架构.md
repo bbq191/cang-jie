@@ -159,8 +159,8 @@ HTTP 层是**异步**的（`spawn_deliver`：起线程 + `catch_unwind` + 解忙
 
 | 环节 | 代码 | 行为 |
 |---|---|---|
-| 认标记 | `Staging::comic_margin_eligible` → `Option<u32>`（`shelf_conv::epub::reader_margins_of`；标记名常量 `READER_MARGINS_MARKER` 必须与 sheng-ren 的同名常量一致，两边各写一份）：书里有 `META-INF/eink-reader-margins`（sheng-ren 按 `xochitl` 模式优化漫画时写，值是页边距，现为 `1`） | 只认 sheng-ren 的标记；不带标记的书（文字书、PDF、旧漫画）完全不碰。**书架 2026-10-07 前自己优化的漫画不再认**（旧标记的兼容判断随 `shelf_conv::legacy` 删掉），要用 sheng-ren 重新优化后再加入 |
-| 登记 | `register_comic_margins(uuid, 页边距)` 写 `comic-margins.json` | 普通上传在渲染自检认到 uuid 时登记；大文件通道替换后立即登记 |
+| 认标记 | `shelf_conv::epub::Book::reader_margins` → `Option<u32>`（落库在 `Staging::deliver` 里与书名同一次打开 zip 时读，大文件通道在 `XochitlDelivery::upload_large` 里读；标记名常量 `READER_MARGINS_MARKER` 必须与 sheng-ren 的同名常量一致，两边各写一份）：书里有 `META-INF/eink-reader-margins`（sheng-ren 按 `xochitl` 模式优化漫画时写，值是页边距，现为 `1`） | 只认 sheng-ren 的标记；不带标记的书（文字书、PDF、旧漫画）完全不碰。**书架 2026-10-07 前自己优化的漫画不再认**（旧标记的兼容判断随 `shelf_conv::legacy` 删掉），要用 sheng-ren 重新优化后再加入 |
+| 登记 | `XochitlDelivery::register_comic_margins(uuid, 页边距)` 写 `comic-margins.json` | 普通上传在渲染自检按字节认到 uuid 时登记（认不出就不登记，2026-10-10 起不再"取最新一本"）；直接导入认领后立即登记；大文件通道替换后立即登记 |
 | 执行 | `shelf/xovi/shelf-comic-margins.qmd`（注入 DocumentView）：开书 1.5 秒后 `GET /margins/<uuid>`（404 不动；200 调 `setMargins(m)`），成功后 `POST /margins/applied` 销账 | **每本只设一次**：想要回缺省页边距 56 的，首次打开后在阅读器「文字设置」里自己调回，之后不再干预；qmd 只在 xochitl 启动时加载，装/改后要**整机重启**（2026-09-25 起不再 `systemctl restart xochitl`，停 xochitl 本身会概率性崩） |
 
 ## 4｜设备端代理队列：为什么不能直接建文件夹/删文档
