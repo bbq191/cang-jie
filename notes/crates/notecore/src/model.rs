@@ -85,11 +85,10 @@ pub enum Status {
 impl Status {
     /// 真被要求转笔记、该出现在两处投影（设备笔记本 `project.rs` / Obsidian `export.rs`）里的状态。
     /// **单一事实源**（2026-09-09 审计补）：这条判据之前在 `project::live_entries`/
-    /// `export::live_entries` 里各写一遍 `matches!`，网关 `app.js::renderBook` 又单独抄了一份
-    /// `['pending','draft','reviewed'].includes(...)`——状态机还在演进（已经加到 7 个变体），
-    /// `Mined`/`Skipped` 引入时就真的漏改过一处（`!= Revoked` 那次真机 bug，见白皮书 §03r），
-    /// 收成一处避免下次再漏。前端那份因为是另一种语言/另一个仓库位置，做不到直接复用，
-    /// 只能在旁边留注释指回这里。
+    /// `export::live_entries` 里各写一遍 `matches!`，网关前端又单独抄了一份状态名单——状态机还在演进
+    /// （已经加到 7 个变体），`Mined`/`Skipped` 引入时就真的漏改过一处（`!= Revoked` 那次真机 bug，
+    /// 见白皮书 §03r），收成一处避免下次再漏。2026-10-10 起前端也不再抄：ink-serve 的书应答给每条条目
+    /// 带上 `live`（= 本函数，见 `api::EntryView`），`gateway/ui/notes.js` 的 `renderBook` 直接读它。
     pub fn is_live_for_projection(self) -> bool {
         matches!(self, Status::Pending | Status::Draft | Status::Reviewed)
     }
