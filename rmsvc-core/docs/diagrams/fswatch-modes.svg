@@ -1,90 +1,48 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 720" width="1240" height="720" font-family="Noto Sans SC, Noto Sans CJK SC, sans-serif">
-<defs><marker id="mk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker><marker id="mg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2f7d45"/></marker><marker id="mr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b0451f"/></marker></defs>
-<rect x="0" y="0" width="1240" height="720" fill="#fbfbfa"/>
-<text x="620" y="30" font-size="18" font-weight="bold" fill="#1a1a1a" text-anchor="middle" xml:space="preserve">fswatch：三种形态，以及 2026-10-09 改的两处机制</text>
-<text x="620" y="52" font-size="12.5" font-weight="normal" fill="#6a6a6a" text-anchor="middle" xml:space="preserve">rmsvc-core/src/fswatch.rs · 单层目录 inotify 监听：空闲时进程睡死、零唤醒；有写入后等防抖窗口静默，再回调一次（带受影响的文件名）</text>
-<text x="30" y="84" font-size="13" font-weight="bold" fill="#1a1a1a" text-anchor="start" xml:space="preserve">三种形态（怎么选）</text>
-<rect x="24" y="96" width="580" height="120" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
-<text x="40" y="120" font-size="12.5" font-weight="bold" fill="#1a1a1a" text-anchor="start" xml:space="preserve" font-family="DejaVu Sans Mono, monospace">watch_debounced(dir, 防抖, 回调)</text>
-<text x="40" y="142" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">常驻，永不返回（inotify 起不来才返回）</text>
-<text x="40" y="162" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">有写入 → 等防抖窗口静默 → 回调（文件名集合）→ 接着等</text>
-<text x="40" y="182" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">用在：网关的注册表唤醒（registry_wake，300ms）</text>
-<text x="40" y="202" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">　　　book-serve inbox 追平（8 秒）· ink-serve 书库监听（4 秒）</text>
-<rect x="24" y="228" width="580" height="92" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
-<text x="40" y="252" font-size="12.5" font-weight="bold" fill="#1a1a1a" text-anchor="start" xml:space="preserve" font-family="DejaVu Sans Mono, monospace">watch_until(dir, 防抖, 超时, 回调)</text>
-<text x="40" y="274" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">限时：回调返回 true 就结束（本函数回 true）；到点回 false</text>
-<text x="40" y="294" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">返回即撤掉监听——有头有尾的等待，不给书库目录留常驻监听</text>
-<text x="40" y="312" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve"></text>
-<rect x="24" y="332" width="580" height="268" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
-<text x="40" y="356" font-size="12.5" font-weight="bold" fill="#1a1a1a" text-anchor="start" xml:space="preserve" font-family="DejaVu Sans Mono, monospace">wait_for(dir, 防抖, 超时, check)　（10-09 新增）</text>
-<text x="40" y="378" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">等某个条件成立：check() 返回 Some(结果) 就交回结果；到点仍没有 → None</text>
-<line x1="52" y1="420" x2="580" y2="420" stroke="#2f7d45" stroke-width="2" marker-end="url(#mg)"/>
-<circle cx="70" cy="420" r="5" fill="#2f7d45"/>
-<text x="70" y="408" font-size="11.5" font-weight="bold" fill="#2f7d45" text-anchor="middle" xml:space="preserve">① 先挂监听</text>
-<circle cx="190" cy="420" r="5" fill="#2f7d45"/>
-<text x="190" y="408" font-size="11.5" font-weight="bold" fill="#2f7d45" text-anchor="middle" xml:space="preserve">② check()</text>
-<circle cx="330" cy="420" r="5" fill="#2f7d45"/>
-<text x="330" y="408" font-size="11.5" font-weight="bold" fill="#2f7d45" text-anchor="middle" xml:space="preserve">③ 变化静默后 check()</text>
-<circle cx="500" cy="420" r="5" fill="#2f7d45"/>
-<text x="500" y="408" font-size="11.5" font-weight="bold" fill="#2f7d45" text-anchor="middle" xml:space="preserve">④ 到点 check()</text>
-<text x="330" y="440" font-size="10.5" font-weight="normal" fill="#2f7d45" text-anchor="middle" xml:space="preserve">（每次目录变化都再查一次）</text>
-<text x="40" y="466" font-size="11.5" font-weight="bold" fill="#1a1a1a" text-anchor="start" xml:space="preserve">旧写法（各调用方手写的“查 → 等 → 再查”三段式）：</text>
-<rect x="52" y="476" width="120" height="28" rx="6" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
-<text x="112" y="495" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="middle" xml:space="preserve" font-family="DejaVu Sans Mono, monospace">check()</text>
-<rect x="180" y="476" width="200" height="28" rx="6" fill="#fdf1ec" stroke="#b0451f" stroke-width="1.6" stroke-dasharray="5 4"/>
-<text x="280" y="495" font-size="11" font-weight="normal" fill="#b0451f" text-anchor="middle" xml:space="preserve">这段时间的变化谁也看不见</text>
-<rect x="388" y="476" width="160" height="28" rx="6" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
-<text x="468" y="495" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="middle" xml:space="preserve">挂上 watch_until</text>
-<text x="40" y="530" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">新写法先挂监听再查，挂上之后的变化都排进 inotify 队列，不会漏。</text>
-<text x="40" y="552" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">inotify 起不来时退化成每秒 check() 一次，语义不变。</text>
-<text x="40" y="580" font-size="11" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">用在：大文件通道认领占位（20 秒）· 笔记本认领（5 秒）· 建文件夹 / 渲染自检 / 直接导入</text>
-<text x="636" y="84" font-size="13" font-weight="bold" fill="#1a1a1a" text-anchor="start" xml:space="preserve">10-09 改的两处机制（已部署，未在真机上专门触发）</text>
-<rect x="630" y="96" width="586" height="236" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
-<text x="646" y="120" font-size="13" font-weight="bold" fill="#1a1a1a" text-anchor="start" xml:space="preserve">A　线程模型</text>
-<rect x="646" y="134" width="270" height="186" rx="8" fill="#fdf1ec" stroke="#c0602d" stroke-width="1.6"/>
-<text x="660" y="156" font-size="12" font-weight="bold" fill="#b0451f" text-anchor="start" xml:space="preserve">10-09 前</text>
-<text x="660" y="178" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">每个监听另起一条读线程，</text>
-<text x="660" y="196" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">阻塞在 inotify 的 read 上</text>
-<text x="660" y="220" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">限时形态结束时读线程醒不来：</text>
-<text x="660" y="238" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">只能往 /tmp 私有目录写个文件</text>
-<text x="660" y="256" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">把它踢醒</text>
-<text x="660" y="280" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">踢醒目录建不了 → 线程和描述符</text>
-<text x="660" y="298" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">一直挂到目录下次有动静</text>
-<polyline points="922,226 950,226" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
-<rect x="954" y="134" width="248" height="186" rx="8" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
-<text x="968" y="156" font-size="12" font-weight="bold" fill="#2f7d45" text-anchor="start" xml:space="preserve">10-09 起</text>
-<text x="968" y="178" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">就在调用方线程里：</text>
-<text x="968" y="196" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">poll(描述符, 超时)</text>
-<text x="968" y="214" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">→ 非阻塞读出事件</text>
-<text x="968" y="238" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">每个监听只占这一条线程，</text>
-<text x="968" y="256" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">返回即释放 inotify</text>
-<text x="968" y="280" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">不再碰 /tmp；poll 超时按毫秒</text>
-<text x="968" y="298" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">向上取整（不会 poll(0) 忙等）</text>
-<rect x="630" y="344" width="586" height="256" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
-<text x="646" y="368" font-size="13" font-weight="bold" fill="#1a1a1a" text-anchor="start" xml:space="preserve">B　被监听的目录被删 / 被挪走</text>
-<rect x="646" y="382" width="270" height="206" rx="8" fill="#fdf1ec" stroke="#c0602d" stroke-width="1.6"/>
-<text x="660" y="404" font-size="12" font-weight="bold" fill="#b0451f" text-anchor="start" xml:space="preserve">10-09 前</text>
-<text x="660" y="426" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">内核只发一条 IN_IGNORED /</text>
-<text x="660" y="444" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">IN_MOVE_SELF，之后永远安静</text>
-<text x="660" y="468" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">常驻监听线程永远睡着，</text>
-<text x="660" y="486" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">不报错：</text>
-<text x="660" y="506" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">· 网关注册表唤醒</text>
-<text x="660" y="524" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">· book-serve inbox 追平</text>
-<text x="660" y="542" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">· ink-serve 书库监听</text>
-<text x="660" y="566" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">都静默失效，只剩各自的超时兜底</text>
-<polyline points="922,484 950,484" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
-<rect x="954" y="382" width="248" height="206" rx="8" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
-<text x="968" y="404" font-size="12" font-weight="bold" fill="#2f7d45" text-anchor="start" xml:space="preserve">10-09 起</text>
-<text x="968" y="426" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">常驻形态：按退避重新挂监听</text>
-<text x="968" y="444" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">1 秒 → 2 秒 → … → 封顶 5 分钟</text>
-<text x="968" y="468" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">挂上后以“空集合”回调一次，</text>
-<text x="968" y="486" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">让调用方自己追平这段时间的变化</text>
-<text x="968" y="510" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">限时形态：直接交回调用方</text>
-<text x="968" y="528" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">（wait_for 退化成每秒轮询）</text>
-<text x="968" y="552" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">目录一直在时：行为不变、</text>
-<text x="968" y="570" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">空闲零唤醒不变</text>
-<rect x="24" y="616" width="1192" height="84" rx="10" fill="#f1f1ef" stroke="#8a8a8a" stroke-width="1.6"/>
-<text x="40" y="640" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">· 事件：CLOSE_WRITE / MOVED_TO / CREATE / DELETE / MOVED_FROM / MOVE_SELF（删除也算：网关看注册表目录用）。只看一层目录，不递归。</text>
-<text x="40" y="662" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">· 验证：开发机真 inotify 单测（删目录后重挂、wait_for 先挂后查、限时返回即释放）；rmsvc-core 单测全过。10-09 已随部署上机，这两处新行为没在真机上专门触发过。</text>
-<text x="40" y="684" font-size="11.5" font-weight="normal" fill="#3a3a3a" text-anchor="start" xml:space="preserve">· 读事件出错时固定歇 5 秒再读，没有退避（09-30 记下，未改）。</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 530" font-family="Noto Sans SC, Noto Sans CJK SC, PingFang SC, sans-serif">
+<rect width="100%" height="100%" fill="#FFFFFF"/>
+<defs>
+<marker id="fw-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#64748B"/></marker>
+<marker id="fw-arr-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EF4444"/></marker>
+</defs>
+<text x="620.0" y="34" text-anchor="middle" font-size="18" font-weight="700" fill="#1F2937">fswatch：三种形态（rmsvc-core fswatch.rs）</text>
+<text x="620.0" y="56" text-anchor="middle" font-size="12" fill="#6B7280">单层目录 inotify 监听：空闲时线程睡死、零唤醒；有写入后等防抖窗口静默，再回调一次（带上受影响的文件名）</text>
+<rect x="30" y="80" width="380" height="160" rx="8" fill="#EFF6FF" stroke="#2563EB" stroke-width="1.5"/>
+<text x="42" y="102" text-anchor="start" font-size="13" font-weight="700" fill="#1F2937">watch_debounced(目录, 防抖, 回调)</text>
+<text x="42" y="122" text-anchor="start" font-size="11.5" fill="#1F2937">常驻，不返回（inotify 起不来才返回）</text>
+<text x="42" y="139" text-anchor="start" font-size="11.5" fill="#1F2937">有写入 → 等静默 → 回调 → 接着等</text>
+<text x="42" y="156" text-anchor="start" font-size="11.5" fill="#1F2937">目录被删 / 挪走：1 秒起翻倍到 5 分钟</text>
+<text x="42" y="173" text-anchor="start" font-size="11.5" fill="#1F2937">退避重挂，挂上后以空集合回调一次</text>
+<text x="42" y="190" text-anchor="start" font-size="11.5" fill="#1F2937">用在：注册表唤醒、book-serve inbox、</text>
+<text x="42" y="207" text-anchor="start" font-size="11.5" fill="#1F2937">ink-serve 书库（wallpaper-serve 用 watch_with）</text>
+<rect x="430" y="80" width="380" height="160" rx="8" fill="#EFF6FF" stroke="#2563EB" stroke-width="1.5"/>
+<text x="442" y="102" text-anchor="start" font-size="13" font-weight="700" fill="#1F2937">watch_until(目录, 防抖, 超时, 回调)</text>
+<text x="442" y="122" text-anchor="start" font-size="11.5" fill="#1F2937">限时：回调说"完了"返回 true；到点 false</text>
+<text x="442" y="139" text-anchor="start" font-size="11.5" fill="#1F2937">有头有尾的等待，返回即撤掉监听</text>
+<text x="442" y="156" text-anchor="start" font-size="11.5" fill="#1F2937">不给书库目录留常驻监听</text>
+<text x="442" y="173" text-anchor="start" font-size="11.0" fill="#6B7280">（2026-10-10 时没有生产调用方，只有测试）</text>
+<rect x="830" y="80" width="380" height="160" rx="8" fill="#ECFDF5" stroke="#10B981" stroke-width="1.5"/>
+<text x="842" y="102" text-anchor="start" font-size="13" font-weight="700" fill="#1F2937">wait_for(目录, 防抖, 超时, check)</text>
+<text x="842" y="122" text-anchor="start" font-size="11.5" fill="#1F2937">等某个条件成立：check 给 Some 就交回</text>
+<text x="842" y="139" text-anchor="start" font-size="11.5" fill="#1F2937">先挂监听，再查一次（不漏中间的变化）</text>
+<text x="842" y="156" text-anchor="start" font-size="11.5" fill="#1F2937">之后每次目录变化静默后再查，到点查最后一次</text>
+<text x="842" y="173" text-anchor="start" font-size="11.5" fill="#1F2937">inotify 起不来时退化成每秒轮询</text>
+<text x="842" y="190" text-anchor="start" font-size="11.5" fill="#1F2937">用在：upload_and_claim 认领、渲染自检、</text>
+<text x="842" y="207" text-anchor="start" font-size="11.5" fill="#1F2937">建文件夹等待、大文件占位页数等待</text>
+<text x="46" y="284" text-anchor="start" font-size="12.5" font-weight="700" fill="#1F2937">wait_for 的时间线</text>
+<line x1="60" y1="320" x2="1180" y2="320" stroke="#64748B" stroke-width="1.5" marker-end="url(#fw-arr)"/>
+<circle cx="80" cy="320" r="5" fill="#10B981"/>
+<text x="80" y="306" text-anchor="middle" font-size="11.5" fill="#1F2937">① 挂上监听</text>
+<circle cx="330" cy="320" r="5" fill="#10B981"/>
+<text x="330" y="306" text-anchor="middle" font-size="11.5" fill="#1F2937">② check()</text>
+<circle cx="620" cy="320" r="5" fill="#10B981"/>
+<text x="620" y="306" text-anchor="middle" font-size="11.5" fill="#1F2937">③ 目录变化、静默后 check()</text>
+<circle cx="960" cy="320" r="5" fill="#10B981"/>
+<text x="960" y="306" text-anchor="middle" font-size="11.5" fill="#1F2937">④ 到点，最后一次 check()</text>
+<text x="620" y="342" text-anchor="middle" font-size="11" fill="#6B7280">（可能重复多次）</text>
+<rect x="30" y="370" width="1180" height="136" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="42" y="392" text-anchor="start" font-size="13" font-weight="700" fill="#1F2937">实现约定</text>
+<text x="42" y="419" text-anchor="start" font-size="11.5" fill="#1F2937">· 每个监听只占调用方这一条线程：poll(inotify 描述符, 超时) 后非阻塞读，返回即释放；超时按毫秒向上取整，不会变成 poll(0) 忙等。</text>
+<text x="42" y="443" text-anchor="start" font-size="11.5" fill="#1F2937">· 事件：CLOSE_WRITE / MOVED_TO / CREATE / DELETE / MOVED_FROM / MOVE_SELF，只看一层，不递归。</text>
+<text x="42" y="467" text-anchor="start" font-size="11.5" fill="#1F2937">· WatchSpec 可改掩码与防抖（watch_with / watch_until_with / wait_for_with）；wallpaper-serve 用它只收壁纸目录的 CLOSE_NOWRITE、不防抖。</text>
+<text x="42" y="491" text-anchor="start" font-size="11.5" fill="#1F2937">· 读事件出错时固定歇 5 秒再读，没有退避（已知，未改）。</text>
 </svg>
