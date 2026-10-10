@@ -1,77 +1,56 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 700" font-family="Noto Sans CJK SC, sans-serif">
-  <defs>
-    <marker id="dd-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker>
-  </defs>
-  <rect x="0" y="0" width="1080" height="700" fill="#fbfbfa"/>
-  <text x="540" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">落库决策树：一本书怎样进 xochitl</text>
-  <text x="540" y="50" text-anchor="middle" font-size="12.5" fill="#4a4a4a">入口 book-serve Staging::deliver（网页「加入 xochitl」）；母版库里的原书字节永远保留，可反复加入</text>
-
-  <!-- 入口 -->
-  <rect x="340" y="68" width="400" height="40" rx="8" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.5"/>
-  <text x="540" y="93" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">点「加入 xochitl」 POST /staging/deliver {name, folder}</text>
-  <line x1="540" y1="108" x2="540" y2="128" stroke="#555" stroke-width="1.5" marker-end="url(#dd-a)"/>
-
-  <!-- 先决 -->
-  <rect x="270" y="130" width="540" height="62" rx="8" fill="#f0f0ee" stroke="#8a8a8a" stroke-width="1.5"/>
-  <text x="540" y="151" text-anchor="middle" font-size="12" fill="#1a1a1a">先决 1：格式只认 EPUB / PDF（母版库本来也只收这两种）</text>
-  <text x="540" y="170" text-anchor="middle" font-size="12" fill="#1a1a1a">先决 2：文件夹名不存在 → 入 mkdir 队列，等 qmd 代理在设备上真建出来</text>
-  <text x="540" y="186" text-anchor="middle" font-size="11" fill="#4a4a4a">（最多等 20 秒；超时不算错，退回落书库根；留空 = 书库根）</text>
-  <line x1="540" y1="192" x2="540" y2="212" stroke="#555" stroke-width="1.5" marker-end="url(#dd-a)"/>
-
-  <!-- 判断 A -->
-  <polygon points="330,262 540,214 750,262 540,310" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
-  <text x="540" y="258" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">体积 &gt; 90MB ?</text>
-  <text x="540" y="277" text-anchor="middle" font-size="11" fill="#3a3a3a">nativeUploadLimitMb；0 = 不拦</text>
-
-  <!-- 否：普通上传 -->
-  <line x1="330" y1="262" x2="292" y2="262" stroke="#555" stroke-width="1.5" marker-end="url(#dd-a)"/>
-  <text x="311" y="254" text-anchor="middle" font-size="12" font-weight="bold" fill="#2f7d45">否</text>
-  <rect x="30" y="214" width="262" height="100" rx="8" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.6"/>
-  <text x="161" y="236" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">① 流式 /upload</text>
-  <text x="161" y="256" text-anchor="middle" font-size="11" fill="#1a1a1a">upload_file 不把整本读进内存</text>
-  <text x="161" y="274" text-anchor="middle" font-size="11" fill="#1a1a1a">EPUB：另起线程做渲染自检</text>
-  <text x="161" y="292" text-anchor="middle" font-size="11" fill="#1a1a1a">漫画 EPUB：登记「首开设页边距」</text>
-  <text x="161" y="308" text-anchor="middle" font-size="10" fill="#4a4a4a">见 §03aa · §03be</text>
-
-  <line x1="540" y1="310" x2="540" y2="352" stroke="#555" stroke-width="1.5" marker-end="url(#dd-a)"/>
-  <text x="552" y="336" font-size="12" font-weight="bold" fill="#b0451f">是（超限）</text>
-
-  <!-- 判断 B -->
-  <polygon points="310,410 540,354 770,410 540,466" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
-  <text x="540" y="404" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">≤ 1GiB，且本机有书库目录，</text>
-  <text x="540" y="424" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">且占位文档造得出 ?</text>
-
-  <!-- 是：占位 -->
-  <line x1="310" y1="410" x2="292" y2="410" stroke="#555" stroke-width="1.5" marker-end="url(#dd-a)"/>
-  <text x="301" y="402" text-anchor="middle" font-size="12" font-weight="bold" fill="#2f7d45">是</text>
-  <rect x="30" y="356" width="262" height="108" rx="8" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.6"/>
-  <text x="161" y="378" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">② 占位 + 磁盘替换（大文件通道）</text>
-  <text x="161" y="398" text-anchor="middle" font-size="11" fill="#1a1a1a">先传几 KB 占位，再原子换成真文件</text>
-  <text x="161" y="416" text-anchor="middle" font-size="11" fill="#1a1a1a">整本投、不限漫画、EPUB/PDF 都行</text>
-  <text x="161" y="434" text-anchor="middle" font-size="11" fill="#1a1a1a">EPUB 首开才渲染，徽章记 onopen</text>
-  <text x="161" y="452" text-anchor="middle" font-size="10" fill="#4a4a4a">见 §03bn · upload-limit-bypass.svg</text>
-
-  <line x1="540" y1="466" x2="540" y2="504" stroke="#555" stroke-width="1.5" marker-end="url(#dd-a)"/>
-  <text x="552" y="490" font-size="12" font-weight="bold" fill="#b0451f">否（任一条件不满足）</text>
-
-  <!-- 否：拒绝 -->
-  <rect x="310" y="506" width="460" height="100" rx="8" fill="#fbe9e4" stroke="#b0451f" stroke-width="1.6"/>
-  <text x="540" y="528" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">③ 整本拒绝（回执末尾「没有加入」）</text>
-  <text x="540" y="548" text-anchor="middle" font-size="11" fill="#1a1a1a">超过 1GiB、造不出占位文档、或本机没有 xochitl 书库目录（非设备环境）</text>
-  <text x="540" y="566" text-anchor="middle" font-size="11" fill="#1a1a1a">→ 只能自行把书分成多份、再分别上传入库</text>
-  <text x="540" y="590" text-anchor="middle" font-size="10" fill="#4a4a4a">不再按卷拆分（EPUB 按 NCX、PDF 按书签拆分投递，2026-09-30 已移除）</text>
-
-  <!-- 已退役的旁路（历史） -->
-  <rect x="790" y="68" width="262" height="124" rx="8" fill="#f0f0ee" stroke="#8a8a8a" stroke-width="1.2" stroke-dasharray="5 4"/>
-  <text x="921" y="90" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#4a4a4a">已退役：加入 KOReader</text>
-  <text x="921" y="112" text-anchor="middle" font-size="11" fill="#4a4a4a">2026-09-29 设备卸载 KOReader，</text>
-  <text x="921" y="130" text-anchor="middle" font-size="11" fill="#4a4a4a">koreader-serve 不再安装，</text>
-  <text x="921" y="148" text-anchor="middle" font-size="11" fill="#4a4a4a">网关不再代理 /api/koreader/*、</text>
-  <text x="921" y="166" text-anchor="middle" font-size="11" fill="#4a4a4a">批量队列也没有这个动作</text>
-  <text x="921" y="184" text-anchor="middle" font-size="10" fill="#6a6a6a">（源码 09-30 已从仓库删除，见 git 历史）</text>
-
-  <!-- 底部说明 -->
-  <rect x="30" y="628" width="1022" height="54" rx="8" fill="#f0f0ee" stroke="#8a8a8a" stroke-width="1.2"/>
-  <text x="541" y="649" text-anchor="middle" font-size="11.5" fill="#1a1a1a">成功后统一：写边车 .&lt;书名&gt;.delivered（native 时间戳，EPUB 与大文件另写 render 记录）；每完成一步向 SSE 推 books/staging，网页零轮询刷新</text>
-  <text x="541" y="668" text-anchor="middle" font-size="11.5" fill="#4a4a4a">占位已上传之后才出的错直接报错（书库里可能留下半成品占位）；占位残留由用户手动删除，不做回滚删除</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 760" font-family="Noto Sans SC, Noto Sans CJK SC, PingFang SC, sans-serif">
+<defs><marker id="delive-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#64748B"/></marker><marker id="delive-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EF4444"/></marker><marker id="delive-g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#10B981"/></marker></defs>
+<rect width="100%" height="100%" fill="#FFFFFF"/>
+<text x="600.0" y="32.0" font-size="18" font-weight="bold" fill="#1F2937" text-anchor="middle">加入 xochitl：一本书怎样进书库（Staging::deliver + XochitlDelivery）</text>
+<text x="600.0" y="54.0" font-size="12" fill="#6B7280" text-anchor="middle">网页「加入 xochitl」→ 网关批量队列 → POST /staging/deliver → 排进 book-serve 作业队列；母版字节永远保留，可反复加入</text>
+<rect x="380" y="92" width="440" height="76" rx="8" fill="#EFF6FF" stroke="#2563EB" stroke-width="1.5"/>
+<text x="392.0" y="112.0" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">① 先决检查（HTTP 当场回）</text>
+<text x="392.0" y="131.0" font-size="11.5" fill="#1F2937" text-anchor="start">格式只认 EPUB / PDF（否则 400）；书在母版库（否则 404）</text>
+<text x="392.0" y="147.5" font-size="11.5" fill="#1F2937" text-anchor="start">这本书正在处理（忙锁）→ 409；通过才记 pending、排队、回「已开始」</text>
+<path d="M600.0,168.0 L600.0,196.0" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#delive-a)"/>
+<rect x="380" y="196" width="440" height="92" rx="8" fill="#EFF6FF" stroke="#2563EB" stroke-width="1.5"/>
+<text x="392.0" y="216.0" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">② 解析目标文件夹 ensure_folder</text>
+<text x="392.0" y="235.0" font-size="11.5" fill="#1F2937" text-anchor="start">留空 → 书库根；填了名字 → 书库根正下方按名字找</text>
+<text x="392.0" y="251.5" font-size="11.5" fill="#1F2937" text-anchor="start">没有 → 入建文件夹队列，等 qmd 代理在根下建（最多 20 秒）</text>
+<text x="392.0" y="268.0" font-size="11.5" fill="#1F2937" text-anchor="start">等不到不算错，书落书库根（名字里的 / 是普通字符）</text>
+<path d="M600.0,288.0 L600.0,316.0" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#delive-a)"/>
+<rect x="430" y="316" width="340" height="56" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="600.0" y="336.0" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="middle">③ 体积 &gt; 体积门？</text>
+<text x="600.0" y="355.0" font-size="11.5" fill="#1F2937" text-anchor="middle">nativeUploadLimitMb，缺省 90MB；0 = 不拦</text>
+<path d="M430.0,344.0 L280.0,344.0 L280.0,400.0" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#delive-a)"/>
+<text x="355.0" y="336.0" font-size="11" fill="#6B7280" text-anchor="middle">否</text>
+<path d="M770.0,344.0 L920.0,344.0 L920.0,400.0" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#delive-a)"/>
+<text x="845.0" y="336.0" font-size="11" fill="#6B7280" text-anchor="middle">是</text>
+<rect x="40" y="400" width="480" height="166" rx="8" fill="#ECFDF5" stroke="#10B981" stroke-width="1.5"/>
+<text x="52.0" y="420.0" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">④ 普通上传（流式，不把整本读进内存）</text>
+<text x="52.0" y="439.0" font-size="11.5" fill="#1F2937" text-anchor="start">PDF：upload_only 只上传，不认领、没有渲染自检</text>
+<text x="52.0" y="455.5" font-size="11.5" fill="#1F2937" text-anchor="start">EPUB：upload_and_claim 当场认领：</text>
+<text x="52.0" y="472.0" font-size="11.5" fill="#1F2937" text-anchor="start">  上传前拍书库快照 → 上传 → 等书库变化 →</text>
+<text x="52.0" y="488.5" font-size="11.5" fill="#1F2937" text-anchor="start">  在快照之外的新文档里找 &lt;uuid&gt;.epub 与母版逐字节相同的</text>
+<text x="52.0" y="505.0" font-size="11.5" fill="#1F2937" text-anchor="start">  回 2xx 最多等 20 秒；读超时 / 408 最多等 30 分钟</text>
+<text x="52.0" y="521.5" font-size="11.5" fill="#1F2937" text-anchor="start">认出：另起渲染自检线程（最长 10 分钟等页数），</text>
+<text x="52.0" y="538.0" font-size="11.5" fill="#1F2937" text-anchor="start">  开头登记漫画页边距（书里带 sheng-ren 标记时）</text>
+<rect x="40" y="600" width="480" height="64" rx="8" fill="#FFFBEB" stroke="#F59E0B" stroke-width="1.5"/>
+<text x="52.0" y="620.0" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">认不出就不认</text>
+<text x="52.0" y="639.0" font-size="11.5" fill="#1F2937" text-anchor="start">落库照算成功（书已交给 xochitl）；渲染记 timeout、uuid 留空、</text>
+<text x="52.0" y="655.5" font-size="11.5" fill="#1F2937" text-anchor="start">不登记页边距 —— 绝不把别人刚投的书当成自己的</text>
+<path d="M280.0,566.0 L280.0,600.0" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#delive-a)"/>
+<rect x="680" y="400" width="480" height="150" rx="8" fill="#ECFDF5" stroke="#10B981" stroke-width="1.5"/>
+<text x="692.0" y="420.0" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">⑤ 大文件通道：占位 + 磁盘替换（整本）</text>
+<text x="692.0" y="439.0" font-size="11.5" fill="#1F2937" text-anchor="start">条件：EPUB / PDF、≤ 1GiB、本机有书库目录、造得出占位</text>
+<text x="692.0" y="455.5" font-size="11.5" fill="#1F2937" text-anchor="start">传几 KB 占位（真书名 + 真封面）→ 按占位大小认领 uuid →</text>
+<text x="692.0" y="472.0" font-size="11.5" fill="#1F2937" text-anchor="start">真文件拷成 &lt;uuid&gt;.&lt;ext&gt;.new → EPUB 删渲染缓存 /</text>
+<text x="692.0" y="488.5" font-size="11.5" fill="#1F2937" text-anchor="start">PDF 改写 .content 页数 → 原子改名覆盖占位</text>
+<text x="692.0" y="505.0" font-size="11.5" fill="#1F2937" text-anchor="start">渲染记录：PDF 直接 ok；EPUB 记 onopen（首次打开才排版）</text>
+<text x="692.0" y="521.5" font-size="11.5" fill="#1F2937" text-anchor="start">整段串行（两本大 PDF 的占位字节相同，防认错）</text>
+<rect x="680" y="572" width="480" height="92" rx="8" fill="#FEF2F2" stroke="#EF4444" stroke-width="1.5"/>
+<text x="692.0" y="592.0" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">⑥ 整本拒绝（回执末尾「没有加入」）</text>
+<text x="692.0" y="611.0" font-size="11.5" fill="#1F2937" text-anchor="start">超过 1GiB、造不出占位、或本机没有书库目录</text>
+<text x="692.0" y="627.5" font-size="11.5" fill="#1F2937" text-anchor="start">占位已上传之后才出的错直接报错（书库可能留半成品占位，</text>
+<text x="692.0" y="644.0" font-size="11.5" fill="#1F2937" text-anchor="start">回执提示手动删）；不再按卷拆分（09-30 已移除）</text>
+<path d="M1100.0,550.0 L1100.0,572.0" fill="none" stroke="#EF4444" stroke-width="1.5" marker-end="url(#delive-r)"/>
+<text x="1040.0" y="566.0" font-size="11" fill="#6B7280" text-anchor="middle">条件不满足</text>
+<text x="40.0" y="700.0" font-size="11.5" fill="#6B7280" text-anchor="start">作业结束：边车 .&lt;书名&gt;.delivered 写 deliver = ok / failed（native 记加入时间）、render 由自检写 pending → ok / timeout；解忙锁，推 books/staging 事件，网页即时刷新。</text>
+<text x="40.0" y="720.0" font-size="11.5" fill="#6B7280" text-anchor="start">批量队列在网关：只有边车 deliver.status = ok 才算成功，等不到、查不到、途中消失一律记失败并提示到 xochitl 书库里核对。</text>
+<text x="40.0" y="740.0" font-size="11.5" fill="#6B7280" text-anchor="start">代码：shelf/services/book-serve/src/staging/deliver.rs、delivery.rs、render_check.rs；认领与大文件通道在 rmsvc-core/src/xochitl/。</text>
 </svg>
