@@ -41,15 +41,16 @@ document.addEventListener('click',e=>{const b=e.target.closest('.badge[title]');
     b.onclick=()=>{[...nav.children].forEach(x=>x.classList.remove('on'));[...main.children].forEach(x=>x.classList.remove('on'));b.classList.add('on');sec.classList.add('on');
       if(!rendered){rendered=true;render(sec)}else if(sec.refresh)refreshSec(sec)};
     nav.appendChild(b);main.appendChild(sec);if(first)b.onclick();return sec};
-  addTab(T('tab.transfer'),renderTransfer,true,'books');          // 总入口（入库｜母版库），固定第一位（book-serve 不在时列表里提示去管理页开）
+  addTab(T('tab.transfer'),renderTransfer,true,EV.area.BOOKS);          // 总入口（入库｜母版库），固定第一位（book-serve 不在时列表里提示去管理页开）
   noteSvc.forEach((s)=>addTab(T(TABS[s.name].titleKey),TABS[s.name].render,false,AREA[s.name]||s.name));
   if(otherSvcs.length){
+    // 'other' 不是事件 area，只是这个 section 在 secByArea 里的占位键；字体/壁纸的 area 在下面指到它。
     const otherSec=addTab(T('tab.other'),(sec)=>renderOther(sec,otherSvcs,n=>AREA[n]||n),false,'other');
     // fonts/wallpapers 的 SSE 事件都指向同一个「其他」section，由它的 onEvent 只刷发事件的那块子面板
     // （2026-09-25 起）；切到「其他」tab、重连时才几块一起刷。
     otherSvcs.forEach(s=>{secByArea[AREA[s.name]||s.name]=otherSec});
   }
-  addTab(T('tab.manage'),renderManage,false,'manage');            // 固定管理台，始终可进
+  addTab(T('tab.manage'),renderManage,false,EV.area.MANAGE);            // 固定管理台，始终可进
   /* 事件推送（SSE，零轮询）：服务在变更处发事件 → 网关 /api/events 汇聚 → 这里只刷对应 tab；不在前台的 tab 不管，切过去时本来就刷。
      manage 事件（服务启停）：tab 集合变了就整页重载，否则只刷管理台。断线（WiFi 掉/设备休眠醒来）EventSource 自动重连，
      重连成功（非首次 onopen）补刷一次当前 tab——断线期间的事件没人推给我们。
@@ -89,8 +90,8 @@ document.addEventListener('click',e=>{const b=e.target.closest('.badge[title]');
     es.onerror=()=>{liveDot.style.color='var(--bad)';liveDot.title=T('common.eventStreamReconnecting');
       if(src.readyState===2&&es===src){closeEs();reopenLater()}}; // 2 = EventSource.CLOSED：浏览器不会再自己重连
     es.onmessage=async(e)=>{let ev;try{ev=JSON.parse(e.data)}catch{return}
-      if(ev.kind==='agent-failed'){showAgentFailBanner();return} // 全站横幅，与哪个 tab 无关
-      if(ev.area==='manage'&&await checkServices())return;
+      if(ev.kind===EV.kind.AGENT_FAILED){showAgentFailBanner();return} // 全站横幅，与哪个 tab 无关
+      if(ev.area===EV.area.MANAGE&&await checkServices())return;
       const sec=secByArea[ev.area];if(!sec)return;
       if(!sec.classList.contains('on'))return;
       if(document.hidden)activeStale=true;

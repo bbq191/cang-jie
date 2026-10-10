@@ -9,6 +9,14 @@ use rmsvc_core::paths::Paths;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
+/// 网关自己发的事件的 area/kind（网页 `core.js` 的 `EV` 表有对应项，`ui.rs` 的测试核对；全量取值见网关白皮书「事件 area/kind 总表」）。
+pub const AREA_BOOKS: &str = "books";
+pub const AREA_MANAGE: &str = "manage";
+/// 批量队列状态变了（`batch::persist`）。
+pub const KIND_BATCH: &str = "batch";
+/// 服务注册表变了（服务启停/装卸）。
+pub const KIND_SERVICES: &str = "services";
+
 /// 网关自己产生的事件（批量队列进度）要发到同一条总线，而 batch 是进程级单例——[`spawn`] 把总线登记在这里，
 /// [`notify_books`] 取用（没登记时是空操作，测试里就是这样）。
 static BUS: OnceLock<Arc<EventBus>> = OnceLock::new();
@@ -16,7 +24,7 @@ static BUS: OnceLock<Arc<EventBus>> = OnceLock::new();
 /// 通知网页"传书/母版库"区域刷新：批量队列状态变了。取代前端在批量运行时每 3 秒轮询。
 pub fn notify_books(kind: &str) {
     if let Some(b) = BUS.get() {
-        b.publish("books", kind);
+        b.publish(AREA_BOOKS, kind);
     }
 }
 
@@ -55,7 +63,7 @@ pub fn spawn(paths: Arc<Paths>) -> Arc<EventBus> {
                 let now = wake.wait_change(seen, Duration::from_secs(24 * 3600));
                 if now != seen {
                     seen = now;
-                    bus.publish("manage", "services");
+                    bus.publish(AREA_MANAGE, KIND_SERVICES);
                 }
             }
         });

@@ -167,6 +167,13 @@ mod tests {
             let missing: Vec<&String> = want.iter().filter(|k| v.get(k.as_str()).is_none()).collect();
             assert!(missing.is_empty(), "{name} 语言包缺这些动态键：{missing:?}");
         }
+        // 网关自己发的事件：网页 core.js 的 EV 表要有这些取值（网页所有事件分支都只认 EV 表）。
+        use crate::events::{AREA_BOOKS, AREA_MANAGE, KIND_BATCH, KIND_SERVICES};
+        let ev = &super::APP_JS[super::APP_JS.find("const EV={").expect("core.js 应定义 EV 表")..];
+        let ev = &ev[..ev.find("};").unwrap()];
+        for v in [AREA_BOOKS, AREA_MANAGE, KIND_BATCH, KIND_SERVICES] {
+            assert!(ev.contains(&format!(":'{v}'")), "core.js 的 EV 表缺 {v}");
+        }
         // 系统增强开关：网页 manage.js 的 TOGGLE_UI 要给 TOGGLES 里每个键配文案，否则那个开关在网页上不出现。
         for t in crate::enhance::TOGGLES {
             assert!(super::APP_JS.contains(&format!("\n  {}:{{panel:", t.key)), "manage.js 的 TOGGLE_UI 缺 {}", t.key);

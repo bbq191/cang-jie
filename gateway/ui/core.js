@@ -63,3 +63,15 @@ const jsend=(url,method,body)=>j(url,body===undefined?{method}:{method,body:JSON
    全站"发请求 → 失败提示"都走它（postJ / bindToggle / 模型面板 / 删除按钮…），不再各处手写同一句。 */
 const sendT=async(url,method,body,failKey='common.failed')=>{const r=await jsend(url,method,body);if(r.ok===false)toast(r.message||T(failKey));return r};
 const postJ=(url,body)=>sendT(url,'POST',body);
+/* SSE 事件的 area/kind 取值（`/api/events`，网关汇聚各服务的 `bus.publish(area, kind)` 后补上 `svc`）。网页按 area 找 tab
+   （`secByArea`）、按 kind 决定刷多少；所有分支都用这张表，不写字面量。产生方与各取值的含义见网关白皮书「事件 area/kind 总表」。
+   服务侧目前仍是字符串字面量（第二阶段再收成常量），改名时两边都要动。 */
+const EV={
+  area:{BOOKS:'books',NOTES:'notes',FONTS:'fonts',WALLPAPERS:'wallpapers',MANAGE:'manage'},
+  kind:{
+    STAGING:'staging',RENDER:'render',MKDIR:'mkdir',TRASH:'trash',INBOX:'inbox',IMPORT:'import',AGENT_FAILED:'agent-failed', // book-serve
+    BATCH:'batch',SERVICES:'services',                                    // 网关自己（批量队列 / 服务注册表变化）
+    ENTRIES:'entries',TRANSCRIBE:'transcribe',NOTEBOOKS:'notebooks',      // ink-serve / transcribe-serve / note-serve（area 都是 notes）
+    FONTS:'fonts',UI:'ui',CONFIG:'config',POOL:'pool',                    // font-serve / wallpaper-serve
+  },
+};

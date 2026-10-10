@@ -247,4 +247,4 @@ function renderTransfer(sec){sec.innerHTML=`
     g('stgnames').innerHTML=stgNameOptions(items);render()});
   const refreshAt=lvl=>{need=Math.max(need,lvl);return run()};
   uploader($('.up',sec),'/api/books/staging',BOOK_EXT,()=>refresh(),'/api/books/staging');   // 书籍格式原样入库；选中即按 BOOK_EXT 拦；传 dedupeApi 防重传出重复
-  refresh();sec.refresh=refresh;sec.onEvent=ev=>refreshAt(ev.area!=='books'?LEVEL.FULL:!ev.svc&&ev.kind==='batch'?LEVEL.QUEUE:ev.kind==='staging'||ev.kind==='render'?LEVEL.LIST:LEVEL.FULL);subtabs(sec);}
+  refresh();sec.refresh=refresh;sec.onEvent=ev=>refreshAt(ev.area!==EV.area.BOOKS?LEVEL.FULL:!ev.svc&&ev.kind===EV.kind.BATCH?LEVEL.QUEUE:ev.kind===EV.kind.STAGING||ev.kind===EV.kind.RENDER?LEVEL.LIST:LEVEL.FULL);subtabs(sec);}

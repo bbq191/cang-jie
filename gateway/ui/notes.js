@@ -472,8 +472,8 @@ function renderNotes(sec){sec.innerHTML=`
   const editing=()=>{const a=document.activeElement;return !!a&&sec.contains(a)&&(a.tagName==='TEXTAREA'||(a.tagName==='INPUT'&&/^(text|search)$/.test(a.type)))};
   let deferred=false;
   sec.onEvent=ev=>{if(editing()){deferred=true;return}
-    if(ev.kind==='notebooks'){syncOnly();return}
-    if(ev.kind==='entries'&&Date.now()<selfQuietUntil)return; // 自己刚动过、已经重取过了
+    if(ev.kind===EV.kind.NOTEBOOKS){syncOnly();return}
+    if(ev.kind===EV.kind.ENTRIES&&Date.now()<selfQuietUntil)return; // 自己刚动过、已经重取过了
     runRefresh()};
   sec.addEventListener('focusout',()=>setTimeout(()=>{if(deferred&&!editing()){deferred=false;runRefresh()}},0));
   refresh();sec.refresh=refresh;subtabs(sec)}
