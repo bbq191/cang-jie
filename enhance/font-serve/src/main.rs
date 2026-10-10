@@ -8,6 +8,8 @@
 //! 界面字体只给 xochitl 界面用，不进阅读器菜单、不当阅读的中文回退（见 `store.rs` 头注与 `ui.rs`）。
 mod fontconfig;
 mod store;
+// TTF/OTF 字体表最小解析（家族名、CJK 覆盖）：只有本服务用，2026-10-10 从 rmsvc-core 搬来（审计 CORE-3）。
+mod ttf;
 mod ui;
 
 use rmsvc_core::asset::{self, AssetUploadFlow};
@@ -23,7 +25,7 @@ const SPEC: ServiceSpec = ServiceSpec {
     label: "字体",
     version: env!("CARGO_PKG_VERSION"),
     default_bind: "127.0.0.1:8792",
-    tab: Some(("xochitl", 10)),
+    tab_order: Some(10),
 };
 
 struct State {
@@ -82,8 +84,8 @@ fn router(st: &Arc<State>) -> Router {
         .get("/", bind(st, |s, _| Ok(Reply::ok(&serde_json::json!({"items": s.store.list(), "fontsDir": s.store.fonts_dir(), "index": s.store.json_path()})))))
         .post("/", bind(st, |s, r| {
             let b = r.multipart_boundary()?;
-            // run 的整体错误基本是 multipart 解析失败（请求体不对）→ 400；单个字体装不上记在回执逐项里。
-            let items = AssetUploadFlow::new(&s.paths).run(&s.store, &mut *r.body, &b).map_err(ApiError::bad)?;
+            // run 的整体错误：multipart 解析失败 → 400，暂存建不了 → 500（`asset::FlowError`）；单个字体装不上记在回执逐项里。
+            let items = AssetUploadFlow::new(&s.paths).run(&s.store, &mut *r.body, &b)?;
             let any_ok = asset::any_ok(&items);
             if any_ok {
                 s.store.fc_cache(); // 整批装完重建一次（不在 install 里逐个跑）
@@ -107,7 +109,7 @@ fn router(st: &Arc<State>) -> Router {
         .get("/ui", bind(st, |s, _| Ok(Reply::ok(&ui_status(s)))))
         .post("/ui", bind(st, |s, r| {
             let b = r.multipart_boundary()?;
-            let items = AssetUploadFlow::new(&s.paths).run(&s.ui_store, &mut *r.body, &b).map_err(ApiError::bad)?;
+            let items = AssetUploadFlow::new(&s.paths).run(&s.ui_store, &mut *r.body, &b)?;
             if asset::any_ok(&items) {
                 s.ui_store.fc_cache();
                 s.store.refresh_fontconfig();
@@ -200,7 +202,7 @@ mod tests {
         std::fs::create_dir(&json).unwrap();
         std::fs::write(json.join("x"), b"x").unwrap();
         let reply = select(&r, "");
-        assert_eq!(reply.status, 500, "{}", String::from_utf8_lossy(&reply.body));
+        assert_eq!(reply.status, 500, "{}", String::from_utf8_lossy(reply.body.as_bytes()));
         assert_eq!(st.ui.get().sans, "Ui");
     }
 
@@ -210,6 +212,6 @@ mod tests {
         let (_t, _st, r) = setup();
         let reply = TestRequest::new(Method::Get, "/events").dispatch(&r);
         assert_eq!(reply.status, 200);
-        assert!(reply.content_type.starts_with("text/event-stream") && reply.stream.is_some());
+        assert!(reply.content_type.starts_with("text/event-stream") && matches!(reply.body, rmsvc_core::http::Body::EventStream(_)));
     }
 }

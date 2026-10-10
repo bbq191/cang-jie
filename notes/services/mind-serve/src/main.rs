@@ -27,7 +27,7 @@ use worker::Ctx;
 
 pub const APP: &str = "notes";
 
-const SPEC: ServiceSpec = ServiceSpec { name: "mind-serve", label: "笔记·脑", version: env!("CARGO_PKG_VERSION"), default_bind: "127.0.0.1:8797", tab: None };
+const SPEC: ServiceSpec = ServiceSpec { name: "mind-serve", label: "笔记·脑", version: env!("CARGO_PKG_VERSION"), default_bind: "127.0.0.1:8797", tab_order: None };
 
 struct State {
     cfg: ConfigCell<MindConfig>,
@@ -125,7 +125,7 @@ mod tests {
         let _reg = rmsvc_core::registry::register(&p, &info).unwrap();
         let reply = ask();
         assert_eq!(reply.status, 404);
-        assert!(String::from_utf8_lossy(&reply.body).contains("没有这本书的条目"));
+        assert!(String::from_utf8_lossy(reply.body.as_bytes()).contains("没有这本书的条目"));
     }
 
     /// 配置字段不合法 → 400（存盘失败的 500 由 `vendorcfg::ConfigCell` 的测试覆盖）。

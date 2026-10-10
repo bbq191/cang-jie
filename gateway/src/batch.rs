@@ -794,7 +794,7 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let paths = Paths::sandbox(t.path());
         let rep = TestRequest::new(rmsvc_core::http::Method::Post, "/api/batch/stop").with(|r| stop_route(&paths, r)).unwrap();
-        assert_eq!(serde_json::from_slice::<Value>(&rep.body).unwrap(), json!({"cleared": 1}));
+        assert_eq!(serde_json::from_slice::<Value>(rep.body.as_bytes()).unwrap(), json!({"cleared": 1}));
         assert_eq!(serde_json::to_value(Enqueued { queued: 2, skipped: 1 }).unwrap(), json!({"queued": 2, "skipped": 1}), "POST /api/batch 应答");
         *lock() = saved;
     }

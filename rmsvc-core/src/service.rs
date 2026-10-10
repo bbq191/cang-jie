@@ -9,7 +9,9 @@ pub struct ServiceSpec {
     pub label: &'static str,
     pub version: &'static str,
     pub default_bind: &'static str,
-    pub tab: Option<(&'static str, u32)>,
+    /// 在网关网页上占一个顶层 tab 时的排序（小的在前）；`None`＝不占 tab。标题由网页语言包给，这里不带
+    /// （2026-10-10 前是 `Option<(标题, 排序)>`，标题网页从来不读，审计 GW-3）。
+    pub tab_order: Option<u32>,
 }
 
 /// 命令行：`serve [--bind 127.0.0.1:8790]`。返回 bind。
@@ -54,7 +56,7 @@ pub fn run_with(spec: &ServiceSpec, bind: &str, paths: &Paths, router: Router, o
         label: spec.label.into(),
         version: spec.version.into(),
         pid: std::process::id(),
-        ui: spec.tab.map(|(t, o)| UiTab { title: t.into(), order: o }),
+        ui: spec.tab_order.map(|order| UiTab { order }),
     };
     let _reg = registry::register(paths, &info).map_err(|e| format!("注册失败: {e}"))?;
     let name = spec.name;

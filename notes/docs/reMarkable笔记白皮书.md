@@ -412,7 +412,7 @@
 | `crates/rmv6` | `.rm` v6 解析 + 写入。解析部分剥离移植自 `remarkable_lines` 0.1.3（MIT，见 `PROVENANCE.md`），写入 `write.rs` 是本项目原创。`CrdtId` 的 `"part1:part2"` 字符串形式是条目库里 id 的唯一定义处 |
 | `crates/epubmap` | `.epubindex` 起始页 + nav/ncx 目录 → 页号对应的章和小节；找目录文件用的 container.xml → OPF、manifest、href 解码，以及 `.epubindex` 起始页表的解析（10-09 下沉），都来自 `rmsvc-core/epubpkg`（与书架 shelf-conv 共用的独立小 crate，不依赖 rmsvc-core 本体） |
 | `crates/notecore` | 纯函数领域核心：`model`（条目、状态、样式、去处、来源；状态转移只经 `Entry` 方法；`Source` 里的两个 KOReader 变体只为读旧数据）· `api`（ink-serve HTTP 契约类型：`EntryPatch` / `DraftPost` / `AnswerPost` / `BookBrief` / 带 `live` 的 `BookView`）· `hash` · `geom`（聚簇、配对）· `ingest`（增量合并）· `marker`（行首标记）· `project`（→ 笔记本段落）· `export`（→ md）· `mdimport`（md → 段落） |
-| `crates/notesvc` | 三个服务共用的 `InkClient`（访问 ink-serve，10-10 由三份 `InkHttp` 合成；各服务仍保留自己的窄 `EntryStore` trait 作测试接缝）· `load_or_seed_logged`（ink/note 配置损坏时打日志、留 `.corrupt`） |
+| `crates/notesvc` | 三个服务共用的 `InkClient`（访问 ink-serve，10-10 由三份 `InkHttp` 合成；各服务仍保留自己的窄 `EntryStore` trait 作测试接缝）（同日还有 `load_or_seed_logged`——ink/note 配置损坏时打日志、留 `.corrupt`——10-10 第二阶段下沉成基座 `config::load_or_seed` 的默认行为，这里删了） |
 | `crates/vendorcfg` | 两个 AI 服务共用：`preset`（预置、key 分格、迁移、PATCH、对外 JSON、`VendorConfig` trait）· `usage`（泛型用量账本）· `cell`（`ConfigCell`：配置的内存副本 + 落盘）· `chat`（`ChatClient` 调用端、`ClientCache` 调用端复用、OpenAI 兼容传输与应答解析）· `truncate_chars` |
 | `services/ink-serve` | `doc`（书库只读视图）· `ingest` · `crop` · `bookdb` · `config` · `search` · `main`（`koreader.rs` 09-30 已删，见第 9 章） |
 | `services/transcribe-serve` | `config`/`ledger`（vendorcfg 薄封装）· `backend`（`Vision`）· `prompt` · `ink`（`EntryStore` trait，生产实现 `notesvc::InkClient`）· `worker` · `main` |

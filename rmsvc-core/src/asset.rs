@@ -1,6 +1,6 @@
 //! 资产仓库（Repository）与上传流程模板（Template Method）。
 //! 字体、壁纸、母版库（以前还有 KOReader 字体/词典，2026-09-30 随 koreader-serve 删除）都是"一个目录里的一堆文件"：上传→暂存→扩展名门→校验→安装→回执
-//! 这一套只在 [`AssetUploadFlow`] 写一次，各仓库只实现差异（`validate`/`install`/`list`/`remove`），
+//! 这一套只在 [`AssetUploadFlow`] 写一次，各仓库只实现差异（[`UploadTarget`] 的 `validate`/`install`；列表/删除是仓库自己的固有方法），
 //! 拒收 / 成功文案也由仓库按需覆盖（`reject_message`/`success_message`），不再各服务手搓 multipart 循环。
 use crate::formats;
 use crate::multipart::{safe_basename, MultipartReader};
@@ -42,7 +42,7 @@ impl UploadOutcome {
 
 /// 上传流程（[`AssetUploadFlow`]）真正要的那一半：扩展名门、校验、安装、回执文案。`list`/`remove` 是仓库自己的
 /// 查询/删除，上传流程用不到，不该逼每个上传目标都实现（book-serve 的母版库适配器此前只好写两个死转发，审计 CORE-6）。
-/// 新的上传目标只实现这个 trait，列表/删除写成固有方法。
+/// 上传目标只实现这个 trait，列表/删除写成固有方法（2026-10-10 第二阶段删掉了带 list/remove 的旧合体 trait `AssetStore`）。
 pub trait UploadTarget {
     /// 资产类型（日志/暂存文件名用），如 "font" / "wallpaper" / "book"。
     fn kind(&self) -> &'static str;
@@ -61,53 +61,6 @@ pub trait UploadTarget {
     /// 安装成功的回执文案（`requested`=上传时的文件名，`item.name` 可能被仓库改名）。
     fn success_message(&self, _requested: &str, _item: &AssetItem) -> String {
         "已安装".into()
-    }
-}
-
-/// 上传 + 列表 + 删除的旧合体 trait。现有实现（字体 / 壁纸 / 母版库）不用改：经下面的 blanket impl 自动就是
-/// [`UploadTarget`]。新代码实现 [`UploadTarget`]；各服务迁完后这个 trait 可以删（第二阶段）。
-/// 注意：同一个类型不能既直接实现 `UploadTarget` 又实现 `AssetStore`（blanket impl 冲突）。
-pub trait AssetStore {
-    /// 资产类型（日志/暂存文件名用），如 "font" / "wallpaper" / "book"。
-    fn kind(&self) -> &'static str;
-    /// 允许的扩展名（小写、不带点）；**空＝任意**。
-    fn allowed_ext(&self) -> &'static [&'static str];
-    /// 校验暂存文件（格式/尺寸/与内建冲突…）。缺省不校验。
-    fn validate(&self, _name: &str, _staged: &Path) -> Result<(), String> {
-        Ok(())
-    }
-    /// 安装暂存文件（移动/转换到最终位置），返回条目。暂存文件之后由流程删除（已被 rename 走也无妨）。
-    fn install(&self, name: &str, staged: &Path) -> Result<AssetItem, String>;
-    fn list(&self) -> Vec<AssetItem>;
-    fn remove(&self, name: &str) -> Result<(), String>;
-    /// 扩展名不在白名单时的回执文案。
-    fn reject_message(&self) -> String {
-        format!("不支持的扩展名（允许：{}）", self.allowed_ext().join(" / "))
-    }
-    /// 安装成功的回执文案（`requested`=上传时的文件名，`item.name` 可能被仓库改名）。
-    fn success_message(&self, _requested: &str, _item: &AssetItem) -> String {
-        "已安装".into()
-    }
-}
-
-impl<T: AssetStore + ?Sized> UploadTarget for T {
-    fn kind(&self) -> &'static str {
-        AssetStore::kind(self)
-    }
-    fn allowed_ext(&self) -> &'static [&'static str] {
-        AssetStore::allowed_ext(self)
-    }
-    fn validate(&self, name: &str, staged: &Path) -> Result<(), String> {
-        AssetStore::validate(self, name, staged)
-    }
-    fn install(&self, name: &str, staged: &Path) -> Result<AssetItem, String> {
-        AssetStore::install(self, name, staged)
-    }
-    fn reject_message(&self) -> String {
-        AssetStore::reject_message(self)
-    }
-    fn success_message(&self, requested: &str, item: &AssetItem) -> String {
-        AssetStore::success_message(self, requested, item)
     }
 }
 
@@ -132,6 +85,34 @@ pub fn receipt(items: &[UploadOutcome], extra: serde_json::Value) -> serde_json:
     v
 }
 
+/// [`AssetUploadFlow::run`] 整体失败的原因（逐个文件的失败——扩展名不对、校验没过、安装失败——不在这里，记在回执逐项里，
+/// 回执本身仍是 200：一批里有成有败是正常结果）。2026-10-10 前整体失败只回字符串，三个调用方一律报 400，建暂存目录失败
+/// 这类设备故障也成了"请求不对"（审计 CORE-1）。
+#[derive(Debug, PartialEq)]
+pub enum FlowError {
+    /// 请求体不是合法的 multipart（客户端的问题）→ 400。
+    BadRequest(String),
+    /// 暂存目录建不了、暂存文件开不了（设备的问题：盘满、目录权限）→ 500。
+    Io(String),
+}
+
+impl std::fmt::Display for FlowError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FlowError::BadRequest(m) | FlowError::Io(m) => f.write_str(m),
+        }
+    }
+}
+
+impl From<FlowError> for crate::http::ApiError {
+    fn from(e: FlowError) -> Self {
+        match e {
+            FlowError::BadRequest(m) => crate::http::ApiError::bad(m),
+            FlowError::Io(m) => crate::http::ApiError::internal(m),
+        }
+    }
+}
+
 /// 上传流程模板：multipart 逐文件流式落暂存 → 扩展名门 → validate → install；逐项独立成败。
 pub struct AssetUploadFlow {
     tmp_dir: PathBuf,
@@ -154,16 +135,16 @@ impl AssetUploadFlow {
     }
 
     /// 处理一整个 multipart 请求体。
-    /// `store` 是任何 [`UploadTarget`]（含经 blanket impl 的 [`AssetStore`]，`&dyn AssetStore` 也照样能传）。
-    pub fn run<R: Read, S: UploadTarget + ?Sized>(&self, store: &S, body: R, boundary: &str) -> Result<Vec<UploadOutcome>, String> {
-        std::fs::create_dir_all(&self.tmp_dir).map_err(|e| e.to_string())?;
+    /// `store` 是任何 [`UploadTarget`]（`&dyn UploadTarget` 也照样能传）。
+    pub fn run<R: Read, S: UploadTarget + ?Sized>(&self, store: &S, body: R, boundary: &str) -> Result<Vec<UploadOutcome>, FlowError> {
+        std::fs::create_dir_all(&self.tmp_dir).map_err(|e| FlowError::Io(format!("建暂存目录 {} 失败: {e}", self.tmp_dir.display())))?;
         let mut mp = MultipartReader::new(body, boundary);
         let mut out = Vec::new();
         loop {
             let mut part = match mp.next_part() {
                 Ok(Some(p)) => p,
                 Ok(None) => break,
-                Err(e) => return Err(format!("multipart 解析失败: {e}")),
+                Err(e) => return Err(FlowError::BadRequest(format!("multipart 解析失败: {e}"))),
             };
             let Some(fname) = part.filename.clone() else { continue };
             let name = safe_basename(&fname, "upload.bin");
@@ -175,7 +156,10 @@ impl AssetUploadFlow {
             // 进程被杀留下的由 [`Self::clean_stale`] 启动时清。
             let staged_file = crate::fs::ScratchFile::new(&self.tmp_dir, ".", &format!("{}.part", store.kind()));
             let staged = staged_file.path();
-            let outcome = match crate::multipart::receive_part_to(staged, &mut part) {
+            // 暂存文件开不了是设备的问题（盘满 / 目录被删），后面的文件也一样会失败 → 整体 500；接收中途出错（客户端断开、
+            // 读超时）仍记在这一项上（`io::copy` 分不清是读请求体还是写盘出的错，按改动前的逐项处理）。
+            let mut file = std::fs::File::create(staged).map_err(|e| FlowError::Io(format!("建暂存文件失败: {e}")))?;
+            let outcome = match std::io::copy(&mut part, &mut file) {
                 Err(e) => UploadOutcome::fail(name, format!("接收失败: {e}")),
                 Ok(0) => UploadOutcome::fail(name, "空文件"),
                 Ok(_) => match store.validate(&name, staged).and_then(|_| store.install(&name, staged)) {
@@ -184,6 +168,7 @@ impl AssetUploadFlow {
                     Err(e) => UploadOutcome::fail(name, e),
                 },
             };
+            drop(file);
             drop(staged_file);
             out.push(outcome);
         }
@@ -208,7 +193,7 @@ mod tests {
         dir: PathBuf,
         installed: Mutex<Vec<String>>,
     }
-    impl AssetStore for MemStore {
+    impl UploadTarget for MemStore {
         fn kind(&self) -> &'static str {
             "test"
         }
@@ -229,12 +214,6 @@ mod tests {
             std::fs::copy(staged, &dest).map_err(|e| e.to_string())?;
             self.installed.lock().unwrap().push(name.to_string());
             Ok(AssetItem::plain(name, std::fs::metadata(&dest).unwrap().len()))
-        }
-        fn list(&self) -> Vec<AssetItem> {
-            vec![]
-        }
-        fn remove(&self, _: &str) -> Result<(), String> {
-            Ok(())
         }
         fn success_message(&self, requested: &str, item: &AssetItem) -> String {
             format!("装好 {requested}→{}", item.name)
@@ -274,9 +253,25 @@ mod tests {
         assert_eq!(r["note"], "n");
     }
 
-    /// 只实现 [`UploadTarget`]（不带 list/remove）的新式上传目标也能走流程；旧的 `&dyn AssetStore` 照样能传。
+    /// 整体失败分两种：请求体不是 multipart → 400；暂存目录建不了 → 500（不再一律 400）。
     #[test]
-    fn flow_accepts_plain_upload_target_and_dyn_asset_store() {
+    fn flow_errors_split_bad_request_and_io() {
+        let t = tempfile::tempdir().unwrap();
+        let store = MemStore { dir: t.path().to_path_buf(), installed: Mutex::new(vec![]) };
+        let e = AssetUploadFlow::in_dir(t.path().join("tmp")).run(&store, &b"--B\r\nno-blank-line-ever"[..], "B").unwrap_err();
+        assert!(matches!(&e, FlowError::BadRequest(m) if m.starts_with("multipart 解析失败")), "{e:?}");
+        assert_eq!(crate::http::ApiError::from(e).status, 400);
+        std::fs::write(t.path().join("file"), b"x").unwrap();
+        let body = b"--B\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.txt\"\r\n\r\nabc\r\n--B--\r\n";
+        let e = AssetUploadFlow::in_dir(t.path().join("file/tmp")).run(&store, &body[..], "B").unwrap_err();
+        assert!(matches!(&e, FlowError::Io(m) if m.contains("暂存目录")), "{e:?}");
+        assert_eq!(crate::http::ApiError::from(e).status, 500);
+        assert!(store.installed.lock().unwrap().is_empty());
+    }
+
+    /// 只实现必需方法的上传目标走缺省文案；`&dyn UploadTarget` 照样能传。
+    #[test]
+    fn flow_accepts_plain_upload_target_and_dyn_target() {
         struct Plain(PathBuf);
         impl UploadTarget for Plain {
             fn kind(&self) -> &'static str {
@@ -295,7 +290,7 @@ mod tests {
         let out = flow.run(&Plain(t.path().to_path_buf()), &body[..], "B").unwrap();
         assert!(all_ok(&out) && out[0].message == "已安装", "{out:?}");
         let mem = MemStore { dir: t.path().to_path_buf(), installed: Mutex::new(vec![]) };
-        let dynamic: &dyn AssetStore = &mem;
+        let dynamic: &dyn UploadTarget = &mem;
         let body = b"--B\r\nContent-Disposition: form-data; name=\"file\"; filename=\"y.txt\"\r\n\r\nabc\r\n--B--\r\n";
         assert!(all_ok(&flow.run(dynamic, &body[..], "B").unwrap()));
     }

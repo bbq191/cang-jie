@@ -17,16 +17,20 @@
 //! - `events`   进程内事件总线 + SSE 流（服务在变更处发事件，网关汇聚推给网页/CLI，网页零轮询）。
 //! - `fs`       原子写（tmp→rename）+ unix 权限 + 单段文件名校验 / 同名不覆盖，config/registry/母版库/壁纸池共用。
 //! - `formats`  文件格式白名单单一事实源（书籍/字体/词典/图片），UI accept 与服务端上传门同源。
-//! - `tls`      私有 CA + 叶证书生成/加载（网关 HTTPS；装一次 CA 免提示）。
-//! - `auth`     密码哈希（PBKDF2-HMAC-SHA256，60 万轮）、Basic/Cookie 解析、内存会话表。
-//! - `netinfo`  本机 IPv4 表（证书 SAN、mDNS 选址）。
+//! - `tls`      私有 CA + 叶证书生成/加载（网关 HTTPS；装一次 CA 免提示）。**`gateway` feature**。
+//! - `auth`     密码哈希（PBKDF2-HMAC-SHA256，60 万轮）、Basic/Cookie 解析、内存会话表。**`gateway` feature**。
+//! - `netinfo`  本机 IPv4 表（证书 SAN、mDNS 选址）。**`gateway` feature**。
 //! - `cache`    单值 TTL 缓存（`/status` 这类重活接口降频，操作后可主动失效）+ 按文件戳失效的键值缓存（列表类接口免重复开文件）。
 //! - `clock`    unix 时间戳唯一出处（秒/毫秒/纳秒、文件 mtime 换算）。
-//! - `mdns`     极简 mDNS 应答器（`shelf.local` 伪域名）。
+//! - `mdns`     极简 mDNS 应答器（`shelf.local` 伪域名）。**`gateway` feature**。
+//!
+//! 标了 **`gateway` feature** 的几个模块只有网关用（2026-10-10 审计 CORE-3），默认不编：其余服务既不带 rcgen / x509-parser /
+//! pbkdf2 / socket2 这些依赖，也不带 HTTPS 服务端（tiny_http 的 rustls 适配层）。
 //! - `sync`     容忍 poison 的取锁（`sync::lock`），各服务共用。
 //! - `wire`     跨服务/前后端共用的线上状态枚举（落库/渲染自检的 status），JSON 仍是小写字符串。
 //! - `proc`     带超时的子进程、`/proc` 读取（开机秒数、按名字找进程），不 fork 的优先。
 pub mod asset;
+#[cfg(feature = "gateway")]
 pub mod auth;
 pub mod cache;
 pub mod clock;
@@ -36,7 +40,9 @@ pub mod formats;
 pub mod fs;
 pub mod fswatch;
 pub mod http;
+#[cfg(feature = "gateway")]
 pub mod mdns;
+#[cfg(feature = "gateway")]
 pub mod netinfo;
 pub mod multipart;
 pub mod paths;
@@ -45,8 +51,8 @@ pub mod registry;
 pub mod service;
 pub mod sync;
 mod sys;
+#[cfg(feature = "gateway")]
 pub mod tls;
-pub mod ttf;
 pub mod wire;
 pub mod xochitl;
 pub mod xochitl_conf;

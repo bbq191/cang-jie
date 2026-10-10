@@ -136,15 +136,13 @@ impl Router {
         }
         if let Some((_, r, params)) = best {
             req.params = params;
-            // `?ka=<秒>`：让本请求里创建的 SSE 流用指定心跳（见 `events::parse_keepalive_param`）。
-            let _ka = crate::events::enter_request(crate::events::parse_keepalive_param(req.q("ka")));
             return match (r.handler)(req) {
                 Ok(rep) => rep,
                 Err(e) => e.into(),
             };
         }
         if req.method == Method::Options {
-            return Reply { status: 204, content_type: "text/plain".into(), body: vec![], headers: vec![], stream: None };
+            return Reply::with_bytes(204, "text/plain", vec![]);
         }
         if path_exists {
             Reply::error(405, "method not allowed")
@@ -180,7 +178,7 @@ mod tests {
 
     fn call(router: &Router, m: Method, path: &str, q: &str) -> (u16, String) {
         let rep = crate::http::TestRequest::new(m, path).query_string(q).content_length(None).dispatch(router);
-        (rep.status, String::from_utf8_lossy(&rep.body).to_string())
+        (rep.status, String::from_utf8_lossy(rep.body.as_bytes()).to_string())
     }
 
     #[test]

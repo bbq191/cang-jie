@@ -1,6 +1,6 @@
 //! 文件格式白名单的**单一事实源**：母版库收的书籍格式、字体、壁纸图片（KOReader 用的 StarDict 词典白名单 `DICT_EXTS`
 //! 2026-09-30 随 KOReader 相关源码一起删除，见 git 历史）。
-//! 网关 UI（`accept=` + 选中即拦）、各服务上传门（`AssetStore::allowed_ext`）、inbox 追平、CLI 都从这里派生，
+//! 网关 UI（`accept=` + 选中即拦）、各服务上传门（`UploadTarget::allowed_ext`）、inbox 追平、CLI 都从这里派生，
 //! 改一处全链同步（2026-09-05 用户定：所有上传口都要有格式限制，且网页与服务端同一份）。
 //! 扩展名一律**小写、不带点**。
 

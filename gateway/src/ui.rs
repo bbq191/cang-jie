@@ -147,10 +147,6 @@ mod tests {
         /// WiFi 横幅只对这两种状态出文案（`health.js` 的 `showWifiBanner`）。取值由 `packaging/wifi-watch/wifi-watch.sh`
         /// 的 `probe()`（约 101-105 行：`ok`/`none`/`portal`）写进状态文件，网关原样转发，`ok` 与网关兜底的 `unknown` 不出横幅。
         const WIFI_BANNER_STATES: &[&str] = &["portal", "none"];
-        /// 代理放弃记录的 `kind`：由 book-serve 产生——`shelf/services/book-serve/src/trash.rs:96` 记 `trash`、
-        /// `shelf/services/book-serve/src/mkdir.rs:151` 记 `mkdir`（`agent_failures.rs` 的 `Failure.kind` 是 String）。
-        /// 网关里没有源头，先在这里列一份；book-serve 把它收成枚举后应改为直接引用。
-        const AGENT_FAIL_KINDS: &[&str] = &["trash", "mkdir"];
         // 按线上格式（serde）把枚举取成字符串。
         fn ser<T: serde::Serialize>(v: &T) -> String {
             serde_json::to_value(v).unwrap().as_str().unwrap().to_string()
@@ -160,7 +156,8 @@ mod tests {
         want.extend(Recovery::SHOWN.iter().map(|r| format!("ota.recovery.{}", ser(r))));
         want.extend(crate::batch::Action::ALL.iter().map(|a| format!("stg.batch.{}", a.key())));
         want.extend(WIFI_BANNER_STATES.iter().map(|s| format!("wifi.banner.{s}")));
-        want.extend(AGENT_FAIL_KINDS.iter().map(|k| format!("agentfail.{k}")));
+        // 代理放弃记录的 `kind`（book-serve 产生，枚举定义在基座 wire）
+        want.extend(rmsvc_core::wire::FailureKind::ALL.iter().map(|k| format!("agentfail.{}", k.as_str())));
         want.extend(crate::manage::MODULES.iter().map(|m| format!("manage.modules.label.{}", m.seg)));
         for (name, text) in [("zh-CN", super::LOCALE_ZH_CN), ("en-US", super::LOCALE_EN_US)] {
             let v: serde_json::Value = serde_json::from_str(text).unwrap();

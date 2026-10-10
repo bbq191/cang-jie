@@ -7,7 +7,7 @@
 //! use rmsvc_core::http::{Method, Router, TestRequest, Reply};
 //! let router = Router::new().get("/x", |r| Ok(Reply::ok(&r.q("a"))));
 //! let reply = TestRequest::new(Method::Get, "/x").query("a", "1").dispatch(&router);
-//! assert_eq!(reply.body, br#""1""#);
+//! assert_eq!(reply.body.as_bytes(), br#""1""#);
 //! ```
 use super::{Method, Reply, Request, Router, REMOTE_IP_HEADER};
 use std::collections::HashMap;
@@ -124,7 +124,7 @@ mod tests {
         // 可以借出多次，每次 body 从头读
         assert_eq!(t.with(|r| r.small_body().unwrap()), br#"{"x":1}"#);
         let router = Router::new().get("/items/{id}", |r| Ok(Reply::ok(&r.param("id"))));
-        assert_eq!(TestRequest::new(Method::Get, "/items/42").dispatch(&router).body, br#""42""#);
+        assert_eq!(TestRequest::new(Method::Get, "/items/42").dispatch(&router).body.as_bytes(), br#""42""#);
         assert_eq!(TestRequest::new(Method::Get, "/none").dispatch(&router).status, 404);
     }
 }

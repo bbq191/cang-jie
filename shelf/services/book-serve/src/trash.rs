@@ -9,7 +9,8 @@
 //!
 //! 持久化、入队去重、剔除、交给代理、交满次数放弃这一整套委托 `pending_queue::AgentQueue<T>`（2026-09-09 消重复、2026-10-10
 //! 再合并 `pending` 流程，跟 `mkdir.rs` 是同一份基础设施，见该模块文档）；这里只留领域校验（uuid 形状/名字核对/是否已在回收站）。
-use crate::agent_failures::{AgentFailures, FailureKind};
+use crate::agent_failures::AgentFailures;
+use rmsvc_core::wire::FailureKind;
 use crate::error::Error;
 use crate::pending_queue::{AgentItem, AgentQueue, HANDOUT_MAX_ATTEMPTS};
 use rmsvc_core::xochitl::Metadata;

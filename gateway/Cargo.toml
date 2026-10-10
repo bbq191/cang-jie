@@ -10,7 +10,8 @@ name = "gateway"
 path = "src/main.rs"
 
 [dependencies]
-rmsvc-core = { path = "../rmsvc-core" }
+# `gateway` feature：HTTPS 服务端、私有 CA（tls）、登录（auth）、mDNS、本机地址表——只有网关用，基座默认不编（2026-10-10）
+rmsvc-core = { path = "../rmsvc-core", features = ["gateway"] }
 serde_json = "1"
 ureq = "2"
 serde = { version = "1", features = ["derive"] }

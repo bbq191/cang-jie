@@ -193,7 +193,7 @@ impl Uploader for XochitlUploader {
         self.xochitl.folder_of_document(book_uuid)
     }
     fn unique_name(&self, folder: &Folder, base_name: &str) -> String {
-        self.xochitl.unique_name(folder.as_parent_str(), base_name)
+        self.xochitl.unique_name(folder, base_name)
     }
 }
 

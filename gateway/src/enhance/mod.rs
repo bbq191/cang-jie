@@ -164,7 +164,7 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let paths = Paths::sandbox(t.path());
         let rep = put(&paths, br#"{"notesImportMdEnabled":true,"hlSnapCjk":false,"junk":1}"#).unwrap();
-        let v: serde_json::Value = serde_json::from_slice(&rep.body).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(rep.body.as_bytes()).unwrap();
         assert_eq!((v["notesImportMdEnabled"].as_bool(), v["hlSnapCjk"].as_bool()), (Some(true), Some(false)));
         assert_eq!(v["tapPageTurn"], false, "没传的键保持缺省");
         // 只传 tapPageTurn：上一次写的键不被冲掉
@@ -186,7 +186,7 @@ mod tests {
         let paths = Paths::sandbox(t.path());
         assert!(!qol::Qol::load(&paths).on_key("tapPageTurn"));
         put(&paths, br#"{"notesImportMdEnabled":true}"#).unwrap();
-        let v: serde_json::Value = serde_json::from_slice(&put(&paths, br#"{"tapPageTurn":true}"#).unwrap().body).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(put(&paths, br#"{"tapPageTurn":true}"#).unwrap().body.as_bytes()).unwrap();
         assert_eq!(v["tapPageTurn"].as_bool(), Some(true));
         assert!(v.get("rtlPageTurn").is_none());
         assert!(put(&paths, br#"{"rtlPageTurn":true}"#).is_err());
@@ -200,7 +200,7 @@ mod tests {
     fn wire_snapshot_status() {
         let t = tempfile::tempdir().unwrap();
         let paths = Paths::sandbox(t.path());
-        let v: serde_json::Value = serde_json::from_slice(&status(&paths).body).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(status(&paths).body.as_bytes()).unwrap();
         assert_eq!(
             v,
             serde_json::json!({

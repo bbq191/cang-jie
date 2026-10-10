@@ -38,7 +38,7 @@ const EVENT_AREA: &str = "notes";
 /// 条目库变了（摄取、改字段、清理）。
 const EVENT_ENTRIES: &str = "entries";
 
-const SPEC: ServiceSpec = ServiceSpec { name: "ink-serve", label: "笔记·矿", version: env!("CARGO_PKG_VERSION"), default_bind: "127.0.0.1:8795", tab: None };
+const SPEC: ServiceSpec = ServiceSpec { name: "ink-serve", label: "笔记·矿", version: env!("CARGO_PKG_VERSION"), default_bind: "127.0.0.1:8795", tab_order: None };
 
 struct State {
     paths: Paths,
@@ -100,7 +100,7 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let bind_addr = service::parse_bind(&args, SPEC.default_bind);
     let paths = Paths::from_env();
-    let cfg: IngestConfig = notesvc::load_or_seed_logged("ink-serve", &paths.app_config_dir(APP).join("ink.json"));
+    let cfg: IngestConfig = rmsvc_core::config::load_or_seed(&paths.app_config_dir(APP).join("ink.json"));
     let db = BookDb::new(paths.app_state_dir(APP).join("books"));
     let st = Arc::new(State { paths: paths.clone(), cfg, db, bus: Arc::new(EventBus::new()) });
     if let Err(e) = std::fs::create_dir_all(st.crops_dir()).and_then(|_| st.db.ensure()) {
@@ -231,7 +231,7 @@ mod tests {
     }
     fn call(r: &Router, method: Method, path: &str, body: &str) -> (u16, serde_json::Value) {
         let rep = TestRequest::new(method, path).content_type("application/json").body(body).dispatch(r);
-        (rep.status, serde_json::from_slice(&rep.body).unwrap_or_default())
+        (rep.status, serde_json::from_slice(rep.body.as_bytes()).unwrap_or_default())
     }
     fn entry_of(st: &State) -> Entry {
         st.db.load("u").unwrap().entries[0].clone()

@@ -1,4 +1,4 @@
-//! TTF/OTF 解析（rmsvc-core 共享）：`name` 表家族名（fc-scan 兜底）、魔数校验、CJK 覆盖率（cmap）。font-serve 用（原先与 koreader-serve 共用，后者 2026-09-30 已从仓库删除）。
+//! TTF/OTF 解析：`name` 表家族名（fc-scan 兜底）、魔数校验、CJK 覆盖率（cmap）。只有 font-serve 用（原先与 koreader-serve 共用，后者 2026-09-30 已从仓库删除）；2026-10-10 从 rmsvc-core 搬进本服务（审计 CORE-3：基座不放单服务的领域模块）。
 //! 取 nameID 16（Typographic Family）优先、否则 nameID 1；平台 3(Windows, UTF-16BE) 优先、否则 1(Mac Roman)。
 use std::convert::TryInto;
 

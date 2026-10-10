@@ -7,7 +7,6 @@
 use crate::http::Reply;
 use crate::paths::Paths;
 use crate::registry;
-use std::cell::Cell;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read};
 use std::path::PathBuf;
@@ -27,41 +26,15 @@ const KEEPALIVE_MAX_SECS: u64 = 600;
 pub const FOLLOW_KEEPALIVE_SECS: u64 = 120;
 const QUEUE: usize = 64;
 
-thread_local! {
-    /// 当前正在分发的请求带的 `?ka=` 心跳（由 `Router::dispatch` 在调用处理函数前后设置/清除）。
-    /// `EventBus::sse_reply()` 读它——这样所有已有的 `/events` 路由（各服务里一行
-    /// `s.bus.sse_reply()`）不用改代码就自动支持 `?ka=`，旧调用方不带参数时行为完全不变（20 秒）。
-    static REQUEST_KEEPALIVE: Cell<Option<Duration>> = const { Cell::new(None) };
-}
-
 /// 解析 `?ka=<秒>`：缺省/非法 → `None`（用缺省 20 秒）；合法值夹到 [5, 600] 秒。
 pub fn parse_keepalive_param(v: Option<&str>) -> Option<Duration> {
     let secs: u64 = v?.trim().parse().ok()?;
     Some(Duration::from_secs(secs.clamp(KEEPALIVE_MIN_SECS, KEEPALIVE_MAX_SECS)))
 }
 
-/// 进入一个请求的处理：期间 `sse_reply()` 用该请求的心跳。Drop 时清除（含 panic 展开）。
-pub(crate) struct KeepaliveScope;
-
-pub(crate) fn enter_request(ka: Option<Duration>) -> KeepaliveScope {
-    REQUEST_KEEPALIVE.with(|c| c.set(ka));
-    KeepaliveScope
-}
-
-impl Drop for KeepaliveScope {
-    fn drop(&mut self) {
-        REQUEST_KEEPALIVE.with(|c| c.set(None));
-    }
-}
-
 /// 请求 `?ka=` 定的心跳（缺省/非法 → [`KEEPALIVE`]）。
 fn keepalive_of(req: &crate::http::Request<'_>) -> Duration {
     parse_keepalive_param(req.q("ka")).unwrap_or(KEEPALIVE)
-}
-
-/// 当前请求指定的心跳（没有则 `None`）。
-pub fn request_keepalive() -> Option<Duration> {
-    REQUEST_KEEPALIVE.with(|c| c.get())
 }
 
 #[derive(Default)]
@@ -74,9 +47,9 @@ impl EventBus {
         EventBus::default()
     }
 
-    /// 订阅：返回 SSE 可读流（掉线后由 HTTP 层 drop，总线在下次 publish 时清掉死订阅者）。
+    /// 订阅（缺省心跳 [`KEEPALIVE`]）：返回 SSE 可读流（掉线后由 HTTP 层 drop，总线在下次 publish 时清掉死订阅者）。
     pub fn subscribe(&self) -> SseStream {
-        self.subscribe_with(request_keepalive().unwrap_or(KEEPALIVE))
+        self.subscribe_with(KEEPALIVE)
     }
 
     /// 同 [`subscribe`]，显式指定心跳间隔。
@@ -119,21 +92,11 @@ impl EventBus {
         crate::sync::lock(&self.subs).len()
     }
 
-    /// `GET /events` 的回执：`text/event-stream` 流式响应。心跳取当前请求的 `?ka=`（路由分发时经线程局部隐式传入，
-    /// 见 [`request_keepalive`]）；要显式传请求的用 [`Self::sse_reply_for`]。
-    pub fn sse_reply(&self) -> Reply {
-        Self::stream_reply(self.subscribe())
-    }
-
-    /// 同 [`Self::sse_reply`]，但心跳直接读 `req` 的 `?ka=`（缺省/非法 → 20 秒，合法值夹到 [5, 600] 秒），不靠线程局部。
-    /// 各服务 `/events` 路由迁到这个之后，`Router::dispatch` 里的 `enter_request` 钩子与 http ↔ events 的循环依赖就能删掉
-    /// （审计 CORE-5）。
+    /// `GET /events` 的回执：`text/event-stream` 流式响应，心跳读 `req` 的 `?ka=`（缺省/非法 → 20 秒，合法值夹到 [5, 600] 秒）。
+    /// 2026-10-10 前还有个不带参数的 `sse_reply()`，心跳由 `Router::dispatch` 每个请求塞进线程局部再隐式读出（http ↔ events
+    /// 互相引用，审计 CORE-5）；各服务的 `/events` 路由都已改传请求，线程局部与分发钩子一并删掉。
     pub fn sse_reply_for(&self, req: &crate::http::Request<'_>) -> Reply {
-        Self::stream_reply(self.subscribe_with(keepalive_of(req)))
-    }
-
-    fn stream_reply(s: SseStream) -> Reply {
-        Reply::stream("text/event-stream; charset=utf-8", Box::new(s)).with_header("Cache-Control", "no-cache").with_header("X-Accel-Buffering", "no")
+        Reply::event_stream("text/event-stream; charset=utf-8", Box::new(self.subscribe_with(keepalive_of(req)))).with_header("Cache-Control", "no-cache").with_header("X-Accel-Buffering", "no")
     }
 }
 
@@ -386,32 +349,10 @@ mod tests {
         assert_eq!(parse_keepalive_param(Some("99999")), Some(Duration::from_secs(600)), "夹上限");
     }
 
-    #[test]
-    fn sse_reply_uses_request_ka_only_inside_dispatch_and_defaults_to_20s() {
-        use crate::http::{Method, Router, TestRequest};
-        let bus = Arc::new(EventBus::new());
-        let seen: Arc<Mutex<Vec<Duration>>> = Arc::new(Mutex::new(vec![]));
-        let (b2, s2) = (bus.clone(), seen.clone());
-        let router = Router::new().get("/events", move |_| {
-            s2.lock().unwrap().push(b2.subscribe().keepalive());
-            Ok(Reply::ok(&serde_json::json!({})))
-        });
-        let call = |q: &[(&str, &str)]| {
-            let t = q.iter().fold(TestRequest::new(Method::Get, "/events"), |t, (k, v)| t.query(k, v));
-            t.dispatch(&router);
-        };
-        call(&[]);
-        call(&[("ka", "120")]);
-        call(&[]);
-        assert_eq!(*seen.lock().unwrap(), vec![KEEPALIVE, Duration::from_secs(120), KEEPALIVE], "带 ka 的请求用 ka，其余（含随后的请求）仍是缺省 20 秒");
-        assert_eq!(request_keepalive(), None, "分发结束后线程局部已清除");
-    }
-
-    /// 显式版：心跳只看传进来的请求，不看线程局部（在路由外直接调用也对）。
+    /// 心跳只看传进来的请求（在路由外直接调用也对）。
     #[test]
     fn sse_reply_for_reads_ka_from_given_request() {
         use crate::http::{Method, TestRequest};
-        let _scope = enter_request(Some(Duration::from_secs(7))); // 线程局部给了别的值，显式版不理它
         let ka = |q: Option<&str>| {
             let t = TestRequest::new(Method::Get, "/events");
             let mut t = if let Some(v) = q { t.query("ka", v) } else { t };
@@ -421,37 +362,31 @@ mod tests {
         let bus = EventBus::new();
         let rep = TestRequest::new(Method::Get, "/events").query("ka", "120").with(|r| bus.sse_reply_for(r));
         assert_eq!(rep.content_type, "text/event-stream; charset=utf-8");
-        assert!(rep.stream.is_some() && rep.headers.iter().any(|(k, v)| k == "Cache-Control" && v == "no-cache"));
+        assert!(matches!(rep.body, crate::http::Body::EventStream(_)) && rep.headers.iter().any(|(k, v)| k == "Cache-Control" && v == "no-cache"));
         assert_eq!(bus.subscribers(), 1);
     }
 
     /// 起一个假服务（`/events` 可选）并注册进临时注册表，返回其命中计数。
     fn fake_service(p: &Paths, name: &str, with_events: bool, bus: Option<Arc<EventBus>>) -> (registry::Registration, Arc<std::sync::atomic::AtomicUsize>) {
         use crate::http::{ApiError, Router};
-        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        // 绑 0 端口后把监听直接交给服务器（不放掉再按号重绑，并行测试抢不走这个端口）
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
         let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let h2 = hits.clone();
         let mut router = Router::new();
         if with_events {
             let bus = bus.unwrap();
-            router = router.get("/events", move |_| Ok(bus.sse_reply()));
+            router = router.get("/events", move |r| Ok(bus.sse_reply_for(r)));
         } else {
             router = router.get("/{x}", move |_| {
                 h2.fetch_add(1, Ordering::SeqCst);
                 Err(ApiError::not_found("no"))
             });
         }
-        let addr = format!("127.0.0.1:{port}");
         std::thread::spawn(move || {
-            let _ = crate::http::serve(&addr, router);
+            let _ = crate::http::serve_listener(listener, router, crate::http::ServeOpts::default());
         });
-        // 等端口起来
-        for _ in 0..100 {
-            if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
         let info = registry::ServiceInfo { name: name.into(), port, label: name.into(), version: "0".into(), pid: std::process::id(), ui: None };
         (registry::register(p, &info).unwrap(), hits)
     }

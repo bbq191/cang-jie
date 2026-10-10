@@ -15,7 +15,7 @@ use rmsvc_core::formats::{self, FONT_EXTS};
 use rmsvc_core::fs::{list_files, write_atomic, write_atomic_if_changed};
 use rmsvc_core::proc::run_timeout;
 use rmsvc_core::paths::Paths;
-use rmsvc_core::ttf;
+use crate::ttf;
 use crate::fontconfig;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

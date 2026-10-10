@@ -22,7 +22,7 @@ const SPEC: ServiceSpec = ServiceSpec {
     label: "壁纸",
     version: env!("CARGO_PKG_VERSION"),
     default_bind: "127.0.0.1:8793",
-    tab: Some(("壁纸", 40)),
+    tab_order: Some(40),
 };
 
 struct State {
@@ -119,8 +119,8 @@ fn router(st: &Arc<State>) -> Router {
             let b = r.multipart_boundary()?;
             // `?activate=1` 显式激活首张成功项；池里还没有当前图时也自动激活（上传即可用）。
             let want = r.q_flag("activate") || s.store.state().current.is_none();
-            // run 的整体错误基本是 multipart 解析失败（请求体不对）→ 400；单张图装不上记在回执逐项里。
-            let items = AssetUploadFlow::new(&s.paths).run(&*s.store, &mut *r.body, &b).map_err(ApiError::bad)?;
+            // run 的整体错误：multipart 解析失败 → 400，暂存建不了 → 500（`asset::FlowError`）；单张图装不上记在回执逐项里。
+            let items = AssetUploadFlow::new(&s.paths).run(&*s.store, &mut *r.body, &b)?;
             let mut activated = None;
             let mut changed = false;
             if want {
@@ -218,7 +218,7 @@ mod tests {
         std::fs::remove_file(st.store.current_path()).unwrap();
         std::fs::create_dir(st.store.current_path()).unwrap();
         let reply = TestRequest::new(Method::Put, "/current").json(&serde_json::json!({"name": "b.png"})).dispatch(&r);
-        assert_eq!(reply.status, 500, "{}", String::from_utf8_lossy(&reply.body));
+        assert_eq!(reply.status, 500, "{}", String::from_utf8_lossy(reply.body.as_bytes()));
         assert_eq!(st.store.state().current.as_deref(), Some("a.png"));
     }
 
@@ -244,6 +244,6 @@ mod tests {
         let (_t, _st, r) = setup();
         let reply = TestRequest::new(Method::Get, "/events").query("ka", "30").dispatch(&r);
         assert_eq!(reply.status, 200);
-        assert!(reply.content_type.starts_with("text/event-stream") && reply.stream.is_some());
+        assert!(reply.content_type.starts_with("text/event-stream") && matches!(reply.body, rmsvc_core::http::Body::EventStream(_)));
     }
 }

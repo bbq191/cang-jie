@@ -21,11 +21,12 @@
 //!
 //! 持久化、入队去重、剔除、交给代理、交满次数放弃这一整套委托 `pending_queue::AgentQueue<T>`（2026-09-09 消重复、2026-10-10
 //! 再合并 `pending` 流程，跟 `trash.rs` 是同一份基础设施，见该模块文档）；这里只留领域校验（名字合法性/文件夹是否已存在）。
-use crate::agent_failures::{AgentFailures, FailureKind};
+use crate::agent_failures::AgentFailures;
+use rmsvc_core::wire::FailureKind;
 use crate::error::Error;
 use crate::pending_queue::{AgentItem, AgentQueue, HANDOUT_MAX_ATTEMPTS};
 use serde::{Deserialize, Serialize};
-use rmsvc_core::xochitl::{find_child_folder, folder_keys, is_uuid_shape};
+use rmsvc_core::xochitl::{child_folder, folder_keys, Folder};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -101,25 +102,23 @@ impl MkdirQueue {
     /// 拦它没有技术依据、只会挡合法输入——见 `Xochitl::folder_by_name`/`child_folder`/`upload_and_claim` 全程都是按
     /// `visibleName` 字符串整体比较，folder 的文件系统路径只走 uuid，从不落到名字里。
     ///
-    /// 建在书库根（`POST /mkdir/add`、网页落库用），等于 `add_in("", name)`。
+    /// 建在书库根（`POST /mkdir/add`、网页落库用），等于 `add_in(&Folder::Root, name)`。
     pub fn add(&self, name: &str) -> Result<usize, Error> {
-        self.add_in("", name)
+        self.add_in(&Folder::Root, name)
     }
 
-    /// 在 `parent`（文件夹 uuid，空串＝根）下入队建 `name`：那个父文件夹正下方已经有同名活文件夹 → `Ok(0)`（不用建）；
-    /// 队列里已有同一（父, 名）不重复加；返回入队后的队列长度。名字为空、`parent` 不是空串也不是 uuid 形状 → [`Error::Invalid`]；
-    /// 写队列失败 → [`Error::Io`]。
-    pub fn add_in(&self, parent: &str, name: &str) -> Result<usize, Error> {
+    /// 在 `parent` 下入队建 `name`：那个父文件夹正下方已经有同名活文件夹 → `Ok(0)`（不用建）；队列里已有同一（父, 名）不重复加；
+    /// 返回入队后的队列长度。名字为空 → [`Error::Invalid`]；写队列失败 → [`Error::Io`]。2026-10-10 前 `parent` 是 `&str`
+    /// （空串＝根），这里再校验一遍 uuid 形状；现在 [`Folder`] 本身就只能是根或书库查出来的文件夹，不用再查。
+    pub fn add_in(&self, parent: &Folder, name: &str) -> Result<usize, Error> {
         let name = name.trim();
         if name.is_empty() {
             return Err(Error::Invalid("文件夹名不能为空".into()));
         }
-        if !parent.is_empty() && !is_uuid_shape(parent) {
-            return Err(Error::Invalid("上级文件夹 uuid 格式不对".into()));
-        }
-        if find_child_folder(&self.lib_dir, parent, name).is_some() {
+        if child_folder(&self.lib_dir, parent, name).is_some() {
             return Ok(0); // 已经存在，不用建
         }
+        let parent = parent.as_parent_str();
         self.q.add(|p| p.parent == parent && p.name == name, || Pending { name: name.to_string(), parent: parent.to_string(), at: rmsvc_core::clock::now_secs() }).map_err(Error::Io)
     }
 
@@ -135,7 +134,7 @@ impl MkdirQueue {
 
     /// "这一项还要不要等"的判据：那个父文件夹正下方还没有同名活文件夹。书库文件夹只扫一遍、且只在队列非空时扫
     /// （`prune` 对空队列不调谓词）：此前每条待办各调一次按名字找文件夹，每次都把书库里全部 `.metadata` 读一遍解析一遍，
-    /// k 条待办＝k 遍全库扫描，长轮询每次唤醒都来一轮（2026-09-24 审计）。判据与 `find_child_folder` 相同。
+    /// k 条待办＝k 遍全库扫描，长轮询每次唤醒都来一轮（2026-09-24 审计）。判据与 `child_folder` 相同。
     /// 每次查队列造一个新的（长轮询醒来重扫）。
     fn still_pending(&self) -> impl Fn(&Pending) -> bool + '_ {
         let folders = std::cell::OnceCell::new();
@@ -217,15 +216,15 @@ mod tests {
     fn add_in_dedupes_and_prunes_by_parent_and_name() {
         const P1: &str = "11111111-1111-4111-8111-111111111111";
         const P2: &str = "22222222-2222-4222-8222-222222222222";
+        let (f1, f2) = (Folder::from_parent_str(P1).unwrap(), Folder::from_parent_str(P2).unwrap());
         let t = tempfile::tempdir().unwrap();
         let lib_dir = lib(&t);
         let q = MkdirQueue::new(&t.path().join("state"), &lib_dir).with_handout_quiet(Duration::ZERO);
         std::fs::write(lib_dir.join("r.metadata"), r#"{"type":"CollectionType","visibleName":"卷01","parent":""}"#).unwrap();
         assert_eq!(q.add("卷01").unwrap(), 0, "根下已有");
-        assert_eq!(q.add_in(P1, "卷01").unwrap(), 1, "根下有同名不算 P1 下有");
-        assert_eq!(q.add_in(P1, "卷01").unwrap(), 1, "同一（父, 名）不重复");
-        assert_eq!(q.add_in(P2, "卷01").unwrap(), 2, "别的上级下的同名是另一项");
-        assert!(matches!(q.add_in("../x", "卷01"), Err(Error::Invalid(m)) if m.contains("uuid")));
+        assert_eq!(q.add_in(&f1, "卷01").unwrap(), 1, "根下有同名不算 P1 下有");
+        assert_eq!(q.add_in(&f1, "卷01").unwrap(), 1, "同一（父, 名）不重复");
+        assert_eq!(q.add_in(&f2, "卷01").unwrap(), 2, "别的上级下的同名是另一项");
         let it = |parent: &str| MkdirItem { name: "卷01".into(), parent: parent.into() };
         assert_eq!(q.pending().unwrap(), (vec![it(P1), it(P2)], 0));
         // P1 下建出来了：只剔除 P1 那一项

@@ -188,9 +188,8 @@ fn staging_upload(st: &State, r: &mut Request<'_>) -> ApiResult {
     let boundary = r.multipart_boundary()?;
     // 不持 spool 锁：暂存名是随机的 `.<uuid>.book.part`，与 inbox 追平互不相干；真正会撞的"挑名 + 落地"
     // 由 `Staging` 内部的落名临界区串行化（见 `staging::Staging` 的 `land` 字段）。
-    // 上传流程整体失败几乎都是请求体不是合法 multipart（逐个文件的失败在回执里，不走这里）→ 400；基座这个接口只回字符串，
-    // 建暂存目录失败这种设备故障也会落进 400（极少见），要分开得基座给出错误种类。
-    let items = AssetUploadFlow::in_dir(st.spool.work()).run(&StagingStore(&st.staging), &mut *r.body, &boundary).map_err(ApiError::bad)?;
+    // 上传流程整体失败：请求体不是合法 multipart → 400，建暂存目录/文件失败 → 500（`asset::FlowError`）；逐个文件的失败在回执里。
+    let items = AssetUploadFlow::in_dir(st.spool.work()).run(&StagingStore(&st.staging), &mut *r.body, &boundary)?;
     if asset::any_ok(&items) {
         st.bus.publish(ev::AREA, ev::STAGING);
     }
@@ -282,7 +281,7 @@ mod tests {
 
     fn call(router: &Router, m: Method, path: &str, body: &str) -> (u16, serde_json::Value) {
         let rep = TestRequest::new(m, path).content_type("application/json").body(body).dispatch(router);
-        (rep.status, serde_json::from_slice(&rep.body).unwrap_or(serde_json::Value::Null))
+        (rep.status, serde_json::from_slice(rep.body.as_bytes()).unwrap_or(serde_json::Value::Null))
     }
 
     fn msg(v: &serde_json::Value) -> String {
@@ -418,7 +417,7 @@ mod tests {
         assert_eq!(file("a.epub").status, 200, "路由本身是通的");
         let missing = file("nope.epub");
         assert_eq!(missing.status, 404);
-        assert!(String::from_utf8_lossy(&missing.body).contains("没有这本书"));
+        assert!(String::from_utf8_lossy(missing.body.as_bytes()).contains("没有这本书"));
         assert_eq!(code(Method::Post, "/staging/delete", r#"{"name":"nope.epub"}"#), 404);
         assert_eq!(code(Method::Post, "/staging/delete", r#"{"name":"../x"}"#), 400);
         assert_eq!(code(Method::Post, "/mkdir/add", r#"{"name":" "}"#), 400);
@@ -493,14 +492,14 @@ mod tests {
         let rep = TestRequest::new(Method::Get, "/staging/file").query_string("name=%E4%B9%A6.PDF").content_length(None).dispatch(&router);
         assert_eq!((rep.status, rep.content_type.as_str()), (200, "application/pdf"), "扩展名大小写不敏感");
         let h = |k: &str| rep.headers.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone()).unwrap_or_default();
-        assert_eq!(h("Content-Length"), "6");
+        assert!(matches!(rep.body, rmsvc_core::http::Body::Sized { len: 6, .. }), "定长流（不是 SSE 通道）: {:?}", rep.body);
         assert!(h("Content-Disposition").contains("filename*=UTF-8''%E4%B9%A6.PDF"));
     }
 
     /// `POST /import` 带原始字节体（查询串取参）。
     fn post_raw(router: &Router, query: &str, body: &[u8]) -> (u16, serde_json::Value) {
         let rep = TestRequest::new(Method::Post, "/import").query_string(query).content_type("application/epub+zip").body(body).dispatch(router);
-        (rep.status, serde_json::from_slice(&rep.body).unwrap_or(serde_json::Value::Null))
+        (rep.status, serde_json::from_slice(rep.body.as_bytes()).unwrap_or(serde_json::Value::Null))
     }
 
     /// `POST /import` 回 202 后等任务做完，回任务查询结果。
@@ -624,7 +623,7 @@ mod tests {
         let st = state(&t);
         let router = router(st.clone());
         assert_eq!(call(&router, Method::Post, "/mkdir/add", r#"{"name":"漫画/卷01"}"#).0, 200, "网页入口：名字里的 / 当普通字符，建在根");
-        st.mkdir.add_in(P, "卷01").unwrap();
+        st.mkdir.add_in(&rmsvc_core::xochitl::Folder::from_parent_str(P).unwrap(), "卷01").unwrap();
         let (code, v) = call(&router, Method::Get, "/mkdir/pending", "");
         assert_eq!(code, 200);
         assert_eq!(v, serde_json::json!({"items": [{"name": "漫画/卷01", "parent": ""}, {"name": "卷01", "parent": P}]}));

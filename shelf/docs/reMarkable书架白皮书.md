@@ -108,7 +108,7 @@
 | 卸载 | `shelf-uninstall` 删了 qmd 时记"待生效"标记并提示整机重启（10-09） | 第 F 章速查 |
 | 让 qmd 改动生效 | **整机重启**（09-25 起）。不再单独 `systemctl restart xochitl`：xochitl 退出时自身有概率崩溃；xovi 已生效时**绝不**跑 `xovi/start` | 第 F 章速查 |
 | 上传暂存与临时文件 | 书在 `books/.work/`；xochitl 字体/壁纸在 `~/.local/state/shelf/upload/`——都在 /home。母版库里的临时文件只剩跨分区入库中转 `.<pid>.<序号>.landing.tmp`，出错或 panic 当场删、启动再清一遍所有点前缀 `*.tmp` | 传书线架构 §2.2、§9 |
-| 测试 | `cd shelf && cargo test --workspace`：2026-10-10 第二阶段 book-serve 123 + shelf-conv 24 个（§03cc）；`rmsvc-core/epubpkg` 11 个；`rmsvc-core` 133 个（另 1 个 ignored）；clippy 无告警（数字来自 §03ca 的开发机实跑） | §03ca、§03bz |
+| 测试 | `cd shelf && cargo test --workspace`：2026-10-10 第二阶段 book-serve 123 + shelf-conv 24 个（§03cc）；`rmsvc-core/epubpkg` 11 个；`rmsvc-core` 155 个（另 3 个 ignored，2026-10-10 第二阶段 2b 实跑）；clippy 无告警（数字来自 §03ca 的开发机实跑） | §03ca、§03bz |
 
 **已砍/已被取代（别再找）**：网关并发闸门与行内"取消排队"、渲染自检的期望页数与 `warn`、sheng-ren `bookconv` 依赖、日漫翻页（10-07 稍后，§03bx）；`POST /staging/mark`、边车 `koreader` 字段、格式 `cbz` 单列（10-07 代码审查，§03by）；设备上的「优化」、入库 PDF 转换、原 PDF 备份、抓网文、联网补封面、旧产物兼容、中途取消、优化徽章与筛选（10-07，§03bw）；电脑端 `shelf` 命令行（09-18，附录 B）；KOReader 一切入口与 koreader-serve（09-29，附录 B）；超限书按卷拆分与按书设阅读方向（09-30，附录 B）；母版库"优化档位"与"投完自动删除"（09-19）；漫画"优化转 PDF"（09-19 做、09-20 换回 EPUB、09-30 代码删除）；三档格式（09-17/18 收成一档）；微信读书内容源（09-05）；bind-mount 壁纸（§03x）；`/inbox*` 与 `/staging/render/*` HTTP 接口（09-22 删，scp 进 `inbox/` 仍可用）；"restart xochitl 让改动生效"（09-25 改整机重启）。
 
@@ -136,7 +136,7 @@
 
 四条硬原则（用户两轮驳回后定）：
 1. **XDG 基目录规范**：路径表单一事实源是 `rmsvc_core::paths`；shell / qmd 用同一张表的缺省展开值，env 可注入测试。
-2. **设计模式去重解耦**：资产上传 `AssetStore`/`AssetUploadFlow`（Repository + Template Method，四家共用）；领域模块 + 纯适配层（book-serve `staging/` 是领域、`api.rs` 只取参回执）；服务启动模板 `ServiceSpec`；配置模板 `config::load_or_default/seed/save`；Registry · Facade（`manage::MODULES`）· 单一事实源（`formats`、`fs::plain_name`/`unique_path`）；共享原语 `fs::write_atomic`、`multipart::receive_part_to`。**旧 crate 只许剥离 + re-export**。已退役：投递 Strategy / Pipeline（§03s，规则统一后没了调用方）、CLI 相关模式。
+2. **设计模式去重解耦**：资产上传 `UploadTarget`/`AssetUploadFlow`（Repository + Template Method，三家共用；2026-10-10 前是带 list/remove 的 `AssetStore`）；领域模块 + 纯适配层（book-serve `staging/` 是领域、`api.rs` 只取参回执）；服务启动模板 `ServiceSpec`；配置模板 `config::load_or_default/seed/save`；Registry · Facade（`manage::MODULES`）· 单一事实源（`formats`、`fs::plain_name`/`unique_path`）；共享原语 `fs::write_atomic`（`multipart::receive_part_to` 2026-10-10 并进上传流程后删除）。**旧 crate 只许剥离 + re-export**。已退役：投递 Strategy / Pipeline（§03s，规则统一后没了调用方）、CLI 相关模式。
 3. **专项专用可插拔**：不做单体，按领域拆服务。
 4. **不引用旧项目 crate、不对接旧路径**：不读写 `/home/root/weread/**`。
 

@@ -25,7 +25,7 @@ use worker::{Ctx, Failures, Target};
 
 pub const APP: &str = "notes";
 
-const SPEC: ServiceSpec = ServiceSpec { name: "transcribe-serve", label: "笔记·转写", version: env!("CARGO_PKG_VERSION"), default_bind: "127.0.0.1:8796", tab: None };
+const SPEC: ServiceSpec = ServiceSpec { name: "transcribe-serve", label: "笔记·转写", version: env!("CARGO_PKG_VERSION"), default_bind: "127.0.0.1:8796", tab_order: None };
 /// 事件到跑之间的防抖：合上书 ink-serve 会连发几条。
 const DEBOUNCE: Duration = Duration::from_secs(3);
 
@@ -186,7 +186,7 @@ mod tests {
     #[test]
     fn force_reply_status_by_outcome() {
         let Ok(ok) = force_reply(ledger::RunReport { done: 1, prompt_tokens: 3, completion_tokens: 4, ..Default::default() }) else { panic!("应成功") };
-        assert_eq!((ok.status, serde_json::from_slice::<serde_json::Value>(&ok.body).unwrap()["promptTokens"].as_u64()), (200, Some(3)));
+        assert_eq!((ok.status, serde_json::from_slice::<serde_json::Value>(ok.body.as_bytes()).unwrap()["promptTokens"].as_u64()), (200, Some(3)));
         let err = |r| force_reply(r).err().unwrap();
         let e = err(ledger::RunReport { failed: 1, note: "模型超时".into(), ..Default::default() });
         assert_eq!((e.status, e.message.as_str()), (502, "模型超时"), "调了模型却失败是下游故障");

@@ -458,7 +458,7 @@ mod tests {
         let b = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, "cli:shelf");
         let body: &[u8] = br#"{"new":"longer1"}"#;
         let rep = req(Method::Post, "/password", "application/json", &[("Authorization", &format!("Basic {b}"))], body).with(|r| st.change_password(r)).unwrap();
-        assert_eq!(rep.status, 200, "{}", String::from_utf8_lossy(&rep.body));
+        assert_eq!(rep.status, 200, "{}", String::from_utf8_lossy(rep.body.as_bytes()));
         assert!(!st.must_change());
     }
 
@@ -508,7 +508,7 @@ mod tests {
     /// 线上格式快照（2026-10-10，GW-1）：网页/CLI 读这几个 JSON 应答的字段，改成 DTO 前后必须逐字段相同。
     #[test]
     fn wire_snapshot_json_replies() {
-        let body = |r: &Reply| serde_json::from_slice::<serde_json::Value>(&r.body).unwrap();
+        let body = |r: &Reply| serde_json::from_slice::<serde_json::Value>(r.body.as_bytes()).unwrap();
         let st = state(false);
         assert_eq!(body(&st.session_info()), serde_json::json!({"ok": true, "mustChange": false}));
         let b: &[u8] = br#"{"password":"secret1"}"#;

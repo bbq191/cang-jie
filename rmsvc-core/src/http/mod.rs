@@ -7,7 +7,9 @@ mod test_request;
 pub use encoding::{percent_decode, percent_decode_path, percent_encode};
 pub use router::{encode_query, parse_query, Router};
 pub use test_request::TestRequest;
-pub use server::{serve, serve_with, Guard, GuardFn, GuardRequest, ServeOpts, DEFAULT_MAX_CONCURRENT};
+#[cfg(test)]
+pub(crate) use server::serve_listener;
+pub use server::{serve, serve_with, Guard, GuardFn, GuardRequest, ServeOpts, TlsPem, DEFAULT_MAX_CONCURRENT};
 
 use serde::Serialize;
 use std::collections::HashMap;
@@ -82,7 +84,7 @@ pub struct Request<'a> {
 /// 所以处理函数读到的一定是真实对端地址（不是 `X-Forwarded-For` 这类可伪造的值）。
 pub const REMOTE_IP_HEADER: &str = "X-Rmsvc-Remote-Ip";
 
-/// [`Request::read_small_body`] 的上限（1MB）：JSON 表单这类小请求体（当年还有 KOReader 配置补丁，koreader-serve 2026-09-30 已删）。
+/// [`Request::small_body`] 的上限（1MB）：JSON 表单这类小请求体（当年还有 KOReader 配置补丁，koreader-serve 2026-09-30 已删）。
 pub const SMALL_BODY_MAX: u64 = 1024 * 1024;
 
 /// 按名取头（不区分大小写）——[`Request`] 与 [`GuardRequest`] 共用。
@@ -152,10 +154,6 @@ impl Request<'_> {
     pub fn q_flag(&self, k: &str) -> bool {
         matches!(self.q(k), Some("1") | Some("true"))
     }
-    /// `application/x-www-form-urlencoded` 表单 → map（小 body）；要直接得到 413/400 的用 [`Request::form`]。
-    pub fn form_body(&mut self) -> Result<HashMap<String, String>, String> {
-        self.form().map_err(|e| e.message)
-    }
     pub fn q(&self, k: &str) -> Option<&str> {
         self.query.get(k).map(|s| s.as_str())
     }
@@ -173,12 +171,8 @@ impl Request<'_> {
     /// 小 body（JSON 表单 / 配置补丁）整体读入，上限 [`SMALL_BODY_MAX`]。**超限报错**而不是截断：此前
     /// `take(1MB)` 静默截断，超长的 KOReader 配置补丁会被切成半截再交给合并脚本、JSON 报一句莫名的解析错
     /// （2026-09-24 审计）。多读 1 字节即可判定超限，不必读完整个超长 body。
-    ///
-    /// 返回 `String`、调用方再自己定状态码；要直接得到 413/400 的用 [`Request::small_body`]。
-    pub fn read_small_body(&mut self) -> Result<Vec<u8>, String> {
-        self.small_body().map_err(|e| e.message)
-    }
-    /// 同 [`Request::read_small_body`]，但错误直接是回执：超过 [`SMALL_BODY_MAX`] → 413，读失败（客户端半路断开/读超时）→ 400。
+    /// 超过 [`SMALL_BODY_MAX`] → 413，读失败（客户端半路断开/读超时）→ 400（2026-10-10 删掉了返回 `String` 的
+    /// `read_small_body`/`json_body`/`form_body`，那几个拿不到 413）。
     pub fn small_body(&mut self) -> Result<Vec<u8>, ApiError> {
         let too_big = || ApiError::too_large(format!("请求体超过 {} KB 上限", SMALL_BODY_MAX / 1024));
         if self.content_length.is_some_and(|n| n as u64 > SMALL_BODY_MAX) {
@@ -190,9 +184,6 @@ impl Request<'_> {
             return Err(too_big());
         }
         Ok(v)
-    }
-    pub fn json_body(&mut self) -> Result<serde_json::Value, String> {
-        self.json_value().map_err(|e| e.message)
     }
     /// JSON body → `Value`；超限 413，读失败 / 不是合法 JSON → 400。
     pub fn json_value(&mut self) -> Result<serde_json::Value, ApiError> {
@@ -214,18 +205,53 @@ impl Request<'_> {
     }
 }
 
+/// 回执体的三种形态。2026-10-10 前 `Reply` 是 `body: Vec<u8>` 与 `stream: Option<reader>` 两个并列字段，"定长下载"靠往头里
+/// 塞一个 `Content-Length` 字符串表达、服务器再把它摘出来判断（审计 CORE-4）——"有 stream 又有 body""SSE 带了长度"
+/// 这类组合都写得出来，2026-09-24 母版库下载就因为没带长度被当成 SSE 发、客户端永远收不完。现在三种发法是三个变体，
+/// 服务器按变体分派，不再看头。
+pub enum Body {
+    /// 整块内存（JSON、HTML、小文件），按长度一次发完。
+    Bytes(Vec<u8>),
+    /// 已知长度的流（文件下载、网关转发大应答）：带 `Content-Length` 边读边发，发完这条响应即结束。
+    Sized { reader: Box<dyn Read + Send>, len: u64 },
+    /// 事件流（SSE）：不知长度，接管 socket 一帧一 flush，读到 reader 结束或客户端断开为止。
+    EventStream(Box<dyn Read + Send>),
+}
+
+impl std::fmt::Debug for Body {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Body::Bytes(b) => write!(f, "Bytes({} B)", b.len()),
+            Body::Sized { len, .. } => write!(f, "Sized({len} B)"),
+            Body::EventStream(_) => f.write_str("EventStream"),
+        }
+    }
+}
+
+impl Body {
+    /// 整块内存的内容；流式的两种给空（测试与只看 JSON 回执的调用方用）。
+    pub fn as_bytes(&self) -> &[u8] {
+        match self {
+            Body::Bytes(b) => b,
+            Body::Sized { .. } | Body::EventStream(_) => &[],
+        }
+    }
+}
+
 pub struct Reply {
     pub status: u16,
     pub content_type: String,
-    pub body: Vec<u8>,
     pub headers: Vec<(String, String)>,
-    /// 流式响应体（SSE 等）：Some 时忽略 `body`，chunked 边读边发，直到 reader 返回 0 或客户端断开。
-    pub stream: Option<Box<dyn Read + Send>>,
+    pub body: Body,
 }
 
 impl Reply {
+    /// 任意状态码 + 整块内存体（下面几个具名构造器都经过这里）。
+    pub fn with_bytes(status: u16, content_type: &str, body: Vec<u8>) -> Reply {
+        Reply { status, content_type: content_type.into(), headers: vec![], body: Body::Bytes(body) }
+    }
     pub fn json<T: Serialize>(status: u16, v: &T) -> Reply {
-        Reply { status, content_type: "application/json; charset=utf-8".into(), body: serde_json::to_vec(v).unwrap_or_default(), headers: vec![], stream: None }
+        Reply::with_bytes(status, "application/json; charset=utf-8", serde_json::to_vec(v).unwrap_or_default())
     }
     pub fn ok<T: Serialize>(v: &T) -> Reply {
         Reply::json(200, v)
@@ -234,25 +260,25 @@ impl Reply {
         Reply::json(status, &serde_json::json!({"ok": false, "message": message.into()}))
     }
     pub fn html(body: &str) -> Reply {
-        Reply { status: 200, content_type: "text/html; charset=utf-8".into(), body: body.as_bytes().to_vec(), headers: vec![], stream: None }
+        Reply::with_bytes(200, "text/html; charset=utf-8", body.as_bytes().to_vec())
     }
     pub fn bytes(content_type: &str, body: Vec<u8>) -> Reply {
-        Reply { status: 200, content_type: content_type.into(), body, headers: vec![], stream: None }
+        Reply::with_bytes(200, content_type, body)
     }
-    /// 流式响应（SSE）：不知长度，读到 reader 结束或客户端断开为止。
-    pub fn stream(content_type: &str, reader: Box<dyn Read + Send>) -> Reply {
-        Reply { status: 200, content_type: content_type.into(), body: Vec::new(), headers: vec![], stream: Some(reader) }
+    /// 事件流（SSE）：不知长度，读到 reader 结束或客户端断开为止。**只给 SSE 用**——普通下载用 [`Reply::sized_stream`]。
+    pub fn event_stream(content_type: &str, reader: Box<dyn Read + Send>) -> Reply {
+        Reply { status: 200, content_type: content_type.into(), headers: vec![], body: Body::EventStream(reader) }
     }
     /// 已知长度的流（文件下载）：带 `Content-Length`，服务器按定长响应边读边发，发完即结束（不走 SSE 那条路）。
     pub fn sized_stream(content_type: &str, reader: Box<dyn Read + Send>, len: u64) -> Reply {
-        Reply::stream(content_type, reader).with_header("Content-Length", &len.to_string())
+        Reply { status: 200, content_type: content_type.into(), headers: vec![], body: Body::Sized { reader, len } }
     }
     pub fn not_found() -> Reply {
         Reply::error(404, "not found")
     }
     /// 303 跳转（表单提交后用 303 避免重复提交）。
     pub fn redirect(location: &str) -> Reply {
-        Reply { status: 303, content_type: "text/plain; charset=utf-8".into(), body: Vec::new(), headers: vec![("Location".into(), location.into())], stream: None }
+        Reply::with_bytes(303, "text/plain; charset=utf-8", Vec::new()).with_header("Location", location)
     }
     pub fn with_header(mut self, k: &str, v: &str) -> Reply {
         self.headers.push((k.into(), v.into()));
@@ -265,6 +291,15 @@ impl Reply {
 }
 
 /// 领域错误 → 回执：`Err(ApiError)` 统一变 JSON。
+///
+/// **没有** `From<String>`（2026-10-10 第二阶段删掉）：此前字符串错误 `?` 上来一律成 500，领域校验错误（"非法文件名"）也报成服务端故障
+/// （审计 CORE-1）。状态码由调用方显式选（`bad` / `not_found` / `conflict` / `internal` …），或由带种类的领域错误 `From` 过来：
+///
+/// ```compile_fail
+/// fn handler() -> Result<(), rmsvc_core::http::ApiError> {
+///     Err(String::from("非法文件名"))?
+/// }
+/// ```
 #[derive(Debug)]
 pub struct ApiError {
     pub status: u16,
@@ -299,11 +334,6 @@ impl ApiError {
     }
     pub fn not_found(m: impl Into<String>) -> ApiError {
         ApiError { status: 404, message: m.into() }
-    }
-}
-impl From<String> for ApiError {
-    fn from(m: String) -> Self {
-        ApiError::internal(m)
     }
 }
 impl From<ApiError> for Reply {
@@ -377,17 +407,17 @@ mod tests {
         let max = SMALL_BODY_MAX as usize;
         let exact = vec![b'a'; max];
         let mut r: &[u8] = &exact;
-        assert_eq!(req_with(&mut r, None).read_small_body().unwrap().len(), max, "恰好上限照收");
+        assert_eq!(req_with(&mut r, None).small_body().unwrap().len(), max, "恰好上限照收");
         let over = vec![b'a'; max + 1];
         let mut r: &[u8] = &over;
-        assert!(req_with(&mut r, None).read_small_body().unwrap_err().contains("上限"), "没有 Content-Length（chunked）也按实际字节判");
+        assert!(req_with(&mut r, None).small_body().unwrap_err().message.contains("上限"), "没有 Content-Length（chunked）也按实际字节判");
         let mut r: &[u8] = b"{}";
-        assert!(req_with(&mut r, Some(max + 1)).read_small_body().is_err(), "声明长度超限直接拒，不读 body");
+        assert!(req_with(&mut r, Some(max + 1)).small_body().is_err(), "声明长度超限直接拒，不读 body");
         let mut r: &[u8] = b"{\"a\":1}";
         assert_eq!(req_with(&mut r, Some(7)).json().unwrap().0["a"], 1, "正常小 body 不受影响");
     }
 
-    /// 返回 `ApiError` 的取 body 辅助：超限 413、坏 JSON 400；旧的返回 `String` 的几个文案不变。
+    /// 取 body 辅助：超限 413、坏 JSON 400。
     #[test]
     fn api_body_helpers_give_413_for_oversize_and_400_for_bad_json() {
         let max = SMALL_BODY_MAX as usize;
@@ -401,12 +431,8 @@ mod tests {
         let mut r: &[u8] = b"{half";
         let e = req_with(&mut r, None).json_value().unwrap_err();
         assert!(e.status == 400 && e.message.starts_with("JSON 解析失败"), "{e:?}");
-        let mut r: &[u8] = b"{half";
-        assert!(req_with(&mut r, None).json_body().unwrap_err().starts_with("JSON 解析失败"), "旧接口文案不变");
         let mut r: &[u8] = b"a=1+2&b=x";
         assert_eq!(req_with(&mut r, None).form().unwrap()["a"], "1 2");
-        let mut r: &[u8] = b"a=1+2";
-        assert_eq!(req_with(&mut r, None).form_body().unwrap()["a"], "1 2");
         assert_eq!((ApiError::new(418, "x").status, ApiError::conflict("x").status, ApiError::too_large("x").status), (418, 409, 413));
         assert_eq!((ApiError::bad_gateway("x").status, ApiError::unavailable("x").status), (502, 503));
     }

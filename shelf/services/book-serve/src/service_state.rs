@@ -83,7 +83,9 @@ impl State {
         let mkdir = Arc::new(MkdirQueue::new(&books_state, &paths.xochitl_dir()).with_failures(agent_failures.clone()));
         // 投进 xochitl 那一层只组装这一份，母版库落库与直接导入共用（见 delivery.rs）。
         let delivery = Arc::new(XochitlDelivery::new(xochitl.clone(), mkdir.clone(), cfg.native_upload_limit_bytes()).with_comic_margins(comic_margins.clone()));
-        let staging = Staging::new(paths.staging_dir(), delivery.clone());
+        // 母版库（中间层暂存池）：所有内容源先原样落这里，用户再加入 xochitl。与 spool 同根，在 /home 分区，重启 / OTA 不丢；
+        // 不套 spool done/ 的 LRU 淘汰——留住用户还没落库的书。路径 2026-10-10 前由基座 `Paths::staging_dir` 给（只有本服务用，审计 CORE-3），取值不变。
+        let staging = Staging::new(books_state.join("staging"), delivery.clone());
         let import = crate::import::Importer::new(delivery, books_state.join("import-tmp")).with_progress(progress.clone());
         State { cfg, spool, staging, xochitl, bus, trash, comic_margins, progress, mkdir, agent_failures, import, jobs: crate::jobs::Jobs::default(), status_cache: Arc::new(TtlCache::new(STATUS_TTL)), inbox_settle: INBOX_SETTLE }
     }

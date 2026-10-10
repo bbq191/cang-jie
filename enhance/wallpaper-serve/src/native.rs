@@ -3,9 +3,12 @@
 //! 永远指向 `current.png`，换图仍是原地覆盖 current.png（wake.rs：xochitl 休眠读完即轮换），零 `/usr` 写入、零 bind-mount。
 //! 键写进去后要 xochitl 重新启动一次才生效（2026-09-25 起统一靠整机重启）；本模块记住"写键时的 xochitl PID"，PID 变了即视为已生效。
 use rmsvc_core::paths::Paths;
-use rmsvc_core::xochitl_conf::{self, SLEEP_SCREEN_KEY};
+use rmsvc_core::xochitl_conf;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+
+/// xochitl.conf `[General]` 里的休眠屏键（2026-10-10 前定义在基座 `xochitl_conf`，只有本服务用，审计 CORE-3）。
+const SLEEP_SCREEN_KEY: &str = "SleepScreenPath";
 
 pub struct Native {
     conf: PathBuf,

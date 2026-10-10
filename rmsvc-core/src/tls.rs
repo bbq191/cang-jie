@@ -16,11 +16,7 @@ use crate::clock::now_secs;
 use rcgen::{BasicConstraints, CertificateParams, CidrSubnet, DnType, ExtendedKeyUsagePurpose, GeneralSubtree, IsCa, Issuer, KeyPair, KeyUsagePurpose, NameConstraints};
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::Path;
-
-pub struct TlsPem {
-    pub cert: Vec<u8>,
-    pub key: Vec<u8>,
-}
+pub use crate::http::TlsPem;
 
 /// 叶证书自动续签阈值：签发满这么多天就换（远小于 800 天有效期）。
 const LEAF_RENEW_DAYS: u64 = 700;

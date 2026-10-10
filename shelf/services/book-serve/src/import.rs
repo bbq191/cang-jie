@@ -282,7 +282,8 @@ impl Importer {
         }
         let m = read_meta(self.delivery.library_dir(), uuid).ok().flatten().filter(Metadata::is_document)?;
         let deleted = !m.is_live();
-        let folder = if deleted { String::new() } else { self.delivery.xochitl().folder_path(&m.parent) };
+        // 回收站里的 parent 是 "trash"（`from_parent_str` 给 None）；别的认不出的值也按根，路径是空串
+        let folder = if deleted { String::new() } else { Folder::from_parent_str(&m.parent).map(|f| self.delivery.xochitl().folder_path(&f)).unwrap_or_default() };
         Some(DocState { uuid: uuid.to_string(), name: m.visible_name, folder, deleted, replacing: self.replacing.is_busy(uuid) })
     }
 }
@@ -397,9 +398,15 @@ mod tests {
         assert!(!t.path().join("staging").exists() || std::fs::read_dir(t.path().join("staging")).unwrap().count() == 0, "不进母版库");
     }
 
-    /// 书库里（上级, 名字）的活文件夹 uuid。
-    fn folder(lib: &Path, parent: &str, name: &str) -> String {
-        rmsvc_core::xochitl::find_child_folder(lib, parent, name).unwrap_or_else(|| panic!("没有 {parent}/{name}"))
+    /// 书库里（上级, 名字）的活文件夹（上级空串＝根）。
+    fn folder(lib: &Path, parent: &str, name: &str) -> Folder {
+        let p = Folder::from_parent_str(parent).unwrap();
+        rmsvc_core::xochitl::child_folder(lib, &p, name).map(Folder::Id).unwrap_or_else(|| panic!("没有 {parent}/{name}"))
+    }
+
+    /// 文档当前所在的文件夹。
+    fn folder_of(lib: &Path, uuid: &str) -> Option<Folder> {
+        rmsvc_core::xochitl::folder_of_document(lib, uuid)
     }
 
     /// 带假 xochitl 和模拟建夹代理的一套（每级文件夹最多等 `folder_wait`）：返回（导入器, 书库目录, 代理建过的记录, 停止开关）。
@@ -429,12 +436,12 @@ mod tests {
         let d = im.import_new("死亡筆記01.epub", "漫画/死亡筆記(愛藏版)", &mut a.as_slice(), Some(a.len())).unwrap();
         stop.store(true, std::sync::atomic::Ordering::Relaxed);
         let top = folder(&lib, "", "漫画");
-        let inner = folder(&lib, &top, "死亡筆記(愛藏版)");
-        assert_eq!(*made.lock().unwrap(), [(String::new(), "漫画".to_string()), (top.clone(), "死亡筆記(愛藏版)".to_string())], "逐级建、第二级建在第一级里");
-        assert_eq!(rmsvc_core::xochitl::parent_folder_of(&lib, &d.uuid), Some(inner));
+        let inner = folder(&lib, top.as_parent_str(), "死亡筆記(愛藏版)");
+        assert_eq!(*made.lock().unwrap(), [(String::new(), "漫画".to_string()), (top.as_parent_str().to_string(), "死亡筆記(愛藏版)".to_string())], "逐级建、第二级建在第一级里");
+        assert_eq!(folder_of(&lib, &d.uuid), Some(inner));
         assert_eq!(d.folder, "漫画/死亡筆記(愛藏版)");
         assert_eq!(im.describe(&d.uuid).unwrap().folder, "漫画/死亡筆記(愛藏版)");
-        assert!(rmsvc_core::xochitl::find_child_folder(&lib, "", "漫画/死亡筆記(愛藏版)").is_none(), "不再建压平的顶层文件夹");
+        assert!(rmsvc_core::xochitl::child_folder(&lib, &Folder::Root, "漫画/死亡筆記(愛藏版)").is_none(), "不再建压平的顶层文件夹");
     }
 
     /// 上级已有只建下级；不同上级下的同名子文件夹（「漫画/卷01」「小说/卷01」）各是各的，书各落各的。
@@ -451,10 +458,10 @@ mod tests {
         let db = im.import_new("乙.epub", "小说/卷01", &mut b.as_slice(), Some(b.len())).unwrap();
         stop.store(true, std::sync::atomic::Ordering::Relaxed);
         let novel = folder(&lib, "", "小说");
-        let (v1m, v1n) = (folder(&lib, manga, "卷01"), folder(&lib, &novel, "卷01"));
+        let (v1m, v1n) = (folder(&lib, manga, "卷01"), folder(&lib, novel.as_parent_str(), "卷01"));
         assert_ne!(v1m, v1n);
-        assert_eq!(rmsvc_core::xochitl::parent_folder_of(&lib, &da.uuid), Some(v1m));
-        assert_eq!(rmsvc_core::xochitl::parent_folder_of(&lib, &db.uuid), Some(v1n));
+        assert_eq!(folder_of(&lib, &da.uuid), Some(v1m));
+        assert_eq!(folder_of(&lib, &db.uuid), Some(v1n));
         assert_eq!((da.folder.as_str(), db.folder.as_str()), ("漫画/卷01", "小说/卷01"));
         // 再导入到已经全有的路径：一个都不建
         let n = made.lock().unwrap().len();
@@ -471,7 +478,7 @@ mod tests {
         let d = im.import_new("甲.epub", " 小说 ", &mut a.as_slice(), Some(a.len())).unwrap();
         let d0 = im.import_new("乙.epub", "", &mut a.as_slice(), Some(a.len())).unwrap();
         stop.store(true, std::sync::atomic::Ordering::Relaxed);
-        assert_eq!(rmsvc_core::xochitl::parent_folder_of(&lib, &d.uuid), Some(folder(&lib, "", "小说")));
+        assert_eq!(folder_of(&lib, &d.uuid), Some(folder(&lib, "", "小说")));
         assert_eq!((d.folder.as_str(), d0.folder.as_str()), ("小说", ""));
     }
 
@@ -483,7 +490,7 @@ mod tests {
         let a = mini_epub(&[("OEBPS/a.xhtml", "<p>甲</p>")]);
         let d = im.import_new("甲.epub", "漫画/卷01", &mut a.as_slice(), Some(a.len())).unwrap();
         stop.store(true, std::sync::atomic::Ordering::Relaxed);
-        assert_eq!(rmsvc_core::xochitl::parent_folder_of(&lib, &d.uuid), Some(folder(&lib, "", "漫画")));
+        assert_eq!(folder_of(&lib, &d.uuid), Some(folder(&lib, "", "漫画")));
         assert_eq!(d.folder, "漫画");
     }
 
@@ -504,7 +511,7 @@ mod tests {
         std::fs::write(lib.join(format!("{other}.metadata")), r#"{"type":"CollectionType","visibleName":"大","parent":""}"#).unwrap();
         std::fs::write(lib.join(format!("{inner}.metadata")), format!(r#"{{"type":"CollectionType","visibleName":"大","parent":"{top}"}}"#)).unwrap();
         let d = im.import_new("大书.epub", "漫画/大", &mut big.as_slice(), Some(big.len())).unwrap();
-        assert_eq!((rmsvc_core::xochitl::parent_folder_of(&lib, &d.uuid).as_deref(), d.folder.as_str()), (Some(inner), "漫画/大"));
+        assert_eq!((folder_of(&lib, &d.uuid), d.folder.as_str()), (Folder::from_parent_str(inner), "漫画/大"));
     }
 
     #[test]

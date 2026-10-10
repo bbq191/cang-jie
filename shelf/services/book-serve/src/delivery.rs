@@ -133,7 +133,7 @@ impl XochitlDelivery {
         let mut parent = Folder::Root;
         for (depth, seg) in segments.iter().enumerate() {
             let find = || self.xochitl.child_folder(&parent, seg);
-            let found = find().or_else(|| match self.mkdir.add_in(parent.as_parent_str(), seg) {
+            let found = find().or_else(|| match self.mkdir.add_in(&parent, seg) {
                 // 两次查询之间刚被建出来了
                 Ok(0) => find(),
                 // `wait_for` 先挂监听再查一次：入队到挂上监听之间代理已经建好的，也不会白等满

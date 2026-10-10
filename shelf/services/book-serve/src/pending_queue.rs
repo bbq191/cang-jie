@@ -4,7 +4,8 @@
 //! 审计发现，仿照 `note-serve::chapter_store::ChapterStore<T>` 的做法泛型化，只抽持久化+入队+剔除
 //! 这层通用外壳；入队前的领域校验（uuid 形状、名字对不对得上、文件夹是否已存在……）留给各自的
 //! `add()` 包装方法，那是两边真正不同、不该合并的部分。
-use crate::agent_failures::{AgentFailures, FailureKind};
+use crate::agent_failures::AgentFailures;
+use rmsvc_core::wire::FailureKind;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use rmsvc_core::events::Wake;
