@@ -24,6 +24,7 @@
 //! - `clock`    unix 时间戳唯一出处（秒/毫秒/纳秒、文件 mtime 换算）。
 //! - `mdns`     极简 mDNS 应答器（`shelf.local` 伪域名）。
 //! - `sync`     容忍 poison 的取锁（`sync::lock`），各服务共用。
+//! - `wire`     跨服务/前后端共用的线上状态枚举（落库/渲染自检的 status），JSON 仍是小写字符串。
 //! - `proc`     带超时的子进程、`/proc` 读取（开机秒数、按名字找进程），不 fork 的优先。
 pub mod asset;
 pub mod auth;
@@ -46,5 +47,6 @@ pub mod sync;
 mod sys;
 pub mod tls;
 pub mod ttf;
+pub mod wire;
 pub mod xochitl;
 pub mod xochitl_conf;
