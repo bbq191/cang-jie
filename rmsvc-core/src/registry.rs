@@ -230,7 +230,7 @@ impl From<SvcError> for crate::http::ApiError {
 
 /// URL 路径段编码（uuid/文件名这类需要转义的片段）。
 pub fn enc(s: &str) -> String {
-    crate::multipart::percent_encode(s)
+    crate::http::percent_encode(s)
 }
 
 #[cfg(test)]

@@ -1,8 +1,10 @@
 //! HTTP 适配层（唯一碰 tiny_http 的地方）。领域模块只见 [`Request`]/[`Reply`] 两个纯数据类型。
 //! 路由 = (方法, 路径模式) → 处理函数；路径模式支持尾部 `/*` 前缀匹配与单段 `{param}`。
+mod encoding;
 mod router;
 mod server;
 mod test_request;
+pub use encoding::{percent_decode, percent_decode_path, percent_encode};
 pub use router::{encode_query, parse_query, Router};
 pub use test_request::TestRequest;
 pub use server::{serve, serve_with, Guard, GuardFn, GuardRequest, ServeOpts, DEFAULT_MAX_CONCURRENT};

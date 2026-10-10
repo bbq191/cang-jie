@@ -36,7 +36,7 @@ impl Pattern {
         let mut params = HashMap::new();
         for (pat, seg) in self.segs.iter().zip(segs.iter()) {
             if pat.starts_with('{') && pat.ends_with('}') {
-                params.insert(pat[1..pat.len() - 1].to_string(), crate::multipart::percent_decode_path(seg));
+                params.insert(pat[1..pat.len() - 1].to_string(), super::percent_decode_path(seg));
             } else if pat != seg {
                 return None;
             }
@@ -160,7 +160,7 @@ pub fn parse_query(q: &str) -> HashMap<String, String> {
         .filter(|s| !s.is_empty())
         .map(|kv| {
             let (k, v) = kv.split_once('=').unwrap_or((kv, ""));
-            (crate::multipart::percent_decode(k), crate::multipart::percent_decode(v))
+            (super::percent_decode(k), super::percent_decode(v))
         })
         .collect()
 }
@@ -170,7 +170,7 @@ pub fn parse_query(q: &str) -> HashMap<String, String> {
 pub fn encode_query(q: &HashMap<String, String>) -> String {
     let mut kv: Vec<(&String, &String)> = q.iter().collect();
     kv.sort();
-    kv.iter().map(|(k, v)| format!("{}={}", crate::multipart::percent_encode(k), crate::multipart::percent_encode(v))).collect::<Vec<_>>().join("&")
+    kv.iter().map(|(k, v)| format!("{}={}", super::percent_encode(k), super::percent_encode(v))).collect::<Vec<_>>().join("&")
 }
 
 #[cfg(test)]
