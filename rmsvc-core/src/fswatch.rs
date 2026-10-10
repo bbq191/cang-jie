@@ -10,13 +10,42 @@
 //! `read_events_blocking` 上、经通道把文件名递回来；限时模式结束时读线程醒不来，只能往 `/tmp` 下一个私有
 //! "踢醒"目录写文件把它踢醒，建不了踢醒目录时读线程和 inotify 描述符就一直挂到目录下次有动静。现在每个监听
 //! 只占调用方这一条线程，返回即释放 inotify，不再碰 `/tmp`。
-use inotify::{EventMask, Inotify, WatchMask};
+use inotify::{EventMask, Inotify};
+/// 监听掩码（[`WatchSpec::mask`] 用；`inotify` crate 的类型原样再导出，调用方不必自己依赖 `inotify`）。
+pub use inotify::WatchMask;
 use std::collections::HashSet;
 use std::os::fd::AsRawFd;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
 const MASK: WatchMask = WatchMask::CLOSE_WRITE.union(WatchMask::MOVED_TO).union(WatchMask::CREATE).union(WatchMask::DELETE).union(WatchMask::MOVED_FROM).union(WatchMask::MOVE_SELF);
+
+/// 监听什么、攒多久（Specification）。[`watch_debounced`]/[`watch_until`]/[`wait_for`] 用的是 [`WatchSpec::files`]
+/// （写完/挪入/新建/删除/挪出 + 防抖）；别的需要用 `*_with` 版本自己给：比如 wallpaper-serve 只要
+/// `CLOSE_NOWRITE`（xochitl 读完休眠屏图片）、每次读都要立刻知道（不防抖），此前因为这里掩码写死、强制防抖，
+/// 只好自己手写一份 inotify + 重挂（审计 CORE-7）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WatchSpec {
+    /// 关心的事件。`MOVE_SELF` 总会并进去（目录被挪走要知道监听失效）；`IN_IGNORED` 内核总会发。
+    pub mask: WatchMask,
+    /// 有事件后静默多久再回调；`None`＝每批事件读到就回调（不攒）。
+    pub debounce: Option<Duration>,
+}
+
+impl WatchSpec {
+    /// 缺省的"目录里文件变了"：写完 / 挪入 / 新建 / 删除 / 挪出，防抖 `debounce`。
+    pub fn files(debounce: Duration) -> WatchSpec {
+        WatchSpec { mask: MASK, debounce: Some(debounce) }
+    }
+
+    fn effective_mask(&self) -> WatchMask {
+        self.mask | WatchMask::MOVE_SELF
+    }
+
+    fn debounce(&self) -> Duration {
+        self.debounce.unwrap_or(Duration::ZERO)
+    }
+}
 
 /// 常驻监听的目录被删/被挪走后，重新挂监听的退避上下限（目录没回来时最多这么久试一次）。
 const REARM_MIN: Duration = Duration::from_secs(1);
@@ -28,11 +57,19 @@ const FALLBACK_POLL: Duration = Duration::from_secs(1);
 /// 监听 `dir` 下文件的 CLOSE_WRITE/MOVED_TO/CREATE/DELETE/MOVED_FROM，防抖后回调（删除也算：网关看注册表目录用）。**永不返回**（init 失败返回）。
 /// 目录本身被删/被挪走（监听随之失效）时按退避（1s 起翻倍到 5 分钟）重新挂上，挂上后以空集合回调一次——
 /// 这期间的变化看不到文件名，交给回调自己追平。此前监听失效后线程永远睡着，再也收不到任何变化。
-pub fn watch_debounced<F>(dir: &Path, debounce: Duration, mut on_settle: F)
+pub fn watch_debounced<F>(dir: &Path, debounce: Duration, on_settle: F)
 where
     F: FnMut(&HashSet<String>),
 {
-    run(dir, debounce, None, false, |s| {
+    watch_with(dir, &WatchSpec::files(debounce), on_settle)
+}
+
+/// 同 [`watch_debounced`]，监听什么、攒多久由 `spec` 定（见 [`WatchSpec`]）。**永不返回**（init 失败返回）。
+pub fn watch_with<F>(dir: &Path, spec: &WatchSpec, mut on_settle: F)
+where
+    F: FnMut(&HashSet<String>),
+{
+    run(dir, spec, None, false, |s| {
         on_settle(s);
         false
     });
@@ -44,16 +81,29 @@ pub fn watch_until<F>(dir: &Path, debounce: Duration, timeout: Duration, on_sett
 where
     F: FnMut(&HashSet<String>) -> bool,
 {
-    run(dir, debounce, Some(Instant::now() + timeout), false, on_settle).unwrap_or(false)
+    watch_until_with(dir, &WatchSpec::files(debounce), timeout, on_settle)
+}
+
+/// 同 [`watch_until`]，监听什么、攒多久由 `spec` 定。
+pub fn watch_until_with<F>(dir: &Path, spec: &WatchSpec, timeout: Duration, on_settle: F) -> bool
+where
+    F: FnMut(&HashSet<String>) -> bool,
+{
+    run(dir, spec, Some(Instant::now() + timeout), false, on_settle).unwrap_or(false)
 }
 
 /// 等 `dir` 里出现某个结果：`check` 返回 `Some` 即结束并把它交回；最多等 `timeout`，到点仍没有 → `None`。
 /// 次序：**先挂监听，再查一次**（挂上之后的变化都会排进 inotify 队列，不会漏），之后每次目录变化静默 `debounce`
 /// 再查；到点再查最后一次。inotify 起不来时退化成每秒查一次，语义不变。
-pub fn wait_for<T>(dir: &Path, debounce: Duration, timeout: Duration, mut check: impl FnMut() -> Option<T>) -> Option<T> {
+pub fn wait_for<T>(dir: &Path, debounce: Duration, timeout: Duration, check: impl FnMut() -> Option<T>) -> Option<T> {
+    wait_for_with(dir, &WatchSpec::files(debounce), timeout, check)
+}
+
+/// 同 [`wait_for`]，监听什么、攒多久由 `spec` 定。
+pub fn wait_for_with<T>(dir: &Path, spec: &WatchSpec, timeout: Duration, mut check: impl FnMut() -> Option<T>) -> Option<T> {
     let deadline = Instant::now() + timeout;
     let mut found = None;
-    let watched = run(dir, debounce, Some(deadline), true, |_| {
+    let watched = run(dir, spec, Some(deadline), true, |_| {
         found = check();
         found.is_some()
     });
@@ -84,23 +134,23 @@ struct Watcher {
 }
 
 impl Watcher {
-    fn open(dir: &Path) -> Option<Watcher> {
-        Self::try_open(dir).map_err(|e| eprintln!("[fswatch] {e}")).ok()
+    fn open(dir: &Path, mask: WatchMask) -> Option<Watcher> {
+        Self::try_open(dir, mask).map_err(|e| eprintln!("[fswatch] {e}")).ok()
     }
 
-    fn try_open(dir: &Path) -> Result<Watcher, String> {
+    fn try_open(dir: &Path, mask: WatchMask) -> Result<Watcher, String> {
         let inotify = Inotify::init().map_err(|e| format!("inotify init 失败: {e}"))?;
-        inotify.watches().add(dir, MASK).map_err(|e| format!("watch {} 失败: {e}", dir.display()))?;
+        inotify.watches().add(dir, mask).map_err(|e| format!("watch {} 失败: {e}", dir.display()))?;
         Ok(Watcher { inotify, buf: [0; 4096], lost: false })
     }
 
     /// 监听失效后反复重挂直到成功（退避见 [`REARM_MIN`]/[`REARM_MAX`]）。只打两行日志：失效时一行、恢复时一行。
-    fn rearm(dir: &Path) -> Watcher {
+    fn rearm(dir: &Path, mask: WatchMask) -> Watcher {
         eprintln!("[fswatch] {} 被删除或移走，监听失效；等它回来再重新监听", dir.display());
         let mut backoff = REARM_MIN;
         loop {
             std::thread::sleep(backoff);
-            if let Ok(w) = Self::try_open(dir) {
+            if let Ok(w) = Self::try_open(dir, mask) {
                 eprintln!("[fswatch] {} 已重新监听", dir.display());
                 return w;
             }
@@ -142,11 +192,12 @@ impl Watcher {
 
 /// 共同的防抖循环。返回 `None`＝监听没挂上；`Some(true)`＝回调说完了；`Some(false)`＝到点。
 /// `check_first`：挂上监听后先以空集合调一次回调（[`wait_for`] 用）。
-fn run<F>(dir: &Path, debounce: Duration, deadline: Option<Instant>, check_first: bool, mut on_settle: F) -> Option<bool>
+fn run<F>(dir: &Path, spec: &WatchSpec, deadline: Option<Instant>, check_first: bool, mut on_settle: F) -> Option<bool>
 where
     F: FnMut(&HashSet<String>) -> bool,
 {
-    let mut w = Watcher::open(dir)?;
+    let (mask, debounce) = (spec.effective_mask(), spec.debounce());
+    let mut w = Watcher::open(dir, mask)?;
     let mut dirty: HashSet<String> = HashSet::new();
     if check_first && on_settle(&dirty) {
         return Some(true);
@@ -182,7 +233,7 @@ where
             if !dirty.is_empty() && on_settle(&dirty) {
                 return Some(true);
             }
-            w = Watcher::rearm(dir);
+            w = Watcher::rearm(dir, mask);
             dirty.clear();
             if on_settle(&dirty) {
                 return Some(true);
@@ -286,6 +337,38 @@ mod tests {
             (n >= 2).then_some(n)
         });
         assert_eq!(got, Some(2), "首查失败、期间无事件、到点那次成立");
+    }
+
+    /// 参数化：只听 CLOSE_NOWRITE（有人读完一个文件）、不防抖——写文件不触发，读文件立刻触发（wallpaper-serve 的形状）。
+    #[test]
+    fn watch_spec_custom_mask_without_debounce() {
+        let t = tempfile::tempdir().unwrap();
+        let dir = t.path().to_path_buf();
+        std::fs::write(dir.join("current.png"), b"x").unwrap();
+        let spec = WatchSpec { mask: WatchMask::CLOSE_NOWRITE, debounce: None };
+        let d2 = dir.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(150));
+            std::fs::write(d2.join("other.png"), b"y").unwrap(); // CLOSE_WRITE：不在掩码里
+            std::thread::sleep(Duration::from_millis(150));
+            let _ = std::fs::read(d2.join("current.png")); // CLOSE_NOWRITE
+        });
+        let t0 = Instant::now();
+        let mut seen = vec![];
+        let ok = watch_until_with(&dir, &spec, Duration::from_secs(5), |s| {
+            seen.push(s.clone());
+            s.contains("current.png")
+        });
+        assert!(ok && t0.elapsed() < Duration::from_secs(2), "{seen:?}");
+        assert!(seen.iter().all(|s| !s.contains("other.png")), "写文件不在掩码里: {seen:?}");
+        // 旧接口行为不变：缺省掩码看得到写、看不到读
+        assert_eq!(WatchSpec::files(Duration::from_millis(5)).mask, MASK);
+        let d3 = dir.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(100));
+            let _ = std::fs::read(d3.join("current.png"));
+        });
+        assert!(!watch_until(&dir, Duration::from_millis(20), Duration::from_millis(400), |_| true), "只读不算变化");
     }
 
     #[test]
