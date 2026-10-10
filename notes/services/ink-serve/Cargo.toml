@@ -14,6 +14,7 @@ rmsvc-core = { path = "../../../rmsvc-core" }
 rmv6 = { path = "../../crates/rmv6" }
 epubmap = { path = "../../crates/epubmap" }
 notecore = { path = "../../crates/notecore" }
+notesvc = { path = "../../crates/notesvc" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 image = { version = "0.25", default-features = false, features = ["png"] }
