@@ -1,84 +1,80 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 780" width="1000" height="780" font-family="Noto Sans SC, Noto Sans CJK SC, sans-serif">
-<defs><marker id="eo-m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker></defs>
-<rect x="0" y="0" width="1000" height="780" fill="#fbfbfa"/>
-<text x="500" y="32" text-anchor="middle" font-size="20" font-weight="bold" fill="#1a1a1a">enhance 系统增强线：工具怎么接到设备上</text>
-<text x="500" y="56" text-anchor="middle" font-size="13" font-weight="normal" fill="#666">xochitl 进程里：两个 xovi 扩展 + 两个 qmd 补丁 · 进程外：两个 Web 服务 + 一个网络小脚本；开关都经网关网页</text>
-<rect x="30" y="84" width="200" height="70" rx="10" fill="#f2f2f4" stroke="#7a7a88" stroke-width="1.6"/>
-<text x="130" y="106" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">浏览器</text>
-<text x="130" y="128" text-anchor="middle" font-size="12" font-weight="normal" fill="#444">https://10.11.99.1/</text>
-<text x="130" y="145" text-anchor="middle" font-size="12" font-weight="normal" fill="#444">管理 → 系统增强 · 其他</text>
-<polyline points="230,204 262,204 262,152 620,152" fill="none" stroke="#b8860b" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#eo-m)"/>
-<text x="440" y="144" text-anchor="middle" font-size="11.5" font-weight="normal" fill="#8a6508">读 /proc/&lt;pid&gt;/maps → 网页「已加载」徽章</text>
-<polyline points="130,154 130,186" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#eo-m)"/>
-<rect x="30" y="186" width="200" height="96" rx="10" fill="#fdf3dc" stroke="#b8860b" stroke-width="1.6"/>
-<text x="130" y="208" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">gateway :443</text>
-<text x="130" y="230" text-anchor="middle" font-size="11.5" font-weight="normal" fill="#444">/api/enhance/qol、/status</text>
-<text x="130" y="247" text-anchor="middle" font-size="11.5" font-weight="normal" fill="#444">反代 /api/fonts、/api/wallpapers</text>
-<rect x="300" y="186" width="250" height="96" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
-<text x="425" y="208" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a" font-family="DejaVu Sans Mono, monospace">reading-qol.json</text>
-<text x="425" y="230" text-anchor="middle" font-size="11.5" font-weight="normal" fill="#444">~/.local/share/cangjie-ime/</text>
-<text x="425" y="247" text-anchor="middle" font-size="11.5" font-weight="normal" fill="#444">hlSnapCjk · tapPageTurn（全量写回）</text>
-<text x="425" y="264" text-anchor="middle" font-size="11.5" font-weight="normal" fill="#444">hl-snap 每次划线读 · 翻页 qmd 开书时读</text>
-<polyline points="230,234 300,234" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#eo-m)"/>
-<text x="265" y="224" text-anchor="middle" font-size="11.5" font-weight="normal" fill="#555">读/写</text>
-<polyline points="550,234 620,234" fill="none" stroke="#555" stroke-width="1.7" stroke-dasharray="5 4" marker-end="url(#eo-m)"/>
-<text x="585" y="224" text-anchor="middle" font-size="11.5" font-weight="normal" fill="#555">现读</text>
-<rect x="300" y="320" width="250" height="92" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
-<text x="425" y="342" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a" font-family="DejaVu Sans Mono, monospace">ui-font.json</text>
-<text x="425" y="364" text-anchor="middle" font-size="11.5" font-weight="normal" fill="#444">~/.local/share/shelf/</text>
-<text x="425" y="381" text-anchor="middle" font-size="11.5" font-weight="normal" fill="#444">界面字体选择 {sans, serif}</text>
-<text x="425" y="398" text-anchor="middle" font-size="11.5" font-weight="normal" fill="#444">空串 = 原生字体</text>
-<polyline points="550,380 620,380" fill="none" stroke="#555" stroke-width="1.7" stroke-dasharray="5 4" marker-end="url(#eo-m)"/>
-<text x="585" y="370" text-anchor="middle" font-size="11.5" font-weight="normal" fill="#555">开机读</text>
-<rect x="620" y="84" width="350" height="378" rx="10" fill="#eef3fa" stroke="#4a72b0" stroke-width="1.6" stroke-dasharray="6 4"/>
-<text x="795" y="108" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#1a1a1a">xochitl 进程（xovi 加载的扩展 / qmd 补丁）</text>
-<rect x="636" y="122" width="318" height="88" rx="10" fill="#eaf5ee" stroke="#2f7d45" stroke-width="1.6"/>
-<text x="795" y="144" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a" font-family="DejaVu Sans Mono, monospace">hl-snap.so</text>
-<text x="795" y="166" text-anchor="middle" font-size="11.8" font-weight="normal" fill="#444">荧光笔 CJK 精确吸附（划哪吸哪）</text>
-<text x="795" y="183" text-anchor="middle" font-size="11.8" font-weight="normal" fill="#444">1 个 hook：荧光笔扩张函数 FUN_00f05ad0</text>
-<text x="795" y="200" text-anchor="middle" font-size="11.8" font-weight="normal" fill="#444">开关 hlSnapCjk（默认开）</text>
-<rect x="636" y="220" width="318" height="88" rx="10" fill="#eaf5ee" stroke="#2f7d45" stroke-width="1.6"/>
-<text x="795" y="242" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a" font-family="DejaVu Sans Mono, monospace">reader-page-turn.qmd</text>
-<text x="795" y="264" text-anchor="middle" font-size="11.8" font-weight="normal" fill="#444">阅读器单击左右边缘翻页（源码在 shelf/xovi/）</text>
-<text x="795" y="281" text-anchor="middle" font-size="11.8" font-weight="normal" fill="#444">开关 tapPageTurn（默认关）</text>
-<text x="795" y="298" text-anchor="middle" font-size="11.8" font-weight="normal" fill="#444">每次打开书读一次开关</text>
-<rect x="636" y="318" width="318" height="132" rx="10" fill="#eaf5ee" stroke="#2f7d45" stroke-width="1.6"/>
-<text x="795" y="340" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#1a1a1a" font-family="DejaVu Sans Mono, monospace">ui-font.so + ui-font-tokens.qmd</text>
-<text x="795" y="362" text-anchor="middle" font-size="11.8" font-weight="normal" fill="#444">界面字体：只换界面，阅读器字体不变</text>
-<text x="795" y="379" text-anchor="middle" font-size="11.8" font-weight="normal" fill="#444">扩展：改导入表里 setFont 那一格</text>
-<text x="795" y="396" text-anchor="middle" font-size="11.8" font-weight="normal" fill="#444">qmd：改 Ark 设计令牌（正文 / 标题）</text>
-<text x="795" y="413" text-anchor="middle" font-size="11.8" font-weight="normal" fill="#444">开机读一次选择文件</text>
-<text x="795" y="432" text-anchor="middle" font-size="11.8" font-weight="bold" fill="#2f7d45">改完要整机重启</text>
-<polyline points="130,282 130,480" fill="none" stroke="#555" stroke-width="1.7"/>
-<polyline points="130,480 820,480" fill="none" stroke="#555" stroke-width="1.7"/>
-<polyline points="180,480 180,506" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#eo-m)"/>
-<polyline points="500,480 500,506" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#eo-m)"/>
-<polyline points="820,480 820,506" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#eo-m)"/>
-<text x="40" y="472" text-anchor="start" font-size="14" font-weight="bold" fill="#1a1a1a">不经 xovi、独立运行的工具</text>
-<rect x="30" y="506" width="300" height="132" rx="10" fill="#eef3fa" stroke="#4a72b0" stroke-width="1.6"/>
-<text x="180" y="528" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">lo-alias.sh（网关启动前跑）</text>
-<text x="180" y="550" text-anchor="middle" font-size="11.8" font-weight="normal" fill="#444">给 lo 和 usb1 挂 10.11.99.1</text>
-<text x="180" y="567" text-anchor="middle" font-size="11.8" font-weight="normal" fill="#444">不插 USB 时 xochitl 的 :80 上传口</text>
-<text x="180" y="584" text-anchor="middle" font-size="11.8" font-weight="normal" fill="#444">照样可达（传书、推送笔记本都靠它）</text>
-<text x="180" y="601" text-anchor="middle" font-size="11.8" font-weight="normal" fill="#444">幂等，失败不拦网关启动</text>
-<rect x="350" y="506" width="300" height="132" rx="10" fill="#f1edf9" stroke="#6d4ab0" stroke-width="1.6"/>
-<text x="500" y="528" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">font-serve 127.0.0.1:8792</text>
-<text x="500" y="550" text-anchor="middle" font-size="11.8" font-weight="normal" fill="#444">上传字体 → ~/.local/share/fonts</text>
-<text x="500" y="567" text-anchor="middle" font-size="11.8" font-weight="normal" fill="#444">fc-cache 只扫用户字体目录（10-09）</text>
-<text x="500" y="584" text-anchor="middle" font-size="11.8" font-weight="normal" fill="#444">重建 fonts.json（阅读字体菜单读）</text>
-<text x="500" y="601" text-anchor="middle" font-size="11.8" font-weight="normal" fill="#444">维护中文回退链；另管界面字体 shelf-ui/</text>
-<text x="500" y="618" text-anchor="middle" font-size="11.8" font-weight="normal" fill="#444">写 ui-font.json（界面字体选择）</text>
-<polyline points="620,506 620,496 560,496 560,412" fill="none" stroke="#6d4ab0" stroke-width="1.7" stroke-dasharray="5 4" marker-end="url(#eo-m)"/>
-<text x="552" y="444" text-anchor="end" font-size="11.5" font-weight="normal" fill="#6d4ab0">font-serve 写</text>
-<rect x="670" y="506" width="300" height="132" rx="10" fill="#f1edf9" stroke="#6d4ab0" stroke-width="1.6"/>
-<text x="820" y="528" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">wallpaper-serve 127.0.0.1:8793</text>
-<text x="820" y="550" text-anchor="middle" font-size="11.8" font-weight="normal" fill="#444">上传壁纸 → 先裁再缩放到 954×1696</text>
-<text x="820" y="567" text-anchor="middle" font-size="11.8" font-weight="normal" fill="#444">写 xochitl.conf 的 SleepScreenPath</text>
-<text x="820" y="584" text-anchor="middle" font-size="11.8" font-weight="normal" fill="#444">指向 current.png，每次休眠重读</text>
-<text x="820" y="601" text-anchor="middle" font-size="11.8" font-weight="normal" fill="#444">xochitl 休眠时读完它就轮换（inotify）</text>
-<rect x="30" y="660" width="940" height="100" rx="10" fill="#f2f2f4" stroke="#7a7a88" stroke-width="1.6" stroke-dasharray="6 4"/>
-<text x="46" y="682" text-anchor="start" font-size="13.5" font-weight="bold" fill="#1a1a1a">共用件</text>
-<text x="46" y="704" text-anchor="start" font-size="12.2" font-weight="normal" fill="#333">enhance/shared/  特征码扫描 + ARM64 trampoline 安装（C，编进 hl-snap.so，带 host 单测；ui-font.so 不用它，改的是导入表）</text>
-<text x="46" y="724" text-anchor="start" font-size="12.2" font-weight="normal" fill="#333">../rmsvc-core  两个 Web 服务共用的路径 / 注册表 / HTTP 基座；../packaging  host 侧部署编排（install-all.sh）</text>
-<text x="46" y="744" text-anchor="start" font-size="12.2" font-weight="normal" fill="#8a4b00">2026-09-30 已移除：手写优化 hw-stroke.so、电池刺客 battop（重跑 install-all 自动清掉设备残留，见白皮书 §03n）</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 790" font-family="Noto Sans SC, Noto Sans CJK SC, PingFang SC, sans-serif">
+<defs><marker id="ov-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#64748B"/></marker></defs>
+<rect width="100%" height="100%" fill="#FFFFFF"/>
+<text xml:space="preserve" x="600.0" y="36" font-size="18" font-weight="bold" fill="#1F2937" text-anchor="middle">系统增强线：各组件怎么接到设备上</text>
+<text xml:space="preserve" x="600.0" y="60" font-size="12" fill="#6B7280" text-anchor="middle">xochitl 进程里：两个 xovi 扩展 + 两个 qmd 补丁；进程外：两个 Web 服务 + 一个网络脚本；开关都在网关网页上</text>
+<rect x="30" y="88" width="250" height="66" rx="8" fill="#EFF6FF" stroke="#2563EB" stroke-width="1.5"/>
+<text xml:space="preserve" x="155.0" y="110" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="middle">浏览器</text>
+<text xml:space="preserve" x="155.0" y="131" font-size="12" fill="#1F2937" text-anchor="middle">https://&lt;设备IP&gt;/ → 管理 / 其他</text>
+<rect x="30" y="196" width="250" height="124" rx="8" fill="#EFF6FF" stroke="#2563EB" stroke-width="1.5"/>
+<text xml:space="preserve" x="44" y="218" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">gateway :443（网关）</text>
+<text xml:space="preserve" x="44" y="239" font-size="12" fill="#1F2937" text-anchor="start">/api/enhance/status · /qol</text>
+<text xml:space="preserve" x="44" y="258" font-size="12" fill="#1F2937" text-anchor="start">反代 /api/fonts → :8792</text>
+<text xml:space="preserve" x="44" y="277" font-size="12" fill="#1F2937" text-anchor="start">反代 /api/wallpapers → :8793</text>
+<text xml:space="preserve" x="44" y="296" font-size="12" fill="#1F2937" text-anchor="start">读 xochitl 的 /proc/&lt;pid&gt;/maps</text>
+<polyline points="155,154 155,194" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#ov-arr)"/>
+<rect x="330" y="106" width="320" height="92" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text xml:space="preserve" x="344" y="128" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">reading-qol.json</text>
+<text xml:space="preserve" x="344" y="149" font-size="12" fill="#1F2937" text-anchor="start">~/.local/share/cangjie-ime/（目录名是历史遗留）</text>
+<text xml:space="preserve" x="344" y="168" font-size="12" fill="#1F2937" text-anchor="start">hlSnapCjk · tapPageTurn · notesImportMdEnabled</text>
+<rect x="330" y="236" width="320" height="84" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text xml:space="preserve" x="344" y="258" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">ui-font.json</text>
+<text xml:space="preserve" x="344" y="279" font-size="12" fill="#1F2937" text-anchor="start">~/.local/share/shelf/ui-font.json</text>
+<text xml:space="preserve" x="344" y="298" font-size="12" fill="#1F2937" text-anchor="start">{sans, serif}，空串 = 用原生字体</text>
+<polyline points="280,232 305,232 305,152 328,152" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#ov-arr)"/>
+<text xml:space="preserve" x="296" y="184" font-size="11" fill="#6B7280" text-anchor="end">写</text>
+<rect x="700" y="84" width="470" height="380" rx="8" fill="none" stroke="#CBD5E1" stroke-width="1.5" stroke-dasharray="6 4"/>
+<text xml:space="preserve" x="714" y="106" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">xochitl 进程（启动时 xovi 加载扩展，qt-resource-rebuilder 打 qmd）</text>
+<rect x="720" y="116" width="430" height="92" rx="8" fill="#ECFDF5" stroke="#10B981" stroke-width="1.5"/>
+<text xml:space="preserve" x="734" y="138" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">hl-snap.so（xovi 扩展）</text>
+<text xml:space="preserve" x="734" y="159" font-size="12" fill="#1F2937" text-anchor="start">荧光笔划中文：划哪吸哪，不再吸整行</text>
+<text xml:space="preserve" x="734" y="178" font-size="12" fill="#1F2937" text-anchor="start">特征码找到目标函数，改写开头 20 字节（hook）</text>
+<text xml:space="preserve" x="734" y="197" font-size="12" fill="#1F2937" text-anchor="start">每次划线现读 hlSnapCjk（默认开）</text>
+<rect x="720" y="222" width="430" height="112" rx="8" fill="#ECFDF5" stroke="#10B981" stroke-width="1.5"/>
+<text xml:space="preserve" x="734" y="244" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">ui-font.so + ui-font-tokens.qmd</text>
+<text xml:space="preserve" x="734" y="265" font-size="12" fill="#1F2937" text-anchor="start">只换界面字体，阅读器字体不变</text>
+<text xml:space="preserve" x="734" y="284" font-size="12" fill="#1F2937" text-anchor="start">扩展：改导入表里 setFont 那一格（应用默认字体）</text>
+<text xml:space="preserve" x="734" y="303" font-size="12" fill="#1F2937" text-anchor="start">qmd：改 Ark 设计令牌（正文 / 标题）</text>
+<text xml:space="preserve" x="734" y="322" font-size="12" fill="#1F2937" text-anchor="start">都只在 xochitl 启动时读一次 → 整机重启生效</text>
+<rect x="720" y="348" width="430" height="96" rx="8" fill="#ECFDF5" stroke="#10B981" stroke-width="1.5"/>
+<text xml:space="preserve" x="734" y="370" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">reader-page-turn.qmd（源码在 shelf/xovi/）</text>
+<text xml:space="preserve" x="734" y="391" font-size="12" fill="#1F2937" text-anchor="start">单击屏幕左右各 7% 的边缘翻页</text>
+<text xml:space="preserve" x="734" y="410" font-size="12" fill="#1F2937" text-anchor="start">每次打开书读一次 tapPageTurn（默认关）</text>
+<polyline points="650,140 718,140" fill="none" stroke="#64748B" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#ov-arr)"/>
+<text xml:space="preserve" x="688" y="133" font-size="11" fill="#6B7280" text-anchor="end">现读</text>
+<polyline points="650,180 692,180 692,392 718,392" fill="none" stroke="#64748B" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#ov-arr)"/>
+<text xml:space="preserve" x="686" y="384" font-size="11" fill="#6B7280" text-anchor="end">开书读</text>
+<polyline points="650,278 718,278" fill="none" stroke="#64748B" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#ov-arr)"/>
+<text xml:space="preserve" x="688" y="271" font-size="11" fill="#6B7280" text-anchor="end">启动读</text>
+<polyline points="280,300 300,300 300,350 698,350" fill="none" stroke="#64748B" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#ov-arr)"/>
+<text xml:space="preserve" x="500" y="344" font-size="11" fill="#6B7280" text-anchor="middle">读 maps → 网页「已加载 / 未加载」徽章</text>
+<text xml:space="preserve" x="175" y="512" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">不经 xovi、独立运行（随 install-all 的 shelf 步安装）</text>
+<polyline points="155,320 155,490 965,490" fill="none" stroke="#64748B" stroke-width="1.5"/>
+<polyline points="155,490 155,522" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#ov-arr)"/>
+<polyline points="545,490 545,522" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#ov-arr)"/>
+<polyline points="965,490 965,522" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#ov-arr)"/>
+<rect x="30" y="524" width="250" height="130" rx="8" fill="#ECFDF5" stroke="#10B981" stroke-width="1.5"/>
+<text xml:space="preserve" x="44" y="546" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">lo-alias.sh</text>
+<text xml:space="preserve" x="44" y="567" font-size="12" fill="#1F2937" text-anchor="start">网关启动前（ExecStartPre）跑</text>
+<text xml:space="preserve" x="44" y="586" font-size="12" fill="#1F2937" text-anchor="start">给 lo、usb1 挂 10.11.99.1</text>
+<text xml:space="preserve" x="44" y="605" font-size="12" fill="#1F2937" text-anchor="start">不插 USB 时 xochitl 的 :80</text>
+<text xml:space="preserve" x="44" y="624" font-size="12" fill="#1F2937" text-anchor="start">上传口仍可达</text>
+<rect x="330" y="524" width="430" height="130" rx="8" fill="#ECFDF5" stroke="#10B981" stroke-width="1.5"/>
+<text xml:space="preserve" x="344" y="546" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">font-serve 127.0.0.1:8792</text>
+<text xml:space="preserve" x="344" y="567" font-size="12" fill="#1F2937" text-anchor="start">阅读字体 → ~/.local/share/fonts/</text>
+<text xml:space="preserve" x="344" y="586" font-size="12" fill="#1F2937" text-anchor="start">重写 fonts.json（字体菜单）与 fonts.conf（中文回退链）</text>
+<text xml:space="preserve" x="344" y="605" font-size="12" fill="#1F2937" text-anchor="start">界面字体 → fonts/shelf-ui/，选择写进 ui-font.json</text>
+<text xml:space="preserve" x="344" y="624" font-size="12" fill="#1F2937" text-anchor="start">装 / 删后跑一次 fc-cache（只扫用户字体目录）</text>
+<rect x="790" y="524" width="380" height="130" rx="8" fill="#ECFDF5" stroke="#10B981" stroke-width="1.5"/>
+<text xml:space="preserve" x="804" y="546" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">wallpaper-serve 127.0.0.1:8793</text>
+<text xml:space="preserve" x="804" y="567" font-size="12" fill="#1F2937" text-anchor="start">上传图 → 裁切缩放到 954×1696 入池</text>
+<text xml:space="preserve" x="804" y="586" font-size="12" fill="#1F2937" text-anchor="start">xochitl.conf 写 SleepScreenPath（只写一次）</text>
+<text xml:space="preserve" x="804" y="605" font-size="12" fill="#1F2937" text-anchor="start">xochitl 休眠时读完 current.png</text>
+<text xml:space="preserve" x="804" y="624" font-size="12" fill="#1F2937" text-anchor="start">→ 换成下一张（inotify，空闲零唤醒）</text>
+<polyline points="610,524 610,322" fill="none" stroke="#64748B" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#ov-arr)"/>
+<text xml:space="preserve" x="616" y="470" font-size="11" fill="#6B7280" text-anchor="start">写选择</text>
+<rect x="30" y="684" width="1140" height="84" rx="8" fill="none" stroke="#CBD5E1" stroke-width="1.5" stroke-dasharray="6 4"/>
+<text xml:space="preserve" x="46" y="708" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">共用件（不单独部署）</text>
+<text xml:space="preserve" x="46" y="730" font-size="12" fill="#1F2937" text-anchor="start">enhance/shared/：C 写的特征码扫描、远跳转跳板、PC 相对指令检查、极简 JSON 读取 minijson —— hl-snap 全用，ui-font 只用 minijson</text>
+<text xml:space="preserve" x="46" y="752" font-size="12" fill="#1F2937" text-anchor="start">rmsvc-core：两个 Web 服务共用的 HTTP、路径、目录监听基座　·　packaging/：host 侧部署编排（install-all.sh）</text>
 </svg>

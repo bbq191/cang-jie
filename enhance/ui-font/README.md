@@ -10,9 +10,10 @@
 | qmd 补丁 `ui-font-tokens.qmd` | [`../../shelf/xovi/`](../../shelf/xovi/ui-font-tokens.qmd)（随 font 服务安装） | **Ark 设计令牌**（新版设置页、对话框、按钮等）：正文 `reMarkable Sans` → `sans`，标题 `reMarkable Serif Small` → `serif` |
 | font-serve 的界面字体仓库 | [`../font-serve/`](../font-serve/src/ui.rs) | 上传 / 删除界面字体、写选择文件；网页「其他 → xochitl → 界面字体」 |
 
-- **现状**：2026-10-07 已部署并整机重启，部署自检 38✓ 1⚠（刚开机）0✗；xochitl 日志确认扩展与 qmd 都生效（正文、标题都选了更纱黑体 UI SC）；用户在设备上确认书库、设置、对话框、标题都已是更纱，阅读时书里的中文仍是原来的字体（真机目测）。10-09 又部署了一版（带子进程拒绝加载日志的新措辞和下面的防递归检查）。
-- **2026-10-09 加了防递归检查**（已部署；当前固件触发不到，只有 host 单测验证）：原函数地址用 `dlsym` 取，非 PIE 固件如果取过 setFont 的地址会拿到 xochitl 自己的 PLT 桩、经改过的导入槽递归回来；现在 dlsym 结果落在主程序里就拒绝加载。当前固件不触发。详见白皮书 §03p「已知风险」。
-- 原理、为什么这样做、怎么保证不影响阅读：[白皮书 §03o](../docs/reMarkable系统增强线白皮书.md)。
+- **现状**：2026-10-07 已部署并整机重启，部署自检 38✓ 1⚠（刚开机）0✗；xochitl 日志确认扩展与 qmd 都生效（正文、标题都选了更纱黑体 UI SC）；用户在设备上确认书库、设置、对话框、标题都已是更纱，阅读时书里的中文仍是原来的字体（真机目测）。10-09 13:48 又部署了一版（md5 `21cda291…`，带下面的防递归检查和新的子进程拒绝加载日志措辞）。
+- **2026-10-09 加了防递归检查**（已部署；当前固件触发不到，只有 host 单测验证）：原函数地址用 `dlsym` 取，非 PIE 主程序如果取过 setFont 的地址会拿到 xochitl 自己的 PLT 桩、经改过的导入槽递归回来；现在 dlsym 结果落在主程序里就拒绝加载。3.28.0.172 的 xochitl 是非 PIE，但没取过 setFont 的地址，不触发。
+- **2026-10-10（未部署）**：读 `ui-font.json` 改用 `../shared/minijson`（与 hl-snap 共用，以本扩展原来那份的字符串规则为准）；重编后 md5 `c294752f…`，动态符号最高仍 `GLIBC_2.34`。扁平的 `ui-font.json` 读出的结果与旧版相同。
+- 原理、为什么这样做、怎么保证不影响阅读：[白皮书 3.3 节](../docs/reMarkable系统增强线白皮书.md#33-ui-font界面字体)；真机验证记录在白皮书第 7 章。
 
 ## 不影响阅读
 
@@ -28,10 +29,10 @@
 
 ```sh
 make aarch64   # 产物 ui-font.so（已提交进仓库）
-make test      # host（x86_64）：配置解析 + 导入表改写（懒绑定 / BIND_NOW × PIE / 非 PIE）+ 防递归判定 + 真实 Qt 6 上走一遍 setFont 替换
+make test      # host（x86_64）：配置解析 + 导入表改写（懒绑定 / BIND_NOW × PIE / 非 PIE）+ 防递归判定 + 真实 Qt 6 上走一遍 setFont 替换（没有 Qt6Gui 开发包就跳过最后一项）
 ```
 
-不用 `../shared/` 的特征码扫描和跳板：`setFont` 开头第 3 条是 PC 相对的 `adrp`，搬进跳板会算错地址，所以改的是 xochitl 导入表（`.got.plt`）里的那一格，运行时按符号名从 `.rela.plt` 找，不写死地址。xovi 胶水 `xovi_glue.{c,h}` 与 hl-snap 的逐字节相同（`ui-font.xovi` 只有版本号）。
+只用 `../shared/` 的 `minijson`，不用它的特征码扫描和跳板：`setFont` 开头第 3 条是 PC 相对的 `adrp`，搬进跳板会算错地址，所以改的是 xochitl 导入表（`.got.plt`）里的那一格，运行时按符号名从 `.rela.plt` 找，不写死地址。xovi 胶水 `xovi_glue.{c,h}` 与 hl-snap 的逐字节相同（`ui-font.xovi` 只有版本号）。
 
 ## 部署
 
@@ -40,7 +41,7 @@ cd packaging && sh deploy-ui-font.sh <host>   # 构建 → 推送并 md5 校验 
 sh deploy.sh <host> --only font               # font-serve + 网页 + ui-font-tokens.qmd
 ```
 
-`install-all.sh` 里它是 `ui-font` 一步（只落盘，最后 `xovi-apply` 统一整机重启）。卸载：`uninstall-all.sh` 的 `ui-font` 步只摘 `.so`，不碰界面字体文件和选择文件（那是 shelf 的数据）。
+`install-all.sh` 里它是 `ui-font` 一步（只落盘，最后 `xovi-apply` 统一整机重启）。单独跑 `deploy-ui-font.sh` 时，xochitl 正在用旧版就先放进待换入区、整机重启时换入（与 hl-snap 同一套 `packaging/xovi-ext-install.sh`，见白皮书 3.8 节）。卸载：`uninstall-all.sh` 的 `ui-font` 步只摘 `.so`，不碰界面字体文件和选择文件（那是 shelf 的数据）。
 
 **验证装上了**：`journalctl -u xochitl | grep -E 'ui-font|SHELF-UI-FONT'`：
 
@@ -49,3 +50,5 @@ sh deploy.sh <host> --only font               # font-serve + 网页 + ui-font-to
 [ui-font] setFont(reMarkable Sans) → Sarasa UI SC        # 没选界面字体时是"没选界面字体，原样放行"
 SHELF-UI-FONT: sans=Sarasa UI SC serif=…
 ```
+
+xochitl 拉起的短命子进程也会被 xovi 加载扩展，日志里的 `_xovi_shouldLoad: 本进程不导入 QGuiApplication::setFont（不是 xochitl 主程序…）→ 拒绝加载` 属正常。

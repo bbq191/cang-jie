@@ -1,13 +1,13 @@
 # shared —— xovi 扩展的 hook 基础设施（C）
 
-`hl-snap` 靠"找到 xochitl 里的某个函数 → 改写它的开头跳到自己的代码"来工作，这套基础设施放在这里，它的 `Makefile` 用 `SHARED_DIR` 指向本目录（2026-10-10 前叫 `LANGHOOK_SRC_DIR`，是从 chinese-ime/langhook 搬来时的旧名）。原先 `handwriting-stroke`（手写优化，`hw-stroke.so`）也用这一份；它 **2026-09-30 已移除**，下面提到它的段落是历史记录。这里的源码仍被 hl-snap 编进 `hl-snap.so`，没有只给 hw-stroke 用的文件，所以一个也没删（源码里提到 `hw_stroke.c` 的注释也保留不改：扩展带 `-g` 编译，动注释会改变行号调试信息，进而改变 `hl-snap.so` 的 md5）。整个流程的图解见白皮书 §02（[`../docs/diagrams/xovi-hook-lifecycle.svg`](../docs/diagrams/xovi-hook-lifecycle.svg)）。
+`hl-snap` 靠"找到 xochitl 里的某个函数 → 改写它的开头跳到自己的代码"来工作，这套基础设施放在这里，它的 `Makefile` 用 `SHARED_DIR` 指向本目录（2026-10-10 前叫 `LANGHOOK_SRC_DIR`，是从 chinese-ime/langhook 搬来时的旧名）。原先 `handwriting-stroke`（手写优化，`hw-stroke.so`）也用这一份；它 **2026-09-30 已移除**，下面提到它的段落是历史记录。这里的源码仍被 hl-snap 编进 `hl-snap.so`，没有只给 hw-stroke 用的文件，所以一个也没删（源码里提到 `hw_stroke.c` 的注释也保留不改：扩展带 `-g` 编译，动注释会改变行号调试信息，进而改变 `hl-snap.so` 的 md5）。整个流程的图解见白皮书 3.1 节（[`../docs/diagrams/xovi-hook-lifecycle.svg`](../docs/diagrams/xovi-hook-lifecycle.svg)）。
 
 | 文件 | 做什么 |
 |---|---|
 | `scan.c/.h` | `cj_find_exec_module`：读 `/proc/self/maps`，找到 `/usr/bin/xochitl` 的可执行段（连同被 `mprotect` 切开的续段，见下节） |
 | `pattern.c/.h` | `cj_find_unique_pattern`：在段里搜特征码（目标函数开头 32~40 字节的原始机器码），**必须恰好命中 1 处**。精确匹配先用 `memchr` 跳到首字节候选再整段比较（2026-09-24，16 MB 扫描 39.6 → 3.2 ms，与逐字节循环差分对拍一致） |
 | `trampoline_aarch64.c/.h` | `cj_build_far_jump`：拼一条跳到任意 64 位地址的 ARM64 远跳转（20 字节） |
-| `trampoline_patch.c/.h` | `cj_patch_target`：先从 `/proc/self/maps` 记下目标页原权限 → mprotect 成 RWX → 把开头 20 字节抄进新分配的"调用桩"并接上跳回原函数的远跳转 → 把目标开头改写成跳到 handler → 刷指令缓存 → 原本是 `r-x` 的页恢复成 `r-x`（2026-10-09 起；原本就可写、跨两页权限不一致或查不到时保持 RWX）。任一步失败返回 0、不改任何字节；调用桩分配失败时也把页恢复成原权限（2026-10-09 补）。2026-10-10 起被覆盖的指令里有 PC 相对寻址（`cj_insn_pc_relative`，在 `trampoline_aarch64.c`）也放弃，同样恢复页权限。详见白皮书 §03p「已知风险」#2 |
+| `trampoline_patch.c/.h` | `cj_patch_target`：先从 `/proc/self/maps` 记下目标页原权限 → mprotect 成 RWX → 把开头 20 字节抄进新分配的"调用桩"并接上跳回原函数的远跳转 → 把目标开头改写成跳到 handler → 刷指令缓存 → 原本是 `r-x` 的页恢复成 `r-x`（2026-10-09 起；原本就可写、跨两页权限不一致或查不到时保持 RWX）。任一步失败返回 0、不改任何字节；调用桩分配失败时也把页恢复成原权限（2026-10-09 补）。2026-10-10 起被覆盖的指令里有 PC 相对寻址（`cj_insn_pc_relative`，在 `trampoline_aarch64.c`）也放弃，同样恢复页权限。详见白皮书 3.1 节「三道代码层防线」 |
 | `minijson.c/.h` | `cj_json_get_bool` / `cj_json_get_string`：只读顶层对象里某个键的值（hl-snap 读 `hlSnapCjk`、ui-font 读 `sans`）。2026-10-10 从两个扩展各自的 `strstr` 扫描收进来，以 ui-font 那份的字符串规则为准；符号 hidden，不随 `.so` 导出 |
 | `tests/` | host 单测：`make test` |
 
@@ -15,7 +15,7 @@
 
 每装一个 hook，`mprotect` 都会把目标所在的那一页从 xochitl 的代码段里切出来（`r-xp` / `rwxp` / `r-xp`）。`cj_find_exec_module` 原先找到**第一行**匹配的可执行映射就返回，于是"第一段"只到最低的已 patch 页之前为止：**后装 hook 的扩展只能找到地址低于已 patch 页的目标**。09-24 真机两个扩展都装上了，是因为顺序恰好是 hw-stroke（`0xf47530`、`0xf4c8d0`）先、hl-snap（`0xf03670`）后；反过来 hw-stroke 会在 `_xovi_construct` 里静默装不上。
 
-现在找到第一段后，把紧随其后、同一路径、地址首尾相接、可读可执行（`r-xp` 或 `rwxp`）的续段一并算进来。host 单测用真内核复现了切段（私有映射一个文件再 `mprotect` 中间一页，旧实现只返回第一段、新实现返回整段）；`_xovi_construct` 找不到目标时也改为打日志。两个都改代码段的扩展反序加载的场景没在真机上跑过（xovi 的加载顺序依据也没核实）。现装的 hl-snap 与 ui-font 不受影响：ui-font 只改导入表、不用这里的扫描，两者无顺序依赖（2026-10-09 核实），见白皮书 §04、§05。
+现在找到第一段后，把紧随其后、同一路径、地址首尾相接、可读可执行（`r-xp` 或 `rwxp`）的续段一并算进来。host 单测用真内核复现了切段（私有映射一个文件再 `mprotect` 中间一页，旧实现只返回第一段、新实现返回整段）；`_xovi_construct` 找不到目标时也改为打日志。两个都改代码段的扩展反序加载的场景没在真机上跑过（xovi 的加载顺序依据也没核实）。现装的 hl-snap 与 ui-font 不受影响：ui-font 只改导入表、不用这里的扫描，两者无顺序依赖（2026-10-09 核实），见白皮书 5.4 节、第 7 章。
 
 ## 来源
 
