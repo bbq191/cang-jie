@@ -264,7 +264,9 @@ sh verify-on-device.sh --from d.txt        # 不连设备，离线重判存下�
 - 设备上被覆盖的旧文件统一备份进 `/home/root/cangjie-backups/`。**绝不留在 `extensions.d/` 里**——xovi 把该目录下任意文件当扩展加载，同名重复注册是致命错误（2026-08-15 踩过）。单文件备份名 `<basename>.bak.pre-<时间戳>`，目录型（shelf）`shelf-<时间戳>/`。
 - 只保留最近 5 份（`CJ_BACKUP_KEEP`），只轮转脚本自己生成的严格时间戳命名备份；单文件超过 64MB（`CJ_BACKUP_MAXBYTES`）不自动删；手工命名的备份与用户数据一律不碰；全程无 `rm -rf`。
 - **内容没变就不备份、不重启服务**（`cj_backup_if_differs` 用 `cmp` 对拍）。否则重复部署 5 次，就会把真正有价值的旧版本挤出"最近 5 份"。
-- **改 rootfs 一律走 `devlib.sh` 的两个窗口函数**：写 `/usr` 用 `cj_with_rootfs_rw`，改 `/etc` 的下层（rootfs 里的 `/etc`，`chrony-cn` / `timezone-cn`）用 `cj_etc_lower_edit NAME FUNC`（10-10 收进库，此前两脚本各自内联一份）：remount rw → bind `/` 到 `${CJ_TMPDIR:-/tmp}/NAME.rootbind` → 在当前 shell 跑 FUNC → sync → 卸 bind → remount ro（busy 重试 5 次）；FUNC 失败、`exit`、被信号打断（含 ssh 断开的 SIGPIPE）都会卸 bind、恢复 ro；dm-verity 激活返回 3、什么都不动。模拟测试的静态守卫只允许 `remount,rw` 出现在 `devlib.sh`。
+- **改 rootfs 一律走 `devlib.sh` 的两个窗口函数**：写 `/usr` 用 `cj_with_rootfs_rw`，改 `/etc` 的下层（rootfs 里的 `/etc`，`chrony-cn` / `timezone-cn`）用 `cj_etc_lower_edit NAME FUNC`（10-10 收进库，此前两脚本各自内联一份）：remount rw → bind `/` 到 `${CJ_TMPDIR:-/tmp}/NAME.rootbind` → 在当前 shell 跑 FUNC → sync → 卸 bind → remount ro（busy 重试 5 次）；FUNC 失败、`exit`、被信号打断（含 ssh 断开的 SIGPIPE）都会卸 bind、恢复 ro；dm-verity 激活返回 3、什么都不动。模拟测试的静态守卫只允许 `remount,rw` 出现在 `devlib.sh`。两个窗口函数都**先挂 trap、再 remount rw**（10-10 起；以前反过来，信号恰好落在两者之间时 rootfs 留在 rw）；绑定点已是符号链接时 `cj_etc_lower_edit` 拒绝使用、什么都不碰。`chrony-cn` 同步 overlay 当前视图时直接从绑定点拷，不再经 `/tmp/chrony-cn.lower` 这个固定名中转。
+- **中途失败/被打断后重跑即收敛**（10-10 起，设备端）：`cj_safe_replace` / `cj_so_stage` 先回收上次中断留下的 `.<名>.new.<pid>` 暂存文件（shelf 二进制就暂存在 `~/.local/bin` 本目录，以前一次中断留一份十几 MB）；`shelf/install.sh` 重启服务的判据加一条"主进程跑的还是被替换掉的旧二进制"（`/proc/<MainPID>/exe` 以 ` (deleted)` 结尾）——上一轮换了二进制却没走到重启（写单元失败、ssh 断开）时，旧版重跑因二进制已相同而再也不重启它；qmd 换上一份就当场记 `shelf-qmd` 待生效标记，不等全部写完（以前中途写失败退出，已换上的 qmd 没有标记，重跑后 `xovi-apply` 判"无需生效"）；`--password` 重装时即使二进制没变也重启网关（`gateway passwd` 只改配置，网关重启才读到）。
+- **生成文件的权限不随调用方 umask 走**（10-10 起）：`shelf/install.sh`、`xovi-ext-install.sh`、`chrony-cn.sh`、`timezone-cn.sh` 开头 `umask 022`；`chrony.conf` 改写后显式 `chmod 644`。`devlib.sh` 被 source 进调用方，不改 umask。含密码哈希、TLS 私钥的文件由各服务自己按 0600 写。
 - **写 `/usr` 前先过 dm-verity 门**（`deploy-usr-unit.sh`；09-30 前 `battop` 的设备端 `install.sh` 同一规则，battop 已移除）。verity 激活时：该单元**从没装过** → 什么都不写，汇总记"前置条件不满足"；**以前装过** → `/usr` 里的单元不动，`/home` 下的脚本或二进制照常更新，内容真有变化、且该单元应在运行（`wifi-watch`）或正在运行（`battop`）时 `systemctl restart` 它，让它用上新版。`battop` 这一支 2026-09-25 前直接退出，在跑的服务一直用旧二进制。
 
 ## 开机启动顺序（2026-09-24）
@@ -331,6 +333,7 @@ shellcheck --severity=warning --shell=sh packaging/tests/stubs/*   # 测试桩�
 - `chrony-cn` / `timezone-cn`：非 overlay 与 verity 路径；overlay 路径只测"写底层失败 → 报错退出、不说已改、最后恢复 ro"（改写成功那一支只能真机验证）。`chrony-boot-wakelock` 收到 TERM 后几秒内退出并放锁。`xovi-reenable` 的 `ExecCondition` 三种情形。
 - ssh 往返次数：`hl-snap` 首次部署 4 次 ssh + 4 次 scp（旧版 13 次 ssh），载荷没变的重复部署 3 次 ssh + 0 次 scp（2026-09-30）；整轮 `install-all` 只一次 `ssh true`；合批推送时只删 md5 对不上的那个暂存文件。
 - 移除 battop / hw-stroke（09-30）：旧设备上两样的残留经 `uninstall-all`（只留这两步）清干净、`hl-snap` 与 `reading-qol.json` 不动、不停/不重启 xochitl、记待生效标记；`install-all` 自动清并只整机重启一次、再部署不再动；`--skip handwriting-stroke`；xovi 未生效时不记标记；dm-verity 下保留 battop 目录；battop 目录是符号链接时拒绝删；verify 报 ⚠ 并给清理命令；退役步骤都有卸载函数、不再有安装脚本映射。
+- 设备端加固（10-10，`tests/sim_dev.sh`）：两个 rw 窗口在"remount rw 刚成功"时被 TERM 仍恢复 ro、绑定点是符号链接时拒绝、暂存残留回收、shelf 重跑重启仍跑旧二进制的服务（及反例：跑的就是当前二进制则不重启）、只改密码也重启网关、qmd 写到一半失败已记标记、`umask 000` 下 shelf/hl-snap/chrony/timezone 生成文件不全局可写、chrony 不跟随 `/tmp` 下预置的符号链接、改 `/etc` 视图失败如实退出非 0。
 - 第六轮审计补的分支（10-09）：设备端脚本整组传输（断在半截不执行、子命令不吃脚本）、唤醒锁的拿/放与"被编排时不重复拿"、没有 xovi 也没有 `xovi/start` 时报错不重启、单元只缺 `.wants` 链接时不重复备份、dm-verity 下单元已最新如实报告、shelf 卸载删 qmd 记 `shelf-qmd` 标记、verify 的侧栏清理命令由步骤表算出。
 - 第五轮审计补的分支（09-30）：卸载遇到非空载荷目录不中断、`wifi-watch` 状态文件与 `battop.timer` 清理、`--purge` 不谎报、`--skip sidebar-entry` 不误报、verify 的退役遗留 ⚠/✗。
 - 第四轮审计补的分支：`systemctl reboot` 失败（不空等、补回标记）、`battop` 在 dm-verity 下的两支、直接装扩展时撤掉过时的待换入版本。
@@ -386,6 +389,7 @@ shellcheck --severity=warning --shell=sh packaging/tests/stubs/*   # 测试桩�
 
 ### 没有真机验证（只有本机模拟或代码审查）
 
+- **2026-10-10 设备端加固（全部只有本机模拟）**：rw 窗口先挂 trap 再 remount、绑定点符号链接守卫、暂存残留回收、`/proc/<pid>/exe` 带 `(deleted)` 时重启服务（**需真机确认 busybox `readlink` 读 `/proc/<pid>/exe` 的输出带 ` (deleted)` 后缀**）、qmd 当场记标记、只改密码重启网关、`umask 022`、chrony 不经 `/tmp` 中转直接从绑定点同步 overlay 视图。
 - **2026-10-09 第六轮审计的脚本改动中没在真机走到的分支**：断在半截不执行、ssh 断线判定、唤醒锁到点自动释放、无 xovi 时报错不重启、单元只缺链接不重复备份、dm-verity 下"已是最新"、`xovi/start` 路径健康检查核对 ui-font、shelf 卸载记 `shelf-qmd` 标记。只有本机模拟（371 项）与代码审查。正常路径（整组传输、保活、拿放唤醒锁、按 `hl-snap.so` / `ui-font.so` 判加载、合并后的汇总）随 10-09 两轮真机 `install-all` 跑过，见上表。
 
 - **生效判定的"不重启"一侧**：`xovi-apply` 无标记时跳过、`--force-apply` / `--force`、单独部署无变化不重启。

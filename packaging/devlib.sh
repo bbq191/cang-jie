@@ -116,11 +116,17 @@ cj_rootfs_restore() {
 # 约束：① 会清掉调用方的 EXIT/INT/TERM/HUP trap（设备端脚本本来不设）；② 不要把它放进 `if`/`||` 上下文里
 # 指望 set -e 生效——CMD 里请用显式 `|| return 1` 链；③ 写 /usr 之前先自行过 cj_verity_active 门。
 cj_with_rootfs_rw() {
-    mount -o remount,rw / || { echo "!! remount rw / 失败"; return 1; }
+    # 先挂 trap、置标记，再 remount rw（2026-10-10）：旧写法先 remount 后挂 trap，信号恰好落在两者之间时 shell 按默认
+    # 处置直接退出，rootfs 留在 rw。反过来（标记置了、remount 还没成）被打断只是多一次无害的 remount ro。
     CJ_RW_ACTIVE=1
     trap 'cj_rootfs_restore' EXIT
     # PIPE 也要接住：经 ssh 跑时连接断了，下一次输出就是 SIGPIPE，默认处置直接杀 shell、EXIT trap 不会执行
     trap 'cj_rootfs_restore; exit 143' INT TERM HUP PIPE
+    if ! mount -o remount,rw /; then
+        CJ_RW_ACTIVE=0   # rw 没开成：rootfs 仍是 ro，不去 remount ro
+        trap - EXIT INT TERM HUP PIPE
+        echo "!! remount rw / 失败"; return 1
+    fi
     ( set -e; "$@" )
     cj_rc=$?
     sync
@@ -169,10 +175,21 @@ cj_etc_lower_edit() {
         return 3
     fi
     CJ_LOWER="${CJ_TMPDIR:-/tmp}/$cj_el_name.rootbind"
-    mount -o remount,rw / || { echo "!! remount rw / 失败"; return 1; }
+    # 绑定点名字是固定的：它若已是符号链接（不是本函数建的），mkdir -p / mount --bind / umount 都会跟着链接走到别处——
+    # 动手前拒绝，什么都不碰（2026-10-10）
+    if [ -L "$CJ_LOWER" ]; then
+        echo "!! 绑定点 $CJ_LOWER 是符号链接，拒绝使用（请手动核对后删掉它）"
+        CJ_LOWER=""; return 1
+    fi
+    # 先挂 trap、置标记，再 remount rw（同 cj_with_rootfs_rw：免得信号落在两者之间时 rootfs 留在 rw）
     CJ_RW_ACTIVE=1
     trap 'cj_etc_lower_cleanup' EXIT
     trap 'cj_etc_lower_cleanup; exit 143' INT TERM HUP PIPE
+    if ! mount -o remount,rw /; then
+        CJ_RW_ACTIVE=0
+        trap - EXIT INT TERM HUP PIPE
+        echo "!! remount rw / 失败"; return 1
+    fi
     # 先置标记再 bind：信号恰好落在"bind 已成功、标记还没置"之间时，旧写法会漏卸 bind、remount ro 必 busy；
     # 反过来（标记置了、bind 没成）只是多一次无害的 umount 失败
     CJ_BIND_ACTIVE=1
@@ -192,6 +209,15 @@ cj_etc_lower_edit() {
 }
 
 # ── 原子替换（M4）─────────────────────────────────────────────────────────
+# cj_stale_tmp_clean DIR NAME：删掉 DIR 下上一次被打断（ssh 断开、Ctrl-C、断电）时留下的 .NAME.new.<pid> 暂存文件
+# （2026-10-10）。暂存名带 pid、互不覆盖，旧版不清：shelf 的二进制就暂存在 ~/.local/bin 本目录，一次中断留一份
+# 十几 MB 的残留，重跑也不会回收。只删常规文件，不跟符号链接。
+cj_stale_tmp_clean() {
+    for cj_stl in "$1/.$2.new."*; do
+        if [ -f "$cj_stl" ] && [ ! -L "$cj_stl" ]; then rm -f "$cj_stl"; fi
+    done
+    return 0
+}
 # cj_safe_replace SRC DST [STAGE_DIR] [MODE]：cp 到暂存文件 → chmod → rename 覆盖 DST。
 # STAGE_DIR 缺省 DST 同目录；DST 在 extensions.d 一类"目录下任何文件都会被当扩展加载"的地方时，
 # 必须传一个 extensions.d 之外、同分区的暂存目录（如 $CJ_STAGE_DIR），否则中途崩溃会在里面留半成品。
@@ -202,6 +228,7 @@ cj_safe_replace() {
     cj_src=$1; cj_dst=$2; cj_stage=${3:-$(dirname "$cj_dst")}; cj_mode=${4:-755}
     CJ_REPLACED=0
     [ -f "$cj_src" ] || { echo "!! cj_safe_replace：源不存在 $cj_src"; return 1; }
+    cj_stale_tmp_clean "$cj_stage" "$(basename "$cj_dst")"   # 内容没变时也回收（上次中断后载荷又改回来的情形）
     if [ -f "$cj_dst" ] && cmp -s "$cj_src" "$cj_dst"; then
         chmod "$cj_mode" "$cj_dst" 2>/dev/null || true
         return 0
@@ -401,6 +428,7 @@ cj_uninstall_usr_unit() {
 # cj_so_stage SRC：把 SRC 放进待换入区（同名覆盖旧的待换入版本）
 cj_so_stage() {
     mkdir -p "$CJ_SO_PENDING_DIR" || return 1
+    cj_stale_tmp_clean "$CJ_SO_PENDING_DIR" "$(basename "$1")"
     cj_tmp="$CJ_SO_PENDING_DIR/.$(basename "$1").new.$$"
     if cp "$1" "$cj_tmp" && mv -f "$cj_tmp" "$CJ_SO_PENDING_DIR/$(basename "$1")"; then return 0; fi
     rm -f "$cj_tmp"

@@ -1385,6 +1385,8 @@ echo '{"state":"portal"}' > "$WW/state.json"; rm -f "$WW/sys/wlan0/carrier"; : >
 WW_STATE="$WW" PATH="$WSTUB:$PATH" SYSFS="$WW/sys" INTERVAL=0 TICKS=2 WIFI_WATCH_CONF="$WW/conf" STATE_FILE="$WW/state.json" sh "$PKG/wifi-watch/wifi-watch.sh" >/dev/null 2>&1
 check "wifi-watch 上网探测：WiFi 关了（读不到 carrier）→ 删掉状态文件、不探" test ! -e "$WW/state.json" -a ! -s "$WW/calls"
 
+# shellcheck source=packaging/tests/sim_dev.sh
+. "$HERE/sim_dev.sh"   # 设备端安装/卸载脚本加固（2026-10-10）
 # 守卫：真实 HOME 下不该出现任何测试产物
 GUARD_AFTER="$(guard_sig)"
 check "真实 HOME 未被测试触碰（shelf/cangjie-backups/.stage/载荷目录等：无新增、无删除、原有的 mtime 不变）" test "$GUARD_BEFORE" = "$GUARD_AFTER"
