@@ -183,7 +183,7 @@ impl Xochitl {
 
     /// 同 [`Self::upload_large_file`]，目标文件夹用 [`Folder`]（根 / uuid）给。
     pub fn upload_large(&self, path: &Path, filename: &str, content_type: &str, folder: &Folder, placeholder: &[u8], pdf_pages: Option<usize>) -> Result<String, String> {
-        let ext = filename.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+        let ext = crate::formats::ext_of(filename);
         if ext != "epub" && ext != "pdf" {
             return Err("只有 EPUB/PDF 能走大文件通道".into());
         }
@@ -205,29 +205,23 @@ impl Xochitl {
             Err(ClaimError::Upload(e)) => return Err(e),
             Err(ClaimError::NotFound { .. }) => return Err("占位文档已上传，但 20 秒内没在书库里找到它（未替换成真文件）".into()),
         };
-        let tmp = dir.join(format!("{uuid}.{ext}.new"));
+        // 临时副本用 ScratchFile：出错 / panic 时自动删，不把几百 MB 的半成品留在书库目录里（隐藏名，xochitl 不当文档）。
+        let tmp = crate::fs::ScratchFile::new(&dir, &format!(".{uuid}."), &format!("{ext}.new"));
         let dest = dir.join(format!("{uuid}.{ext}"));
-        let fail = |e: String| {
-            let _ = std::fs::remove_file(&tmp);
-            format!("{e}（书库里可能留有占位文档「{filename}」，请手动删除）")
-        };
-        std::fs::copy(path, &tmp).map_err(|e| fail(format!("复制大文件失败: {e}")))?;
-        let got = std::fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0);
+        let fail = |e: String| format!("{e}（书库里可能留有占位文档「{filename}」，请手动删除）");
+        std::fs::copy(path, tmp.path()).map_err(|e| fail(format!("复制大文件失败: {e}")))?;
+        let got = std::fs::metadata(tmp.path()).map(|m| m.len()).unwrap_or(0);
         if got != want_len {
             return Err(fail(format!("复制后大小不符（{got} ≠ {want_len}）")));
         }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
-        }
+        crate::fs::set_mode(tmp.path(), 0o600);
         if ext == "epub" {
             let _ = std::fs::remove_file(dir.join(format!("{uuid}.pdf")));
             let _ = std::fs::remove_file(dir.join(format!("{uuid}.epubindex")));
         } else if let Some(n) = pdf_pages {
             rewrite_pdf_content(&dir, &uuid, n, want_len).map_err(fail)?;
         }
-        std::fs::rename(&tmp, &dest).map_err(|e| fail(format!("替换文件失败: {e}")))?;
+        std::fs::rename(tmp.path(), &dest).map_err(|e| fail(format!("替换文件失败: {e}")))?;
         Ok(uuid)
     }
 
@@ -262,9 +256,7 @@ fn rewrite_pdf_content(dir: &Path, uuid: &str, pages: usize, size: u64) -> Resul
     obj.insert("pages".into(), (0..pages).map(|_| serde_json::Value::String(uuid::Uuid::new_v4().to_string())).collect::<Vec<_>>().into());
     obj.insert("redirectionPageMap".into(), (0..pages).collect::<Vec<_>>().into());
     obj.insert("sizeInBytes".into(), size.to_string().into());
-    let tmp = dir.join(format!("{uuid}.content.new"));
-    std::fs::write(&tmp, serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?).map_err(|e| format!("写 .content 失败: {e}"))?;
-    std::fs::rename(&tmp, &path).map_err(|e| format!("替换 .content 失败: {e}"))
+    crate::fs::write_atomic(&path, serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?.as_bytes()).map_err(|e| format!("写 .content 失败: {e}"))
 }
 
 /// 流式发一份 multipart `/upload` 请求：`body`（文件内容，长度已知 `body_len`）不整体缓冲，
@@ -608,7 +600,8 @@ mod tests {
         assert_eq!(std::fs::read(lib.path().join(format!("{uuid}.epub"))).unwrap(), big_bytes, "占位必须被真文件替换");
         assert!(!lib.path().join(format!("{uuid}.pdf")).exists(), "占位的渲染缓存必须删掉，让 xochitl 重新渲染");
         assert!(!lib.path().join(format!("{uuid}.epubindex")).exists());
-        assert!(!lib.path().join(format!("{uuid}.epub.new")).exists(), "不留临时文件");
+        let leftovers: Vec<String> = std::fs::read_dir(lib.path()).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_string()).filter(|n| n.ends_with(".new") || n.ends_with(".tmp")).collect();
+        assert!(leftovers.is_empty(), "不留临时文件: {leftovers:?}");
     }
 
     /// 回归：两本大 PDF 同时走大文件通道（占位字节相同），各自认领到自己的条目、内容不串。

@@ -147,7 +147,7 @@ impl AssetUploadFlow {
         AssetUploadFlow { tmp_dir: dir }
     }
 
-    /// 清掉上次进程中途被杀留下的暂存半成品（`.<uuid>.<kind>.part`）。只在服务启动时调用（此时不可能有上传在进行），返回清掉几个。
+    /// 清掉上次进程中途被杀留下的暂存半成品（`.<pid>.<序号>.<kind>.part`；2026-10-10 前是 `.<uuid>.<kind>.part`，同样以 `.part` 结尾）。只在服务启动时调用（此时不可能有上传在进行），返回清掉几个。
     pub fn clean_stale(&self) -> usize {
         let Ok(rd) = std::fs::read_dir(&self.tmp_dir) else { return 0 };
         rd.flatten().filter(|e| e.file_name().to_string_lossy().ends_with(".part") && std::fs::remove_file(e.path()).is_ok()).count()
@@ -171,17 +171,20 @@ impl AssetUploadFlow {
                 out.push(UploadOutcome::fail(name, store.reject_message()));
                 continue;
             }
-            let staged = self.tmp_dir.join(format!(".{}.{}.part", uuid::Uuid::new_v4().simple(), store.kind()));
-            let outcome = match crate::multipart::receive_part_to(&staged, &mut part) {
+            // ScratchFile：install 失败或 panic 时暂存也会删掉（此前只在正常路径上手删）；名字仍以 `.part` 结尾，
+            // 进程被杀留下的由 [`Self::clean_stale`] 启动时清。
+            let staged_file = crate::fs::ScratchFile::new(&self.tmp_dir, ".", &format!("{}.part", store.kind()));
+            let staged = staged_file.path();
+            let outcome = match crate::multipart::receive_part_to(staged, &mut part) {
                 Err(e) => UploadOutcome::fail(name, format!("接收失败: {e}")),
                 Ok(0) => UploadOutcome::fail(name, "空文件"),
-                Ok(_) => match store.validate(&name, &staged).and_then(|_| store.install(&name, &staged)) {
+                Ok(_) => match store.validate(&name, staged).and_then(|_| store.install(&name, staged)) {
                     // 成功项的 name 用落地名（仓库可能改名 / 加前缀），回执与列表一致。
                     Ok(item) => UploadOutcome { message: store.success_message(&name, &item), name: item.name.clone(), ok: true, item: Some(item) },
                     Err(e) => UploadOutcome::fail(name, e),
                 },
             };
-            let _ = std::fs::remove_file(&staged);
+            drop(staged_file);
             out.push(outcome);
         }
         Ok(out)
