@@ -41,7 +41,7 @@ const routes = {
   '/api/mind/books/u1/entries/e1/ask': () => ({ok:false, message:'模型没配 key'}),
   '/api/notes/books/u1/sync': () => ({chapters:[]}),
   '/api/transcribe/status': () => ({failures:[]}),
-  '/api/books/staging': () => ({ok:true, items:[{name: evil, format:'epub', bytes:1000, mtime:1, delivered:{deliver:{status:'failed', message:'"><img src=x onerror=window.__xss=1>'}}}], freeBytes: 9e9}),
+  '/api/books/staging': () => ({ok:true, items:[{name: evil, format:'epub', bytes:1000, mtime:1, delivered:{deliver:{status:'failed', message:'"><img src=x onerror=window.__xss=1>'}}}, {name:'旧漫画.cbz', format:'other', bytes:10, mtime:1}], freeBytes: 9e9}),
   '/api/books/status': () => ({ok:true, xochitlFolders:[]}),
   '/api/session': () => ({ok:true, mustChange:false}),
   '/api/batch/status': () => ({running:false,total:0,done:0,queued:[],failed:[]}),
@@ -82,6 +82,9 @@ out.initialHits = await hits();
 out.xss = await page.evaluate(() => window.__xss);
 out.listText = await page.evaluate(() => (document.querySelector('#stglist')||{}).textContent || '');
 out.imgInjected = await page.evaluate(() => document.querySelectorAll('#stglist img').length);
+// 母版库里残留的非 EPUB/PDF 文件（book-serve 报 format:"other"）：徽章显示真实扩展名，不能冒充 EPUB；格式筛选项来自注入的 EXT.book
+out.fmtBadges = await page.evaluate(() => [...document.querySelectorAll('#stglist .badge.fmt')].map(b => b.textContent));
+out.fmtOptions = await page.evaluate(() => [...document.querySelectorAll('#stgfmt option')].map(o => o.value));
 // 代理放弃横幅：页面打开即显示，名字按文本显示；agent-failed 事件只重取这一个接口；「知道了」清空并移除横幅
 out.failBanner = await page.evaluate(() => { const b = document.querySelector('#agentfail'); return b ? {li: b.querySelectorAll('li').length, img: b.querySelectorAll('img').length, text: b.textContent} : null; });
 // WiFi 上不了外网横幅：打开即显示，SSID 按文本显示；× 关掉
@@ -208,6 +211,8 @@ await browser.close();
 console.log(JSON.stringify({ ...out, errs }, null, 1));
 assert.equal(out.xss, 0, '含 HTML 的文件名/错误文案不能执行脚本');
 assert.equal(out.imgInjected, 0, '不能注入 <img>');
+assert.deepEqual(out.fmtBadges, ['EPUB', 'CBZ'], 'format:"other" 不能显示成 EPUB');
+assert.deepEqual(out.fmtOptions, ['', 'epub', 'pdf'], '格式筛选项来自 EXT.book');
 assert.ok(out.failBanner && out.failBanner.li === 2 && out.failBanner.img === 0 && out.failBanner.text.includes('<img src=x'), '代理放弃横幅：两条、名字按文本显示');
 assert.deepEqual(out.failEventHits, [1, 0], 'agent-failed 事件只重取放弃记录，不刷母版库');
 assert.deepEqual(out.failAck, [1, false], '「知道了」清空服务端记录并移除横幅');
@@ -235,7 +240,7 @@ assert.equal(out.queueEventStagingHits, 0, '网关排队/进度事件不该全�
 assert.ok(out.queueEventBatchHits >= 1 && out.queueEventBatchHits <= 2, `排队事件应重取批量状态且合并，实际 ${out.queueEventBatchHits} 次`);
 assert.equal(out.hiddenHits, 0, '页面隐藏时不该刷新');
 assert.equal(out.afterVisible, 1, '可见后应补刷一次');
-assert.equal(out.searchImmediate, 1, '敲字后同一时刻不该立即重画（防抖）');
+assert.equal(out.searchImmediate, 2, '敲字后同一时刻不该立即重画（防抖，两本都还在）');
 assert.equal(out.searchAfter, 0, '防抖到点后过滤应生效');
 assert.ok(out.esUrl.includes('ka=60'), 'SSE 应带 ?ka=60 拉长心跳');
 assert.equal(out.esClosedWhileHidden, true, '页面隐藏超时后应断开 SSE');

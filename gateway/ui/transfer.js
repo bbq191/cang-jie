@@ -31,8 +31,7 @@ const stgNameOptions=items=>[...new Set(items.map(it=>stgTitle(it.name)).filter(
 const stgIsTodo=it=>!isBookDone(it);
 /* 一本书的徽章 HTML + 一条可见的状态文字（失败原因等）：格式/大小/落库记录/渲染自检/忙态。 */
 function stgBadges(it,busy){
-  // 母版库只收 EPUB/PDF（2026-09-18 起），格式就这两种
-  const fmt=it.format==='pdf'?'PDF':'EPUB';
+  const fmt=bookFmtLabel(it);
   const dv=it.delivered||{},stale=t=>t&&it.mtime&&t<it.mtime;
   // 只标「已加入 xochitl」：落库记录里历史上的 `koreader` 那条不再显示（2026-09-29 设备已卸载 KOReader）。
   const dl=dv.native?`<span class="badge on" title="${stale(dv.native)?T('transfer.staging.delivered.native.staleTitle'):T('transfer.staging.delivered.native.title')}">${T('transfer.staging.delivered.native.badge')}${stale(dv.native)?T('transfer.staging.staleSuffix'):''}</span>`:'';
@@ -98,7 +97,7 @@ function renderTransfer(sec){sec.innerHTML=`
       </div>
       <div class="small" id="stgfree"></div>
     </div>
-    <div class="stg-tools"><input type="text" id="stgq" list="stgnames" autocomplete="off" placeholder="${T('transfer.staging.searchPlaceholder')}" aria-label="${T('transfer.staging.searchAria')}"><datalist id="stgnames"></datalist><select id="stgfmt" aria-label="${T('transfer.staging.fmtFilterAria')}"><option value="">${T('transfer.staging.fmtAll')}</option><option value="epub">EPUB</option><option value="pdf">PDF</option></select></div>
+    <div class="stg-tools"><input type="text" id="stgq" list="stgnames" autocomplete="off" placeholder="${T('transfer.staging.searchPlaceholder')}" aria-label="${T('transfer.staging.searchAria')}"><datalist id="stgnames"></datalist><select id="stgfmt" aria-label="${T('transfer.staging.fmtFilterAria')}"><option value="">${T('transfer.staging.fmtAll')}</option>${EXT.book.map(e=>`<option value="${e}">${e.toUpperCase()}</option>`).join('')}</select></div>
     <div class="stg-chips" id="stgchips"></div>
     <div class="stg-selrow"><label class="toggle"><input type="checkbox" id="stgall"> <span id="stgalltxt"></span></label></div>
     <ul class="stg-list" id="stglist"></ul>

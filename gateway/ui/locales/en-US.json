@@ -478,5 +478,6 @@
   "notes.push.openMd": "Open the exported md",
   "stg.batch.waiting": "{n} queued book(s) will continue once book-serve is ready",
   "stg.bar.allBusy": "All selected books are busy; try deleting later",
-  "stg.dest.createFirst": "Click \"Create\" for the new folder first, or pick an existing destination"
+  "stg.dest.createFirst": "Click \"Create\" for the new folder first, or pick an existing destination",
+  "stg.fmt.other": "Other"
 }

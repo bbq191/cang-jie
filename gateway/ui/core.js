@@ -39,6 +39,11 @@ const currentLang=()=>LS.get('lang',(navigator.language||'').toLowerCase().start
 const EXT=__EXTS__, dot=l=>l.map(e=>'.'+e);
 const BOOK_EXT=dot(EXT.book), FONT_EXT=dot(EXT.font), IMG_EXT=dot(EXT.image);
 const up=l=>l.map(e=>e.toUpperCase()).join(' / ');
+/* 母版库一本书的格式徽章文字。book-serve 只认 EPUB/PDF，其余文件（格式收窄前留下的 .cbz 等）报 `format:"other"`——
+   此前这里写死"不是 pdf 就是 EPUB"，残留的 CBZ 也标成 EPUB（2026-10-10 修）。白名单里的格式照 EXT.book 显示；
+   其余显示文件真实扩展名，取不到扩展名才用"其他"。 */
+const bookFmtLabel=it=>{if(EXT.book.includes(it.format))return it.format.toUpperCase();
+  const m=/\.([^./]+)$/.exec(it.name||'');return m?m[1].toUpperCase():T('stg.fmt.other')};
 // 2026-09-18 起母版库只收 EPUB/PDF（网关只注入 EXT.book，见 rmsvc_core::formats 头注）——原来
 // 这里有个 FMT_TIERS() 分两档（原生/仅 KOReader）拼文案，两档收成一档后不再需要，删掉。
 // 响应不是合法 JSON（网关自身 502/504、反代错误页…）时，以前直接把裸状态码当 message 弹给用户
