@@ -13,14 +13,6 @@ use std::io::{self, Read};
 const CHUNK: usize = 64 * 1024;
 const MAX_HEADER: usize = 16 * 1024;
 
-/// 把一个 part（或任意 `Read`）流式写到 `dest` 文件，返回写入字节数（0＝空文件，是否算失败由调用方定）。
-/// 单点化"建文件 + io::copy"这块——AssetUploadFlow 与 book-serve 的 spool 落盘共用（各自再决定空文件/归档语义）。
-/// 错误不加前缀，调用方按场景包装（如 "接收失败: …"）。
-pub fn receive_part_to<R: Read>(dest: &std::path::Path, part: &mut R) -> Result<u64, String> {
-    let mut f = std::fs::File::create(dest).map_err(|e| e.to_string())?;
-    io::copy(part, &mut f).map_err(|e| e.to_string())
-}
-
 /// 从 Content-Type 里取 boundary。
 pub fn boundary_of(content_type: &str) -> Option<String> {
     let ct = content_type.trim();

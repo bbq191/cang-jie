@@ -82,8 +82,8 @@ fn router(st: &Arc<State>) -> Router {
         .get("/", bind(st, |s, _| Ok(Reply::ok(&serde_json::json!({"items": s.store.list(), "fontsDir": s.store.fonts_dir(), "index": s.store.json_path()})))))
         .post("/", bind(st, |s, r| {
             let b = r.multipart_boundary()?;
-            // run 的整体错误基本是 multipart 解析失败（请求体不对）→ 400；单个字体装不上记在回执逐项里。
-            let items = AssetUploadFlow::new(&s.paths).run(&s.store, &mut *r.body, &b).map_err(ApiError::bad)?;
+            // run 的整体错误：multipart 解析失败 → 400，暂存建不了 → 500（`asset::FlowError`）；单个字体装不上记在回执逐项里。
+            let items = AssetUploadFlow::new(&s.paths).run(&s.store, &mut *r.body, &b)?;
             let any_ok = asset::any_ok(&items);
             if any_ok {
                 s.store.fc_cache(); // 整批装完重建一次（不在 install 里逐个跑）
@@ -107,7 +107,7 @@ fn router(st: &Arc<State>) -> Router {
         .get("/ui", bind(st, |s, _| Ok(Reply::ok(&ui_status(s)))))
         .post("/ui", bind(st, |s, r| {
             let b = r.multipart_boundary()?;
-            let items = AssetUploadFlow::new(&s.paths).run(&s.ui_store, &mut *r.body, &b).map_err(ApiError::bad)?;
+            let items = AssetUploadFlow::new(&s.paths).run(&s.ui_store, &mut *r.body, &b)?;
             if asset::any_ok(&items) {
                 s.ui_store.fc_cache();
                 s.store.refresh_fontconfig();

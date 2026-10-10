@@ -188,9 +188,8 @@ fn staging_upload(st: &State, r: &mut Request<'_>) -> ApiResult {
     let boundary = r.multipart_boundary()?;
     // 不持 spool 锁：暂存名是随机的 `.<uuid>.book.part`，与 inbox 追平互不相干；真正会撞的"挑名 + 落地"
     // 由 `Staging` 内部的落名临界区串行化（见 `staging::Staging` 的 `land` 字段）。
-    // 上传流程整体失败几乎都是请求体不是合法 multipart（逐个文件的失败在回执里，不走这里）→ 400；基座这个接口只回字符串，
-    // 建暂存目录失败这种设备故障也会落进 400（极少见），要分开得基座给出错误种类。
-    let items = AssetUploadFlow::in_dir(st.spool.work()).run(&StagingStore(&st.staging), &mut *r.body, &boundary).map_err(ApiError::bad)?;
+    // 上传流程整体失败：请求体不是合法 multipart → 400，建暂存目录/文件失败 → 500（`asset::FlowError`）；逐个文件的失败在回执里。
+    let items = AssetUploadFlow::in_dir(st.spool.work()).run(&StagingStore(&st.staging), &mut *r.body, &boundary)?;
     if asset::any_ok(&items) {
         st.bus.publish(ev::AREA, ev::STAGING);
     }

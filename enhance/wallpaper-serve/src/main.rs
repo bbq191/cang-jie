@@ -119,8 +119,8 @@ fn router(st: &Arc<State>) -> Router {
             let b = r.multipart_boundary()?;
             // `?activate=1` 显式激活首张成功项；池里还没有当前图时也自动激活（上传即可用）。
             let want = r.q_flag("activate") || s.store.state().current.is_none();
-            // run 的整体错误基本是 multipart 解析失败（请求体不对）→ 400；单张图装不上记在回执逐项里。
-            let items = AssetUploadFlow::new(&s.paths).run(&*s.store, &mut *r.body, &b).map_err(ApiError::bad)?;
+            // run 的整体错误：multipart 解析失败 → 400，暂存建不了 → 500（`asset::FlowError`）；单张图装不上记在回执逐项里。
+            let items = AssetUploadFlow::new(&s.paths).run(&*s.store, &mut *r.body, &b)?;
             let mut activated = None;
             let mut changed = false;
             if want {
