@@ -1,13 +1,3 @@
-/* 母版库一本书是不是"已经不用管了"——给「已加入」筛选用：加入过 xochitl、不在处理中、最近一次加入没失败。
-   正在处理/失败态都不算"完成"，归进「未加入」（还需要用户看见）。以前"加入过 KOReader"的书（2026-09-29 设备卸掉
-   KOReader）不算完成。 */
-const isBookDone=it=>{
-  if(it.busy)return false;
-  const dv=it.delivered||{};
-  if(dv.deliver&&dv.deliver.status==='failed')return false;
-  return !!dv.native;
-};
-
 /* 母版库怎么用：三步走 + 收哪些格式 + 加入 xochitl 适合什么书（2026-09-29 起设备只剩 xochitl 一个阅读器，
    原来"两读器怎么选/拿不准放哪"两条随 KOReader 一起撤掉） */
 const GUIDE=()=>`<details class="cmp"><summary>${T('transfer.guide.summary')}</summary>
@@ -21,14 +11,14 @@ const GUIDE=()=>`<details class="cmp"><summary>${T('transfer.guide.summary')}</s
    完整名在 title 里）+ 一行徽章 + 状态/进度；行内没有按钮，操作（加入 xochitl / 下载 / 改名 / 删除）一律在勾选后的
    底部操作栏（用户 2026-09-20 定，别加回单条按钮）。批量走服务端队列
    （网关 `/api/batch`），关掉页面照跑。 */
-const stgClean=n=>{const s=n.replace(/\.(epub|pdf)$/i,'');return (s.split(' -- ')[0]||s).trim()};
-/* 搜索框的下拉建议：**书名 = 第一个 "-" 之前的内容**（用户 2026-09-20 指定）。"亂馬1⁄2 典藏版 - 07卷" → "亂馬1⁄2 典藏版"，
-   同一本书的多卷合成一条；选中后按名字包含匹配，正好筛出这本书的所有卷。 */
-const stgTitle=n=>stgClean(n).split('-')[0].trim();
-const stgNameOptions=items=>[...new Set(items.map(it=>stgTitle(it.name)).filter(Boolean))].map(n=>`<option value="${esc(n)}">`).join('');
+/* 列表里的显示名（`title`：去掉扩展名与 `-- 作者 -- hash` 尾巴）、搜索建议的分组名（`series`：title 再取第一个 "-" 之前，
+   用户 2026-09-20 指定，"亂馬1⁄2 典藏版 - 07卷" → "亂馬1⁄2 典藏版"，同一本书的多卷合成一条）、「已加入」判据（`done`：
+   加入过 xochitl、不在处理中、最近一次加入没失败）都由 book-serve 在每个条目上算好给出（2026-10-10 起；此前前端各写一份
+   `stgClean`/`stgTitle`/`isBookDone` 镜像，与后端规则只能靠人工同步）。 */
+const stgNameOptions=items=>[...new Set(items.map(it=>it.series).filter(Boolean))].map(n=>`<option value="${esc(n)}">`).join('');
 /* 「未加入」＝「已加入」的补集：还没加入过，或正在处理、上次加入失败（这些还需要用户看见，默认就停在这个筛选上）。
    两个筛选互补，数量加起来等于「全部」。 */
-const stgIsTodo=it=>!isBookDone(it);
+const stgIsTodo=it=>!it.done;
 /* 一本书的徽章 HTML + 一条可见的状态文字（失败原因等）：格式/大小/落库记录/渲染自检/忙态。 */
 function stgBadges(it,busy){
   const fmt=bookFmtLabel(it);
@@ -53,7 +43,7 @@ function stgRow(it,ctx){
   const b=stgBadges(it,busy);
   const cb=el('input',{type:'checkbox','aria-label':it.name});cb.checked=ctx.picked.has(it.name);
   cb.onchange=()=>{if(cb.checked)ctx.picked.add(it.name);else ctx.picked.delete(it.name);li.classList.toggle('sel',cb.checked);ctx.syncSel()};
-  const title=el('div',{class:'stg-name',title:it.name,text:stgClean(it.name)});
+  const title=el('div',{class:'stg-name',title:it.name,text:it.title||it.name});
   const meta=el('div',{class:'stg-meta',html:b.html});
   const main=el('div',{class:'stg-main'},[title,meta]);
   if(b.msg)main.appendChild(el('div',{class:'small stg-err',text:b.msg}));
@@ -129,8 +119,10 @@ function renderTransfer(sec){sec.innerHTML=`
   // 筛选/分页状态。默认「未加入」（顶替原来"全部 + 隐藏已完成"的默认视图）；旧版存的「已优化」筛选（done）也回落到它。
   let st=['all','todo','finished'].includes(LS.get('stgSt','todo'))?LS.get('stgSt','todo'):'todo',page=1,pageSize=+LS.get('stgPageSize','25')||25;
   const filtered=()=>{const q=g('stgq').value.toLowerCase(),f=g('stgfmt').value;
-    return items.filter(it=>(!q||it.name.toLowerCase().includes(q))&&(!f||it.format===f)&&(st==='todo'?stgIsTodo(it):st==='finished'?isBookDone(it):true))};
+    return items.filter(it=>(!q||it.name.toLowerCase().includes(q))&&(!f||it.format===f)&&(st==='todo'?stgIsTodo(it):st==='finished'?it.done:true))};
   const batchTitle=a=>T('stg.batch.'+a);
+  // 批量状态里只有文件名（网关的队列不懂书名规则）：当前列表里查得到就用 book-serve 给的 title，查不到（已删/改名）显示原文件名。
+  const titleOf=name=>{const it=items.find(x=>x.name===name);return it&&it.title||name};
   const enqueue=async(action,body)=>{if(fsel.value===NEW){toast(T('stg.dest.createFirst'),'warn');return}
     const r=await postJ('/api/batch',{action,folder:xFolder(),...body});
     if(r.ok===false)return;
@@ -142,7 +134,7 @@ function renderTransfer(sec){sec.innerHTML=`
   g('stgall').onchange=()=>{const list=filtered();if(g('stgall').checked)list.forEach(it=>picked.add(it.name));else list.forEach(it=>picked.delete(it.name));render()};
   const renderChips=()=>{const chips=g('stgchips');chips.innerHTML='';
     // 三个筛选统一都带数量（数量 = 该筛选下的书本数）。
-    const cnt={all:items.length,todo:items.filter(stgIsTodo).length,finished:items.filter(isBookDone).length};
+    const cnt={all:items.length,todo:items.filter(stgIsTodo).length,finished:items.filter(it=>it.done).length};
     [['all','stg.chip.all'],['todo','stg.chip.todo'],['finished','stg.chip.finished']].forEach(([k,key])=>{
       chips.appendChild(btn(T(key,{n:cnt[k]}),()=>{st=k;LS.set('stgSt',k);page=1;render()},'chip'+(st===k?' on':'')))})};
   const renderPager=(total)=>{const box=g('stgpager');box.innerHTML='';if(total<=0)return;
@@ -172,7 +164,7 @@ function renderTransfer(sec){sec.innerHTML=`
       // 仍没等到 book-serve、队列留着待下次入队带起）——都如实说"在等"，不显示成"正在处理"。
       const waiting=!!bs.waitingService||(!bs.running&&bs.queued.length>0);
       const head=waiting?T('stg.batch.waiting',{n:bs.queued.length}):T('stg.batch.progress',{title:t,done:bs.done,total:bs.total});
-      const sub=(bs.current?' · '+T('stg.batch.current',{name:stgClean(bs.current)}):'')+(bs.failed.length?' · '+T('stg.batch.failedN',{n:bs.failed.length}):'');
+      const sub=(bs.current?' · '+T('stg.batch.current',{name:titleOf(bs.current)}):'')+(bs.failed.length?' · '+T('stg.batch.failedN',{n:bs.failed.length}):'');
       const p=el('progress');p.max=Math.max(1,bs.total);p.value=bs.done;
       const stop=btn(T('stg.batch.stopAll'),async()=>{const r=await postJ('/api/batch/stop',{});if(r.ok!==false)toast(T('stg.batch.stopped',{n:r.cleared||0}),'info');await refresh()},'btn btn-bad');
       bar.appendChild(el('div',{class:'stgbar-run'},[el('div',{class:'stgbar-main'},[el('b',{text:head}),el('span',{class:'small',text:sub})]),p,stop]));
@@ -209,7 +201,7 @@ function renderTransfer(sec){sec.innerHTML=`
     }else if(!live&&bs.total&&sig!==LS.get('stgDismissed','')){
       const fail=bs.failed.length;
       bar.appendChild(el('div',{class:'stgbar-main'},[el('span',{text:T('stg.batch.finished',{title:batchTitle(bs.action||'deliver'),ok:bs.done-fail,fail})})]));
-      if(fail)bar.appendChild(el('details',{class:'small stgbar-fails'},[el('summary',{text:T('stg.batch.failedN',{n:fail})}),el('div',{html:bs.failed.map(f=>`<div>${esc(T('common.labelValue',{label:stgClean(f.name),value:f.message}))}</div>`).join('')})]));
+      if(fail)bar.appendChild(el('details',{class:'small stgbar-fails'},[el('summary',{text:T('stg.batch.failedN',{n:fail})}),el('div',{html:bs.failed.map(f=>`<div>${esc(T('common.labelValue',{label:titleOf(f.name),value:f.message}))}</div>`).join('')})]));
       bar.appendChild(btn(T('stg.batch.dismiss'),()=>{LS.set('stgDismissed',sig);renderBar()}));
     }
     bar.hidden=!bar.children.length;

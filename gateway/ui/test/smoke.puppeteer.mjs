@@ -37,11 +37,11 @@ const routes = {
   '/api/fonts/ui': () => ({ok:true, items:[{name:'Sarasa UI SC', bytes:135000000, extra:{names:{cn:'更纱黑体 UI SC'}, cjkPct:100, files:['a.ttf','b.ttf','c.ttf']}}, {name:evil, bytes:1, extra:{cjkPct:0}}], sans:'Sarasa UI SC', serif:'', restartNeeded:true}),
   '/api/wallpapers': () => ({items:[]}), '/api/wallpapers/status': () => ({ok:true, mode:'sequential'}),
   '/api/ink/books': () => ({items:[{uuid:'u1', title:'书', entries:1}]}),
-  '/api/ink/books/u1': () => ({uuid:'u1', entries:[{id:'e1', status:'pending', chapter:0, page_index:0, destination:'both', style:'body', text:'hi', updated:1, ask_ai:true, question:'q'}]}),
+  '/api/ink/books/u1': () => ({uuid:'u1', entries:[{id:'e1', status:'pending', live:true, chapter:0, page_index:0, destination:'both', style:'body', text:'hi', updated:1, ask_ai:true, question:'q'}]}),
   '/api/mind/books/u1/entries/e1/ask': () => ({ok:false, message:'模型没配 key'}),
   '/api/notes/books/u1/sync': () => ({chapters:[]}),
   '/api/transcribe/status': () => ({failures:[]}),
-  '/api/books/staging': () => ({ok:true, items:[{name: evil, format:'epub', bytes:1000, mtime:1, delivered:{deliver:{status:'failed', message:'"><img src=x onerror=window.__xss=1>'}}}, {name:'旧漫画.cbz', format:'other', bytes:10, mtime:1}], freeBytes: 9e9}),
+  '/api/books/staging': () => ({ok:true, items:[{name: evil, title: evil.replace(/\.epub$/, ''), series: evil.replace(/\.epub$/, ''), done:false, format:'epub', bytes:1000, mtime:1, delivered:{deliver:{status:'failed', message:'"><img src=x onerror=window.__xss=1>'}}}, {name:'旧漫画.cbz', title:'旧漫画.cbz', series:'旧漫画.cbz', done:false, format:'other', bytes:10, mtime:1}, {name:'已加入 -- 某作者.epub', title:'已加入', series:'已加入', done:true, format:'epub', bytes:10, mtime:1, delivered:{native:1}}], freeBytes: 9e9}),
   '/api/books/status': () => ({ok:true, xochitlFolders:[]}),
   '/api/session': () => ({ok:true, mustChange:false}),
   '/api/batch/status': () => ({running:false,total:0,done:0,queued:[],failed:[]}),
@@ -84,6 +84,10 @@ out.listText = await page.evaluate(() => (document.querySelector('#stglist')||{}
 out.imgInjected = await page.evaluate(() => document.querySelectorAll('#stglist img').length);
 // 母版库里残留的非 EPUB/PDF 文件（book-serve 报 format:"other"）：徽章显示真实扩展名，不能冒充 EPUB；格式筛选项来自注入的 EXT.book
 out.fmtBadges = await page.evaluate(() => [...document.querySelectorAll('#stglist .badge.fmt')].map(b => b.textContent));
+// 显示名 / 搜索建议 / 「已加入」筛选直接用 book-serve 给的 title / series / done（不再前端镜像规则）
+out.stgNames = await page.evaluate(() => [...document.querySelectorAll('#stglist .stg-name')].map(n => n.textContent));
+out.stgChips = await page.evaluate(() => [...document.querySelectorAll('#stgchips .chip')].map(c => c.textContent));
+out.stgSeries = await page.evaluate(() => [...document.querySelectorAll('#stgnames option')].map(o => o.value));
 out.fmtOptions = await page.evaluate(() => [...document.querySelectorAll('#stgfmt option')].map(o => o.value));
 // 代理放弃横幅：页面打开即显示，名字按文本显示；agent-failed 事件只重取这一个接口；「知道了」清空并移除横幅
 out.failBanner = await page.evaluate(() => { const b = document.querySelector('#agentfail'); return b ? {li: b.querySelectorAll('li').length, img: b.querySelectorAll('img').length, text: b.textContent} : null; });
@@ -212,6 +216,9 @@ console.log(JSON.stringify({ ...out, errs }, null, 1));
 assert.equal(out.xss, 0, '含 HTML 的文件名/错误文案不能执行脚本');
 assert.equal(out.imgInjected, 0, '不能注入 <img>');
 assert.deepEqual(out.fmtBadges, ['EPUB', 'CBZ'], 'format:"other" 不能显示成 EPUB');
+assert.deepEqual(out.stgNames, ['<img src=x onerror=window.__xss=1>', '旧漫画.cbz'], '列表显示 title，默认「未加入」不列 done 的书');
+assert.deepEqual(out.stgChips, ['全部 3', '未加入 2', '已加入 1'], '筛选计数按 done');
+assert.deepEqual(out.stgSeries, ['<img src=x onerror=window.__xss=1>', '旧漫画.cbz', '已加入'], '搜索建议用 series');
 assert.deepEqual(out.fmtOptions, ['', 'epub', 'pdf'], '格式筛选项来自 EXT.book');
 assert.ok(out.failBanner && out.failBanner.li === 2 && out.failBanner.img === 0 && out.failBanner.text.includes('<img src=x'), '代理放弃横幅：两条、名字按文本显示');
 assert.deepEqual(out.failEventHits, [1, 0], 'agent-failed 事件只重取放弃记录，不刷母版库');

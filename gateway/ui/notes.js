@@ -278,10 +278,9 @@ function renderNotes(sec){sec.innerHTML=`
   let exportTab='pending',selectedChapter=null;
   const renderBook=async(opts={})=>{if(!book){chaptertabs.innerHTML='';chapterbody.innerHTML=`<p class="small">${T('notes.pickBookFirst')}</p>`;return}updateSummary();
     const advance=!!opts.advance;
-    // 这份判据是 notes/crates/notecore/src/model.rs::Status::is_live_for_projection() 的镜像
-    // （2026-09-09 单一事实源化：Rust 侧 project.rs/export.rs 都改成调那个方法了，前端这份因为
-    // 跨语言/跨仓库做不到直接复用，改状态机时两边都要看一眼，别只改 Rust 那边）。
-    const live=(book.entries||[]).filter(e=>['pending','draft','reviewed'].includes(e.status));
+    // "活条目"（进投影、在「整理」里列出）由 ink-serve 在每个条目上给出 `live`
+    // （= notecore Status::is_live_for_projection()，2026-10-10 起；此前这里手抄一份状态名单）。
+    const live=(book.entries||[]).filter(e=>e.live);
     const groups=new Map();live.forEach(e=>{const k=e.chapter==null?-1:e.chapter;if(!groups.has(k))groups.set(k,[]);groups.get(k).push(e)});
     const sortedKeys=[...groups.keys()].sort((a,b)=>a-b);
     // fullySynced：整章内容是否跟最近一次投影完全匹配——只用来算"✓/…"徽章，不再决定 tab 归属
