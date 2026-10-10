@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 820" font-family="Noto Sans SC, Noto Sans CJK SC, PingFang SC, sans-serif">
+<defs><marker id="dp-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#64748B"/></marker></defs>
+<rect width="100%" height="100%" fill="#FFFFFF"/>
+<text xml:space="preserve" x="600.0" y="36" font-size="18" font-weight="bold" fill="#1F2937" text-anchor="middle">扩展的部署与生效：先放进待换入区，再整机重启</text>
+<text xml:space="preserve" x="600.0" y="60" font-size="12" fill="#6B7280" text-anchor="middle">deploy-hl-snap.sh / deploy-ui-font.sh → 设备端 xovi-ext-install.sh → devlib.sh 的 cj_xochitl_apply</text>
+<rect x="30" y="88" width="360" height="92" rx="8" fill="#EFF6FF" stroke="#2563EB" stroke-width="1.5"/>
+<text xml:space="preserve" x="44" y="110" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">① host：构建 → 推送 → md5 校验</text>
+<text xml:space="preserve" x="44" y="131" font-size="12" fill="#1F2937" text-anchor="start">make aarch64（失败退回仓库里已提交的 .so 并警告）</text>
+<text xml:space="preserve" x="44" y="150" font-size="12" fill="#1F2937" text-anchor="start">scp 到设备，逐个文件核对 md5</text>
+<rect x="30" y="214" width="360" height="92" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text xml:space="preserve" x="44" y="236" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">② 新版与已装的逐字节相同？</text>
+<text xml:space="preserve" x="44" y="257" font-size="12" fill="#1F2937" text-anchor="start">是 → 什么都不换（撤掉过时的待换入副本）</text>
+<text xml:space="preserve" x="44" y="276" font-size="12" fill="#1F2937" text-anchor="start">否 → 旧版先备份到 ~/cangjie-backups/</text>
+<polyline points="210,180 210,212" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#dp-arr)"/>
+<rect x="30" y="340" width="360" height="112" rx="8" fill="#FFFBEB" stroke="#F59E0B" stroke-width="1.5"/>
+<text xml:space="preserve" x="44" y="362" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">③a 运行中的 xochitl 正映射着旧版</text>
+<text xml:space="preserve" x="44" y="383" font-size="12" fill="#1F2937" text-anchor="start">不当场换：新版放进待换入区</text>
+<text xml:space="preserve" x="44" y="402" font-size="12" fill="#1F2937" text-anchor="start">~/.cangjie-stage/so-pending/</text>
+<text xml:space="preserve" x="44" y="421" font-size="12" fill="#1F2937" text-anchor="start">（与 extensions.d 同分区，绝不在它里面）</text>
+<rect x="420" y="340" width="360" height="112" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text xml:space="preserve" x="434" y="362" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">③b 没在用旧版</text>
+<text xml:space="preserve" x="434" y="383" font-size="12" fill="#1F2937" text-anchor="start">写到暂存目录，再 rename 进 extensions.d</text>
+<text xml:space="preserve" x="434" y="402" font-size="12" fill="#1F2937" text-anchor="start">（原子替换，中途失败不留半个 .so）</text>
+<polyline points="210,306 210,338" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#dp-arr)"/>
+<polyline points="390,260 600,260 600,338" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#dp-arr)"/>
+<rect x="30" y="486" width="750" height="66" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text xml:space="preserve" x="44" y="508" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">④ 记待生效标记（/run 下，重启即清）</text>
+<text xml:space="preserve" x="44" y="529" font-size="12" fill="#1F2937" text-anchor="start">install-all 里各步只落盘（DEFER_XOVI_START=1），最后的 xovi-apply 统一生效一次</text>
+<polyline points="210,452 210,484" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#dp-arr)"/>
+<polyline points="600,452 600,484" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#dp-arr)"/>
+<rect x="30" y="586" width="750" height="118" rx="8" fill="#ECFDF5" stroke="#10B981" stroke-width="1.5"/>
+<text xml:space="preserve" x="44" y="608" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">⑤ cj_xochitl_apply：xovi 已生效，或装了 xovi-reenable.service</text>
+<text xml:space="preserve" x="44" y="629" font-size="12" fill="#1F2937" text-anchor="start">提示「将打断阅读」，等 5 秒 → 把待换入区换进 extensions.d → 清标记 → sync</text>
+<text xml:space="preserve" x="44" y="648" font-size="12" fill="#1F2937" text-anchor="start">→ 打印 CJ-APPLY-REBOOTING → systemctl reboot（约 20–60 秒回来）</text>
+<text xml:space="preserve" x="44" y="667" font-size="12" fill="#1F2937" text-anchor="start">兜底：开机时 xovi-reenable 的 ExecStartPre 也会把待换入区换进去</text>
+<text xml:space="preserve" x="44" y="686" font-size="12" fill="#1F2937" text-anchor="start">host 侧等设备回来，自动跑 verify-on-device.sh 核对</text>
+<polyline points="405,552 405,584" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#dp-arr)"/>
+<rect x="30" y="734" width="750" height="66" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text xml:space="preserve" x="44" y="756" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">⑥ xochitl 带着 xovi 重新启动，载入新版扩展与 qmd</text>
+<text xml:space="preserve" x="44" y="777" font-size="12" fill="#1F2937" text-anchor="start">看 journal：hl-snap「hook 安装完成」、ui-font「安装完成」；网页徽章「已加载」</text>
+<polyline points="405,704 405,732" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#dp-arr)"/>
+<rect x="820" y="88" width="350" height="300" rx="8" fill="#FEF2F2" stroke="#EF4444" stroke-width="1.5"/>
+<text xml:space="preserve" x="834" y="110" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">为什么不只重启 xochitl</text>
+<text xml:space="preserve" x="834" y="136" font-size="12" fill="#1F2937" text-anchor="start">停止 xochitl 本身就有相当概率在退出途中</text>
+<text xml:space="preserve" x="834" y="160" font-size="12" fill="#1F2937" text-anchor="start">崩溃（SEGV）→ OnFailure → 被动整机重启。</text>
+<text xml:space="preserve" x="834" y="184" font-size="12" fill="#1F2937" text-anchor="start">设备上 5 份 memfault 崩溃栈：</text>
+<text xml:space="preserve" x="834" y="208" font-size="12" fill="#1F2937" text-anchor="start">· 3 份在 xochitl 自己的线程池 —— 退出时</text>
+<text xml:space="preserve" x="834" y="232" font-size="12" fill="#1F2937" text-anchor="start">  先析构刷屏要用的全局数据、后停线程池</text>
+<text xml:space="preserve" x="834" y="256" font-size="12" fill="#1F2937" text-anchor="start">  （反编译坐实，与扩展无关，见 defw/）</text>
+<text xml:space="preserve" x="834" y="280" font-size="12" fill="#1F2937" text-anchor="start">· 2 份在 libQt6Gui，未分析</text>
+<text xml:space="preserve" x="834" y="304" font-size="12" fill="#1F2937" text-anchor="start">其中一次只换了 qmd、普通 restart 也崩了。</text>
+<text xml:space="preserve" x="834" y="328" font-size="12" fill="#1F2937" text-anchor="start">所以 2026-09-25 起：不 stop、不 restart，</text>
+<text xml:space="preserve" x="834" y="352" font-size="12" fill="#1F2937" text-anchor="start">一律换入后主动整机重启。</text>
+<rect x="820" y="412" width="350" height="140" rx="8" fill="#FEF2F2" stroke="#EF4444" stroke-width="1.5"/>
+<text xml:space="preserve" x="834" y="434" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">红线</text>
+<text xml:space="preserve" x="834" y="458" font-size="12" fill="#1F2937" text-anchor="start">xovi 已在 xochitl 里生效时，绝不跑</text>
+<text xml:space="preserve" x="834" y="480" font-size="12" fill="#1F2937" text-anchor="start">xovi/start：它会 umount 再重挂 drop-in</text>
+<text xml:space="preserve" x="834" y="502" font-size="12" fill="#1F2937" text-anchor="start">目录，运行中的 xochitl SEGV</text>
+<text xml:space="preserve" x="834" y="524" font-size="12" fill="#1F2937" text-anchor="start">（2026-09-20 真机事故）</text>
+<rect x="820" y="586" width="350" height="214" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text xml:space="preserve" x="834" y="608" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">例外与失败</text>
+<text xml:space="preserve" x="834" y="630" font-size="12" fill="#1F2937" text-anchor="start">xovi 没生效、也没装 xovi-reenable，</text>
+<text xml:space="preserve" x="834" y="650" font-size="12" fill="#1F2937" text-anchor="start">但有 xovi/start → 走 xovi/start</text>
+<text xml:space="preserve" x="834" y="670" font-size="12" fill="#1F2937" text-anchor="start">（此时 xochitl 没映射任何扩展，安全）</text>
+<text xml:space="preserve" x="834" y="690" font-size="12" fill="#1F2937" text-anchor="start"></text>
+<text xml:space="preserve" x="834" y="710" font-size="12" fill="#1F2937" text-anchor="start">连 xovi/start 都没有 → 报错，</text>
+<text xml:space="preserve" x="834" y="730" font-size="12" fill="#1F2937" text-anchor="start">提示 vellum add xovi，不重启</text>
+<text xml:space="preserve" x="834" y="750" font-size="12" fill="#1F2937" text-anchor="start"></text>
+<text xml:space="preserve" x="834" y="770" font-size="12" fill="#1F2937" text-anchor="start">systemctl reboot 失败 → 补回待生效标记，</text>
+<text xml:space="preserve" x="834" y="790" font-size="12" fill="#1F2937" text-anchor="start">提示手动 reboot</text>
+</svg>

@@ -1,44 +1,40 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 610" font-family="Noto Sans CJK SC, sans-serif">
-<defs><marker id="mk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker><marker id="mr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b0451f"/></marker><marker id="mg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2f7d45"/></marker></defs>
-<rect x="0" y="0" width="1000" height="610" fill="#fbfbfa"/>
-<text x="500.0" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">设备常驻唤醒源一览（2026-09-30 按代码核对）</text>
-<text x="500.0" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">空闲、不开网页时谁会定时把 CPU 叫醒；只算设备醒着的时间（用户态定时器在休眠时不走）</text>
-<rect x="40" y="80" width="560" height="330" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
-<text x="52" y="100" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">定时唤醒：每小时次数（醒着时）</text>
-<text x="60" y="124" text-anchor="start" font-size="12" fill="#1a1a1a" font-weight="bold">wifi-watch：每 15 秒看一眼链路</text>
-<rect x="60" y="130" width="300.0" height="14" rx="3" fill="#9db6d8" stroke="#4a6fa5" stroke-width="1.2"/>
-<text x="368.0" y="142" text-anchor="start" font-size="11.5" fill="#1a1a1a" font-weight="bold">240 次/时</text>
-<text x="60" y="160" text-anchor="start" font-size="10.5" fill="#555">carrier=1 只读 sysfs、不 fork；每 40 轮（10 分钟）兜底复查</text>
-<text x="60" y="180" text-anchor="start" font-size="12" fill="#1a1a1a" font-weight="bold">服务间事件流心跳：7 条 × 每 2 分钟</text>
-<rect x="60" y="186" width="262.5" height="14" rx="3" fill="#9db6d8" stroke="#4a6fa5" stroke-width="1.2"/>
-<text x="330.5" y="198" text-anchor="start" font-size="11.5" fill="#1a1a1a" font-weight="bold">210 次/时</text>
-<text x="60" y="216" text-anchor="start" font-size="10.5" fill="#555">网关订阅 6 个服务 + transcribe 订阅 ink，心跳 120 秒（09-30 撤 koreader-serve，原 8 条）</text>
-<text x="60" y="236" text-anchor="start" font-size="12" fill="#1a1a1a" font-weight="bold">mkdir-agent / trash-agent 两个 qmd 长轮询</text>
-<rect x="60" y="242" width="15.0" height="14" rx="3" fill="#9db6d8" stroke="#4a6fa5" stroke-width="1.2"/>
-<text x="83.0" y="254" text-anchor="start" font-size="11.5" fill="#1a1a1a" font-weight="bold">各 ≈12 次/时（mkdir-agent 09-24 前 ≈144）</text>
-<text x="60" y="272" text-anchor="start" font-size="10.5" fill="#555">wait=290 长等待，空闲约 290 秒一次往返；book-serve 不在时出错退避 15→120 秒（09-25）</text>
-<text x="60" y="292" text-anchor="start" font-size="12" fill="#1a1a1a" font-weight="bold">网关 mDNS 接口重扫</text>
-<text x="60" y="310" text-anchor="start" font-size="11.5" fill="#1a1a1a" font-weight="bold">0 次/时（09-25 前 60）</text>
-<text x="60" y="328" text-anchor="start" font-size="10.5" fill="#555">改听内核 netlink 地址变化，地址增删才重扫；netlink 打不开才退回每 60 秒；局域网别的设备查询另算</text>
-<text x="60" y="360" text-anchor="start" font-size="10.5" fill="#888">（已移除的 battop 原本开着时每 600 秒采样一次，2026-09-30 起这一项不存在）</text>
-<rect x="620" y="80" width="340" height="330" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
-<text x="632" y="100" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">只在事件发生时醒（空闲不醒）</text>
-<text x="632" y="122" text-anchor="start" font-size="11.2" fill="#3a3a3a">hl-snap.so：无定时器，</text>
-<text x="632" y="146" text-anchor="start" font-size="11.2" fill="#3a3a3a">  只在划线时进 handler</text>
-<text x="632" y="170" text-anchor="start" font-size="11.2" fill="#3a3a3a">reader-page-turn.qmd：打开书时单发 300 ms</text>
-<text x="632" y="194" text-anchor="start" font-size="11.2" fill="#3a3a3a">  读一次开关（旧版每 1.5 秒轮询，已去掉）</text>
-<text x="632" y="218" text-anchor="start" font-size="11.2" fill="#3a3a3a">shelf-comic-margins.qmd：换文档单发 1.5 秒</text>
-<text x="632" y="242" text-anchor="start" font-size="11.2" fill="#3a3a3a">book-serve / ink-serve：inotify 防抖</text>
-<text x="632" y="266" text-anchor="start" font-size="11.2" fill="#3a3a3a">  （8 秒 / 4 秒），没有文件变化不醒</text>
-<text x="632" y="290" text-anchor="start" font-size="11.2" fill="#3a3a3a">wallpaper-serve：inotify，每次休眠醒一次</text>
-<text x="632" y="314" text-anchor="start" font-size="11.2" fill="#3a3a3a">浏览器事件流 20 秒心跳：只在网页开着时</text>
-<text x="632" y="338" text-anchor="start" font-size="11.2" fill="#3a3a3a">transcribe 空跑轮次：不写文件、不发事件</text>
-<text x="632" y="362" text-anchor="start" font-size="11.2" fill="#3a3a3a">设备健康页：只在打开 / 点刷新时采集</text>
-<rect x="40" y="430" width="920" height="100" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
-<text x="52" y="450" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">wallpaper-serve：09-24 起不再跟 xochitl 日志，改为每次休眠醒一次</text>
-<text x="52" y="472" text-anchor="start" font-size="11.5" fill="#3a3a3a">xochitl 每次进休眠都读一遍 current.png（真机 inotify 观察）→ 监听 IN_CLOSE_NOWRITE，读完就轮换；空闲零唤醒，也不再常驻 journalctl。</text>
-<text x="52" y="492" text-anchor="start" font-size="11.5" fill="#3a3a3a">飞行记录仪在宿主机上（不在设备、不在本仓库），接着电脑时循环经 ssh 抓设备日志；本线仍压低 xochitl 日志量：翻页 qmd 去掉了命中日志（§03i）。</text>
-<text x="52" y="512" text-anchor="start" font-size="11.5" fill="#3a3a3a">单图池唤醒轮换不再重写同一张 current.png（09-24 审计），省的是闪存写入，不是唤醒次数。</text>
-<text x="500" y="558" text-anchor="middle" font-size="11" fill="#6a6a6a">mkdir-agent 依据：设备 Qt 6.10.3 的 QML XHR 不设传输超时（源码核实），book-serve 上限 MKDIR_WAIT_MAX_SECS=300；</text>
-<text x="500" y="578" text-anchor="middle" font-size="11" fill="#6a6a6a">以上数字全部来自代码常量，未在真机上实测唤醒次数。</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 664" font-family="Noto Sans SC, Noto Sans CJK SC, PingFang SC, sans-serif">
+<defs><marker id="wk-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#64748B"/></marker></defs>
+<rect width="100%" height="100%" fill="#FFFFFF"/>
+<text xml:space="preserve" x="600.0" y="36" font-size="18" font-weight="bold" fill="#1F2937" text-anchor="middle">设备空闲时谁在定时叫醒 CPU（整套设备端组件，2026-10-10 按代码常量核对）</text>
+<text xml:space="preserve" x="600.0" y="60" font-size="12" fill="#6B7280" text-anchor="middle">不开网页、不操作设备时；用户态定时器用单调时钟，设备休眠时不走，所以都是「醒着时」的频率；没有在真机上实测唤醒次数</text>
+<rect x="30" y="86" width="700" height="384" rx="8" fill="none" stroke="#CBD5E1" stroke-width="1.5" stroke-dasharray="6 4"/>
+<text xml:space="preserve" x="44" y="108" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">定时唤醒（每小时次数，醒着时）</text>
+<text xml:space="preserve" x="50" y="140" font-size="12" font-weight="bold" fill="#1F2937" text-anchor="start">wifi-watch：每 15 秒看一眼链路</text>
+<rect x="50" y="150" width="384.0" height="16" rx="4" fill="#EFF6FF" stroke="#2563EB" stroke-width="1.5"/>
+<text xml:space="preserve" x="444.0" y="163" font-size="12" font-weight="bold" fill="#1F2937" text-anchor="start">240 次/时</text>
+<text xml:space="preserve" x="50" y="186" font-size="11" fill="#6B7280" text-anchor="start">链路正常只读 sysfs、不 fork；每 40 轮（10 分钟）兜底复查一次频段 / 省电</text>
+<text xml:space="preserve" x="50" y="220" font-size="12" font-weight="bold" fill="#1F2937" text-anchor="start">服务间事件流心跳：7 条 × 每 120 秒</text>
+<rect x="50" y="230" width="336.0" height="16" rx="4" fill="#EFF6FF" stroke="#2563EB" stroke-width="1.5"/>
+<text xml:space="preserve" x="396.0" y="243" font-size="12" font-weight="bold" fill="#1F2937" text-anchor="start">210 次/时</text>
+<text xml:space="preserve" x="50" y="266" font-size="11" fill="#6B7280" text-anchor="start">网关订阅 6 个有 /events 的服务 + transcribe-serve 订阅 ink-serve</text>
+<text xml:space="preserve" x="50" y="300" font-size="12" font-weight="bold" fill="#1F2937" text-anchor="start">mkdir-agent / trash-agent 两个 qmd 长轮询</text>
+<rect x="50" y="310" width="19.200000000000003" height="16" rx="4" fill="#EFF6FF" stroke="#2563EB" stroke-width="1.5"/>
+<text xml:space="preserve" x="79.2" y="323" font-size="12" font-weight="bold" fill="#1F2937" text-anchor="start">12 次/时</text>
+<text xml:space="preserve" x="50" y="346" font-size="11" fill="#6B7280" text-anchor="start">wait=290 秒长等待，各约 12 次/时；book-serve 不在时出错退避 15→120 秒</text>
+<text xml:space="preserve" x="50" y="380" font-size="12" font-weight="bold" fill="#1F2937" text-anchor="start">网关 mDNS 接口重扫</text>
+<rect x="50" y="390" width="4" height="16" rx="4" fill="#EFF6FF" stroke="#2563EB" stroke-width="1.5"/>
+<text xml:space="preserve" x="64" y="403" font-size="12" font-weight="bold" fill="#1F2937" text-anchor="start">0 次/时（空闲）</text>
+<text xml:space="preserve" x="50" y="426" font-size="11" fill="#6B7280" text-anchor="start">听内核 netlink 地址变化，地址增删才重扫；netlink 打不开才退回每 60 秒</text>
+<rect x="760" y="86" width="410" height="384" rx="8" fill="#ECFDF5" stroke="#10B981" stroke-width="1.5"/>
+<text xml:space="preserve" x="774" y="108" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">只在事件发生时醒（空闲不醒）</text>
+<text xml:space="preserve" x="774" y="144" font-size="12" fill="#1F2937" text-anchor="start">hl-snap.so：没有定时器，只在划线时进 handler</text>
+<text xml:space="preserve" x="774" y="178" font-size="12" fill="#1F2937" text-anchor="start">reader-page-turn.qmd：开书时单发 300 ms 读一次</text>
+<text xml:space="preserve" x="774" y="212" font-size="12" fill="#1F2937" text-anchor="start">shelf-comic-margins.qmd：换文档单发 1.5 秒</text>
+<text xml:space="preserve" x="774" y="246" font-size="12" fill="#1F2937" text-anchor="start">shelf-keep-progress.qmd：开书 / 页数变化时单发 2 秒</text>
+<text xml:space="preserve" x="774" y="280" font-size="12" fill="#1F2937" text-anchor="start">wallpaper-serve：inotify，每次休眠醒一次</text>
+<text xml:space="preserve" x="774" y="314" font-size="12" fill="#1F2937" text-anchor="start">book-serve / ink-serve：inotify 防抖（8 秒 / 4 秒）</text>
+<text xml:space="preserve" x="774" y="348" font-size="12" fill="#1F2937" text-anchor="start">font-serve：只响应网页请求</text>
+<text xml:space="preserve" x="774" y="382" font-size="12" fill="#1F2937" text-anchor="start">浏览器事件流 20 秒心跳：只在网页开着时</text>
+<rect x="30" y="494" width="1140" height="140" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text xml:space="preserve" x="44" y="516" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">结论与依据</text>
+<text xml:space="preserve" x="44" y="542" font-size="12" fill="#1F2937" text-anchor="start">空闲时的定时唤醒主要是 wifi-watch（约 240 次/时）和 7 条事件流心跳（约 210 次/时），两个长轮询各约 12 次/时。</text>
+<text xml:space="preserve" x="44" y="566" font-size="12" fill="#1F2937" text-anchor="start">本线自己的组件空闲时都不定时醒：wallpaper-serve 从 2026-09-24 起不再常驻 journalctl -f（那时 xochitl 每写一行日志它就醒一次）。</text>
+<text xml:space="preserve" x="44" y="590" font-size="12" fill="#1F2937" text-anchor="start">飞行记录仪跑在宿主机上（经 ssh 抓设备日志），不在设备上；本线仍尽量压低 xochitl 日志量（翻页 qmd 去掉了命中日志）。</text>
+<text xml:space="preserve" x="44" y="614" font-size="12" fill="#1F2937" text-anchor="start">常量出处：wifi-watch.sh INTERVAL/RECHECK · rmsvc-core events.rs FOLLOW_KEEPALIVE_SECS · mdns.rs RESCAN_INTERVAL · 各 qmd 源码</text>
 </svg>

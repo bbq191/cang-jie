@@ -1,7 +1,7 @@
 # defw —— xochitl 3.28.0.172 逆向工程
 
 > **读者与用途**：要给 xochitl 写新的 hook / qmd、查 xochitl 崩溃栈，或想复现"某个函数地址是怎么定位到的"的人。
-> 这里是**逆向工程的工作目录与方法说明**（Ghidra 项目 + headless 脚本），不是功能代码，也不上设备；用它支撑过的成果：手写优化扩展 `enhance/handwriting-stroke/`（2026-09-30 已移除，研究记录留在 [系统增强线白皮书](../enhance/docs/reMarkable系统增强线白皮书.md) §03c–§03g），以及下面的 xochitl 退出崩溃调查。
+> 这里是**逆向工程的工作目录与方法说明**（Ghidra 项目 + headless 脚本），不是功能代码，也不上设备；用它支撑过的成果：手写优化扩展 `enhance/handwriting-stroke/`（2026-09-30 已移除，研究结论压缩在 [系统增强线白皮书](../enhance/docs/reMarkable系统增强线白皮书.md#附录-bxochitl-笔画渲染链逆向笔记)附录 B），以及下面的 xochitl 退出崩溃调查。
 > **跟现役两个扩展的关系**：`enhance/hl-snap` 的目标函数是固件 3.28.0.169 时代在旧 `ghidra-project/` 里找到的，靠特征码运行时自定位，3.28.0.172 上复核仍唯一命中，没用到本目录；2026-10-09 给它加的 glyph 上界检查、给 `enhance/ui-font` 加的非 PIE 防递归判定，用的是同一份 xochitl 二进制的原始反汇编与 ELF 头（见下文「不开 Ghidra 的快速核对」），也没用到本目录的 Ghidra 项目——方法相同：关键偏移以原始指令为准。
 > 整体位置见 [`../docs/OVERVIEW.md`](../docs/OVERVIEW.md)。原名 `ghidra-project-328`，2026-09-10 改名 `defw`。
 
@@ -25,9 +25,9 @@
 | `DecompileContaining.java` | 反编译**包含某地址的函数**（地址可以落在函数中间，比如崩溃栈里的 PC）；打印入口、偏移、签名、C 输出和调用者 | 脚本参数 |
 | `ListRefs.java` | 列出指向某地址的全部引用（READ / WRITE / DATA / CALL…）及所在函数——回答"谁写这个全局变量""谁注册了这个任务函数" | 脚本参数 |
 | `DecompileTargets.java` | 反编译一组**函数入口**并列出调用者 | 改源码里的地址数组 |
-| `CheckFuncSizes.java` | 核对候选 hook 目标的字节大小与前 N 条**原始反汇编**：`patch_target` 需要 ≥ 20 字节可安全改写的序言；也用来交叉核实反编译结果，防止反编译器简化过头（真救过一次，见增强线白皮书 §04） | 改源码 |
+| `CheckFuncSizes.java` | 核对候选 hook 目标的字节大小与前 N 条**原始反汇编**：`cj_patch_target`（`enhance/shared/trampoline_patch.c`）要改写开头 20 字节，这段里不能有分支和 PC 相对寻址（2026-10-10 起它自己也会检查、命中就放弃 hook，但最好事先核对）；也用来交叉核实反编译结果，防止反编译器简化过头（真救过一次，见增强线白皮书 5.4 节） | 改源码 |
 | `FindQuillStrokeRTTI.java` | 在内存里搜"字面等于某地址的 8 字节指针"，从 RTTI 名字字符串反查 typeinfo（stripped 二进制的自动 xref 是空的） | 改源码 |
-| `FindGenerateCallSite.java` | 找 `VaryingGenerator_WidthLength::generate`（`FUN_00f401f0`）的直接引用与 vtable 槽位引用；结果是"零真实调用者"，见增强线白皮书 §03c 勘误 | 固定 |
+| `FindGenerateCallSite.java` | 找 `VaryingGenerator_WidthLength::generate`（`FUN_00f401f0`）的直接引用与 vtable 槽位引用；结果是"零真实调用者"，见增强线白皮书附录 B | 固定 |
 
 **地址怎么换算**：Ghidra 里的地址 = xochitl 运行时基址 `0x400000` + 偏移。崩溃栈里写的 `xochitl+0x6467b8`，在 Ghidra 里就是 `00a467b8`。脚本参数用不带 `0x` 的十六进制。
 
@@ -74,7 +74,7 @@ readelf -W --dyn-syms xochitl | grep setFont        # 导入符号 st_value 为 
 aarch64-linux-gnu-objdump -d --start-address=0xf03670 --stop-address=0xf03860 xochitl   # 看一段函数
 ```
 
-2026-10-09 就是这样钉死 hl-snap 读的 glyph 数组个数在 `scene+0x10`（兄弟函数 `0xf03750` 开头 `ldp x5, x3, [x21, #8]`），见系统增强线白皮书 §03p。
+2026-10-09 就是这样钉死 hl-snap 读的 glyph 数组个数在 `scene+0x10`（兄弟函数 `0xf03750` 开头 `ldp x5, x3, [x21, #8]`），见系统增强线白皮书 3.2 节。
 
 ## 方法：怎么从"零线索"走到"hook 目标真机部署"
 
@@ -83,7 +83,7 @@ aarch64-linux-gnu-objdump -d --start-address=0xf03670 --stop-address=0xf03860 xo
 3. **headless 脚本接力**：一旦有了具体地址，反编译、查引用、按字节搜内存都用 `scripts/` 批量做，不必再靠 GUI 截图。
 4. **反编译要交叉核实**：关键偏移和参数签名用原始反汇编（`CheckFuncSizes.java`）核对，别只信反编译出来的 C。
 
-完整的发现、踩坑与勘误记在 [`../enhance/docs/reMarkable系统增强线白皮书.md`](../enhance/docs/reMarkable系统增强线白皮书.md) §03c–§03f、§04（原先还有 `enhance/handwriting-stroke/README.md`，2026-09-30 随该扩展删除，要看去 git 历史）。**本目录只管"怎么用这套工具"，不重复记发现内容**；唯一例外是下面这条不属于任何功能线的崩溃调查。
+完整的发现、踩坑与勘误记在 [`../enhance/docs/reMarkable系统增强线白皮书.md`](../enhance/docs/reMarkable系统增强线白皮书.md) 附录 B（笔画渲染链）与 5.4 节（逆向方法与 hook 安全性）（原先还有 `enhance/handwriting-stroke/README.md`，2026-09-30 随该扩展删除，要看去 git 历史）。**本目录只管"怎么用这套工具"，不重复记发现内容**；唯一例外是下面这条不属于任何功能线的崩溃调查。
 
 ## 调查记录：xochitl 退出时崩溃（2026-09-25）
 

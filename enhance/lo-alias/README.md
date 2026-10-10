@@ -17,15 +17,18 @@ xochitl 自带的网页上传接口只绑 USB 网卡的 `10.11.99.1`。不插 US
 
 ## 谁调用、装在哪
 
-- 网关单元 `gateway.service` 的 `ExecStartPre=-/bin/sh /home/root/.local/bin/lo-alias.sh`（前面的 `-` 表示失败也不拦网关启动）。网关单元 `After=NetworkManager.service`（2026-09-24），保证挂 `usb1` 地址时网络管理器已经起来。
-- 安装随 `packaging/deploy.sh` 的 shelf 载荷一起走，落到 `~/.local/bin/lo-alias.sh`；旧名 `cangjie-lo-alias.sh` 在安装/卸载时自动清理（见 `shelf/manifest.sh`）。
+- 网关单元 `gateway/systemd/gateway.service` 的 `ExecStartPre=-/bin/sh /home/root/.local/bin/lo-alias.sh`（前面的 `-` 表示失败也不拦网关启动）。网关单元 `After=home.mount NetworkManager.service xovi-reenable.service`（`NetworkManager` 那条 2026-09-24 加），保证挂 `usb1` 地址时网络管理器已经起来。
+- 安装随 `packaging/deploy.sh` 的 shelf 载荷一起走（`shelf/manifest.sh` 里登记为网关附带的脚本），落到 `~/.local/bin/lo-alias.sh`；旧名 `cangjie-lo-alias.sh` 在安装 / 卸载时自动清理（`SHELF_LEGACY_BINS`）。
 - 本目录不单独部署。
 
 ## 已知限制
 
 - **时序没有硬保证**：脚本挂在网关启动前，不在 xochitl 启动前。2026-09-24 那次开机日志里它比 xochitl 晚 3 秒运行；xochitl 冷启动到绑 :80 约要 3 分钟，所以地址来得及。**2026-09-25 两次不插 USB 整机重启后核对**：`10.11.99.1` 同时挂在 `lo` 和 `usb1` 上，xochitl 的 :80 已绑定。
 - 开机头几分钟 :80 缺失属正常，依赖它的服务应失败即重试。
+- `lo-alias.sh` 的头注还写着"现行接法下无 USB 冷启动这一场景没有重新真机验证过"，那是 09-25 核对之前写的，以上面的核对记录为准。
 
 ## 来源
 
 2026-09-11 从旧中文化线的 `chinese-ime/langhook/deploy/cangjie-lo-alias.sh` **拷贝**过来（`chinese-ime/` 已移出仓库），改名去掉 `cangjie-` 前缀。之后这份副本独立维护，不再和原件同步。
+
+在整条系统增强线里的位置见[白皮书 3.7 节](../docs/reMarkable系统增强线白皮书.md#37-lo-alias让-1011991-常驻可达)。
