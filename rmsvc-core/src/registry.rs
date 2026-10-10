@@ -151,14 +151,32 @@ impl SvcClient {
     fn prefixed(&self, verb: &str, path: &str, e: SvcError) -> String {
         format!("{} {verb} {path}: {}", self.service, e.message)
     }
+    /// GET JSON；错误是带 `<服务> GET <路径>:` 前缀的字符串（状态码丢了）。要按对方状态码回执的用 [`SvcClient::try_get_json`]。
     pub fn get_json(&self, path: &str) -> Result<serde_json::Value, String> {
         let service = self.service;
         let resp = self.agent.get(&format!("{}{path}", self.base()?)).call().map_err(|e| self.prefixed("GET", path, Self::to_svc_error(e)))?;
         serde_json::from_reader(resp.into_reader()).map_err(|e| format!("{service} {path} 应答不是 JSON: {e}"))
     }
-    /// GET JSON 并反序列化成 `T`；形状不对的错误带 `<服务> <路径> 应答形状不对:` 前缀。
+    /// GET JSON 并反序列化成 `T`；形状不对的错误带 `<服务> <路径> 应答形状不对:` 前缀。要结构化错误用 [`SvcClient::try_get_typed`]。
     pub fn get_typed<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, String> {
         serde_json::from_value(self.get_json(path)?).map_err(|e| format!("{} {path} 应答形状不对: {e}", self.service))
+    }
+    /// 同 [`SvcClient::get_json`] 但返回结构化错误（与 [`SvcClient::try_post_json`] 对称）：对方非 2xx → `status` 是对方的码；
+    /// 未运行/连不上/超时 → `status: None`；对方回了 2xx 但体不是 JSON → `status` 是那个 2xx（经 `From<SvcError> for ApiError`
+    /// 变 502）。`message` 不带前缀，可直接给用户看。此前 GET 侧只有字符串错误，mind-serve 一律当 404、note-serve 一律当 400，
+    /// 连"ink-serve 未运行"也回 400（2026-10-10 审计 CORE-1）。
+    pub fn try_get_json(&self, path: &str) -> Result<serde_json::Value, SvcError> {
+        let base = self.base().map_err(|m| SvcError { status: None, message: m })?;
+        let resp = self.agent.get(&format!("{base}{path}")).call().map_err(Self::to_svc_error)?;
+        let status = resp.status();
+        serde_json::from_reader(resp.into_reader()).map_err(|e| SvcError { status: Some(status), message: format!("{} {path} 应答不是 JSON: {e}", self.service) })
+    }
+    /// 同 [`SvcClient::try_get_json`] 再反序列化成 `T`；形状不对同"不是 JSON"（`status` 为对方的 2xx → 502）。
+    pub fn try_get_typed<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, SvcError> {
+        let base = self.base().map_err(|m| SvcError { status: None, message: m })?;
+        let resp = self.agent.get(&format!("{base}{path}")).call().map_err(Self::to_svc_error)?;
+        let status = resp.status();
+        serde_json::from_reader(resp.into_reader()).map_err(|e| SvcError { status: Some(status), message: format!("{} {path} 应答形状不对: {e}", self.service) })
     }
     /// GET 原始字节（裁图这类非 JSON 应答），最多读 `max` 字节（超了报错，不截断）；非 2xx 带对方错误体。
     pub fn get_bytes(&self, path: &str, max: u64) -> Result<Vec<u8>, String> {
@@ -196,6 +214,18 @@ pub struct SvcError {
     pub status: Option<u16>,
     /// 对方错误体里的 `message`/`error`，没有则 `HTTP <码>`；传输错误为其文本。
     pub message: String,
+}
+
+/// 跨服务调用失败 → 本服务的回执：对方回 4xx（参数不对、没有这条、冲突……）原样透传状态码与原因；对方回 5xx 或
+/// 回了不像样的应答 → 502；对方没在运行 / 连不上 / 超时（`status: None`）→ 503。
+impl From<SvcError> for crate::http::ApiError {
+    fn from(e: SvcError) -> Self {
+        match e.status {
+            Some(code @ 400..=499) => crate::http::ApiError::new(code, e.message),
+            Some(_) => crate::http::ApiError::bad_gateway(e.message),
+            None => crate::http::ApiError::unavailable(e.message),
+        }
+    }
 }
 
 /// URL 路径段编码（uuid/文件名这类需要转义的片段）。
@@ -301,6 +331,55 @@ mod tests {
         assert_eq!(ok.get_bytes("/x", 1024).unwrap(), br#"{"queued":3}"#);
         assert!(ok.get_bytes("/x", 4).unwrap_err().contains("上限"));
         assert!(SvcClient::new(p, "bad-svc", 5).get_bytes("/x", 1024).unwrap_err().contains("这本书正在处理中"));
+    }
+
+    /// GET 侧结构化错误：对方 4xx 透传、5xx/坏应答 → 502、未运行/连不上 → 503。
+    #[test]
+    fn try_get_keeps_status_and_maps_to_api_error() {
+        use crate::http::ApiError;
+        let t = tempfile::tempdir().unwrap();
+        let p = paths(&t);
+        let me = std::process::id();
+        let mut a = info("nf-svc", 1, me);
+        a.port = one_shot_server(404, r#"{"ok":false,"message":"没有这本书的条目"}"#);
+        let _ga = register(&p, &a).unwrap();
+        let e = SvcClient::new(p.clone(), "nf-svc", 5).try_get_json("/books/x").unwrap_err();
+        assert_eq!((e.status, e.message.as_str()), (Some(404), "没有这本书的条目"));
+        let api: ApiError = e.into();
+        assert_eq!((api.status, api.message.as_str()), (404, "没有这本书的条目"), "4xx 原样透传");
+        let mut b = info("boom-svc", 2, me);
+        b.port = one_shot_server(500, "boom");
+        let _gb = register(&p, &b).unwrap();
+        let api: ApiError = SvcClient::new(p.clone(), "boom-svc", 5).try_get_json("/x").unwrap_err().into();
+        assert_eq!(api.status, 502, "对方 5xx → 502");
+        let mut c = info("garbage-svc", 3, me);
+        c.port = one_shot_server(200, "not json");
+        let _gc = register(&p, &c).unwrap();
+        let e = SvcClient::new(p.clone(), "garbage-svc", 5).try_get_json("/x").unwrap_err();
+        assert_eq!(e.status, Some(200));
+        assert_eq!(ApiError::from(e).status, 502, "2xx 但体不是 JSON → 502");
+        #[derive(serde::Deserialize, Debug)]
+        struct Q {
+            #[allow(dead_code)]
+            queued: u32,
+        }
+        let mut d = info("shape-svc", 4, me);
+        d.port = one_shot_server(200, r#"{"queued":"x"}"#);
+        let _gd = register(&p, &d).unwrap();
+        let e = SvcClient::new(p.clone(), "shape-svc", 5).try_get_typed::<Q>("/x").unwrap_err();
+        assert!(e.message.contains("形状不对") && ApiError::from(e).status == 502);
+        let mut ok = info("ok2-svc", 5, me);
+        ok.port = one_shot_server(200, r#"{"queued":7}"#);
+        let _go = register(&p, &ok).unwrap();
+        assert_eq!(SvcClient::new(p.clone(), "ok2-svc", 5).try_get_typed::<Q>("/x").unwrap().queued, 7);
+        let e = SvcClient::new(p.clone(), "absent-svc", 5).try_get_json("/x").unwrap_err();
+        assert_eq!((e.status, e.message.as_str()), (None, "absent-svc 未运行"));
+        assert_eq!(ApiError::from(e).status, 503, "未运行 → 503，不是 400/404");
+        // 注册着但端口上没人（进程刚死、注册还没清）：连不上同样 503
+        let mut z = info("refused-svc", 6, me);
+        z.port = 1; // 本机 1 号端口没人听：立即连接被拒（不临时占一个端口再放掉，免得跟并行测试抢端口）
+        let _gz = register(&p, &z).unwrap();
+        assert_eq!(ApiError::from(SvcClient::new(p, "refused-svc", 5).try_get_json("/x").unwrap_err()).status, 503);
     }
 
     #[test]
