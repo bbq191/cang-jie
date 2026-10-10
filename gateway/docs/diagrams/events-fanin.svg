@@ -1,69 +1,61 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 560" font-family="Noto Sans CJK SC, sans-serif">
-<defs><marker id="mk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker><marker id="mr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b0451f"/></marker><marker id="mg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2f7d45"/></marker></defs>
-<rect x="0" y="0" width="1240" height="560" fill="#fbfbfa"/>
-<text x="620.0" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">事件汇聚：网页为什么不用轮询（events.rs + rmsvc-core/events.rs）</text>
-<text x="620.0" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">各服务在“变更发生处”发一条极短的“该刷新了”信号；网关汇总后经一条 SSE 长连接推给所有网页</text>
-<rect x="24" y="96" width="250" height="240" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
-<text x="149.0" y="116" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">各领域服务</text>
-<text x="149.0" y="139" text-anchor="middle" font-size="10.5" fill="#3a3a3a">book-serve · font-serve</text>
-<text x="149.0" y="154" text-anchor="middle" font-size="10.5" fill="#3a3a3a">wallpaper-serve · ink-serve</text>
-<text x="149.0" y="169" text-anchor="middle" font-size="10.5" fill="#3a3a3a">transcribe-serve · note-serve</text>
-<text x="149.0" y="184" text-anchor="middle" font-size="9.5" fill="#8a8a8a">（koreader-serve 09-29 起不再订阅）</text>
-<text x="149.0" y="199" text-anchor="middle" font-size="10.5" fill="#3a3a3a"></text>
-<text x="149.0" y="214" text-anchor="middle" font-size="10.5" fill="#3a3a3a">每个都有 GET /events（SSE）</text>
-<text x="149.0" y="229" text-anchor="middle" font-size="10.5" fill="#3a3a3a">事件：{"area":"books",</text>
-<text x="149.0" y="244" text-anchor="middle" font-size="10.5" fill="#3a3a3a">"kind":"staging","at":&lt;秒&gt;}</text>
-<text x="149.0" y="259" text-anchor="middle" font-size="10.5" fill="#3a3a3a"></text>
-<text x="149.0" y="274" text-anchor="middle" font-size="10.5" fill="#3a3a3a">mind-serve 没有 /events</text>
-<text x="149.0" y="289" text-anchor="middle" font-size="10.5" fill="#3a3a3a">（纯被动问答，网关不订阅）</text>
-<rect x="340" y="96" width="330" height="240" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
-<text x="352" y="116" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">网关 events::spawn（每个有事件流的服务一条线程）</text>
-<text x="352" y="139" text-anchor="start" font-size="10" fill="#3a3a3a">events::follow(服务名)：</text>
-<text x="352" y="154" text-anchor="start" font-size="10" fill="#3a3a3a">· 服务没起：等注册表变化（基座 registry_wake），不轮询</text>
-<text x="352" y="169" text-anchor="start" font-size="10" fill="#3a3a3a">· 连上：GET /events?ka=120（心跳 2 分钟一次）</text>
-<text x="352" y="184" text-anchor="start" font-size="10" fill="#3a3a3a">· 断线：退避重连 3s→60s，撑过 10s 才重置</text>
-<text x="352" y="199" text-anchor="start" font-size="10" fill="#3a3a3a">· 对方回 404：长等 10 分钟或等重新注册</text>
-<text x="352" y="214" text-anchor="start" font-size="10" fill="#3a3a3a">收到事件补上 "svc":"&lt;seg&gt;" 后发进总线</text>
-<text x="352" y="229" text-anchor="start" font-size="10" fill="#3a3a3a"></text>
-<text x="352" y="244" text-anchor="start" font-size="10" fill="#3a3a3a">另有一条：阻塞在同一个 registry_wake 上（共用一条 inotify，防抖 300ms）</text>
-<text x="352" y="259" text-anchor="start" font-size="10" fill="#3a3a3a">→ 服务上下线时发 {"area":"manage"}</text>
-<rect x="736" y="96" width="210" height="110" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
-<text x="841.0" y="116" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">EventBus 总线</text>
-<text x="841.0" y="139" text-anchor="middle" font-size="10" fill="#3a3a3a">进程内广播</text>
-<text x="841.0" y="154" text-anchor="middle" font-size="10" fill="#3a3a3a">每个订阅者一条有界队列(64)</text>
-<text x="841.0" y="169" text-anchor="middle" font-size="10" fill="#3a3a3a">满了丢事件——它只是信号</text>
-<rect x="736" y="226" width="210" height="110" rx="10" fill="#fdf1ec" stroke="#c0602d" stroke-width="1.6"/>
-<text x="841.0" y="246" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">网关自己也发事件</text>
-<text x="841.0" y="269" text-anchor="middle" font-size="10" fill="#3a3a3a">batch.rs 队列状态变了</text>
-<text x="841.0" y="284" text-anchor="middle" font-size="10" fill="#8a8a8a">（闸门 budget.rs 2026-10-07 删除）</text>
-<text x="841.0" y="299" text-anchor="middle" font-size="10" fill="#3a3a3a">→ {"area":"books"}</text>
-<rect x="1010" y="96" width="206" height="286" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
-<text x="1113.0" y="116" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">浏览器 EventSource</text>
-<text x="1113.0" y="139" text-anchor="middle" font-size="10" fill="#3a3a3a">GET /api/events?ka=60</text>
-<text x="1113.0" y="154" text-anchor="middle" font-size="10" fill="#3a3a3a">（受登录守卫保护）</text>
-<text x="1113.0" y="169" text-anchor="middle" font-size="10" fill="#3a3a3a"></text>
-<text x="1113.0" y="184" text-anchor="middle" font-size="10" fill="#3a3a3a">收到事件 → 只刷新对应</text>
-<text x="1113.0" y="199" text-anchor="middle" font-size="10" fill="#3a3a3a">区域（母版库 / 笔记 /</text>
-<text x="1113.0" y="214" text-anchor="middle" font-size="10" fill="#3a3a3a">管理台），不整页刷</text>
-<text x="1113.0" y="229" text-anchor="middle" font-size="10" fill="#3a3a3a"></text>
-<text x="1113.0" y="244" text-anchor="middle" font-size="10" fill="#3a3a3a">断线（WiFi 掉、休眠醒来）：</text>
-<text x="1113.0" y="259" text-anchor="middle" font-size="10" fill="#3a3a3a">浏览器自己重连并补刷；</text>
-<text x="1113.0" y="274" text-anchor="middle" font-size="10" fill="#3a3a3a">浏览器放弃重连（CLOSED，</text>
-<text x="1113.0" y="289" text-anchor="middle" font-size="10" fill="#3a3a3a">如网关重启后 401）：先查</text>
-<text x="1113.0" y="304" text-anchor="middle" font-size="10" fill="#3a3a3a">/api/session，401 去登录；</text>
-<text x="1113.0" y="319" text-anchor="middle" font-size="10" fill="#3a3a3a">否则 5 秒起翻倍、封顶 5 分钟</text>
-<text x="1113.0" y="334" text-anchor="middle" font-size="10" fill="#3a3a3a">重开，页面隐藏时不重试（09-30）</text>
-<text x="1113.0" y="349" text-anchor="middle" font-size="10" fill="#3a3a3a">60 秒一次心跳；页面隐藏</text>
-<text x="1113.0" y="364" text-anchor="middle" font-size="10" fill="#3a3a3a">超 60 秒主动断开</text>
-<polyline points="274,216 340,216" fill="none" stroke="#2f7d45" stroke-width="1.6" marker-end="url(#mg)"/>
-<text x="307.0" y="208" text-anchor="middle" font-size="10" fill="#555">SSE</text>
-<polyline points="670,150 736,150" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
-<polyline points="841,226 841,206" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
-<polyline points="946,150 1010,150" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
-<text x="620" y="400" text-anchor="middle" font-size="11.5" fill="#3a3a3a">设计约束（用户 2026-09-06）：不轮询、不监听全盘、日志写入不触发；事件只来自服务代码里的变更点，加上注册表目录的 inotify（共用一条）。</text>
-<rect x="24" y="430" width="1192" height="100" rx="10" fill="#f1f1ef" stroke="#8a8a8a" stroke-width="1.6"/>
-<text x="36" y="450" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">和批量队列的关系</text>
-<text x="36" y="473" text-anchor="start" font-size="10.5" fill="#3a3a3a">网页在批量运行时不再每 3 秒轮询 /api/batch/status：batch.rs 每次落盘都会调 events::notify_books()（kind=batch，不带 svc），</text>
-<text x="36" y="488" text-anchor="start" font-size="10.5" fill="#3a3a3a">网页收到后只拉一次 /api/batch/status（2026-10-07 前闸门还发 budget、网页多拉 /api/budget/status）。</text>
-<text x="36" y="510" text-anchor="start" font-size="10.5" fill="#3a3a3a">反方向也用得上：book-serve 发来的 books 事件会唤醒批量 worker 里“等这本书处理完再取下一本”的等待（books_wake，没事件时 30 秒兜底查一次）。</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 560" font-family="Noto Sans SC, Noto Sans CJK SC, PingFang SC, sans-serif">
+<rect width="100%" height="100%" fill="#FFFFFF"/>
+<defs>
+<marker id="ev-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#64748B"/></marker>
+<marker id="ev-arr-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#EF4444"/></marker>
+</defs>
+<text x="620.0" y="34" text-anchor="middle" font-size="18" font-weight="700" fill="#1F2937">事件汇聚：网页为什么不用轮询</text>
+<text x="620.0" y="56" text-anchor="middle" font-size="12" fill="#6B7280">服务在"变更发生处"发一条"该刷新了"的短信号；网关汇成一条 SSE 推给网页（events.rs + rmsvc-core events.rs）</text>
+<rect x="30" y="90" width="260" height="250" rx="8" fill="#ECFDF5" stroke="#10B981" stroke-width="1.5"/>
+<text x="42" y="112" text-anchor="start" font-size="13" font-weight="700" fill="#1F2937">领域服务（6 个有 /events）</text>
+<text x="42" y="132" text-anchor="start" font-size="11.5" fill="#1F2937">book-serve · font-serve</text>
+<text x="42" y="149" text-anchor="start" font-size="11.5" fill="#1F2937">wallpaper-serve · ink-serve</text>
+<text x="42" y="166" text-anchor="start" font-size="11.5" fill="#1F2937">transcribe-serve · note-serve</text>
+<text x="42" y="183" text-anchor="start" font-size="11.5" fill="#1F2937"></text>
+<text x="42" y="200" text-anchor="start" font-size="11.5" fill="#1F2937">变更处 bus.publish(area, kind)</text>
+<text x="42" y="217" text-anchor="start" font-size="11.5" fill="#1F2937">例 {"area":"books",</text>
+<text x="42" y="234" text-anchor="start" font-size="11.5" fill="#1F2937">    "kind":"staging","at":…}</text>
+<text x="42" y="251" text-anchor="start" font-size="11.0" fill="#6B7280">mind-serve 没有 /events，不订阅</text>
+<rect x="340" y="90" width="330" height="250" rx="8" fill="#EFF6FF" stroke="#2563EB" stroke-width="1.5"/>
+<text x="352" y="112" text-anchor="start" font-size="13" font-weight="700" fill="#1F2937">events::spawn（每个服务一条线程）</text>
+<text x="352" y="132" text-anchor="start" font-size="11.5" fill="#1F2937">follow(服务名)：</text>
+<text x="352" y="149" text-anchor="start" font-size="11.5" fill="#1F2937">· 服务没起：等注册表 inotify（registry_wake）</text>
+<text x="352" y="166" text-anchor="start" font-size="11.5" fill="#1F2937">· 连上：GET /events?ka=120（2 分钟心跳）</text>
+<text x="352" y="183" text-anchor="start" font-size="11.5" fill="#1F2937">· 断线：3 秒起指数退避到 60 秒</text>
+<text x="352" y="200" text-anchor="start" font-size="11.5" fill="#1F2937">· 对方回 404：长等 10 分钟或等它重新注册</text>
+<text x="352" y="217" text-anchor="start" font-size="11.5" fill="#1F2937">收到事件 → 补 "svc":"&lt;seg&gt;" 与</text>
+<text x="352" y="234" text-anchor="start" font-size="11.5" fill="#1F2937">"tab":"&lt;MODULES 声明的 tab&gt;" → 进总线</text>
+<text x="352" y="251" text-anchor="start" font-size="11.5" fill="#1F2937">book-serve 的事件还唤醒批量队列（books_wake）</text>
+<rect x="720" y="90" width="210" height="130" rx="8" fill="#EFF6FF" stroke="#2563EB" stroke-width="1.5"/>
+<text x="825.0" y="112" text-anchor="middle" font-size="13" font-weight="700" fill="#1F2937">EventBus 总线</text>
+<text x="825.0" y="132" text-anchor="middle" font-size="11.5" fill="#1F2937">进程内广播</text>
+<text x="825.0" y="149" text-anchor="middle" font-size="11.5" fill="#1F2937">每个订阅者一条有界队列（64）</text>
+<text x="825.0" y="166" text-anchor="middle" font-size="11.5" fill="#1F2937">满了丢事件：只是信号</text>
+<rect x="720" y="240" width="210" height="100" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="825.0" y="262" text-anchor="middle" font-size="13" font-weight="700" fill="#1F2937">网关自己也发</text>
+<text x="825.0" y="282" text-anchor="middle" font-size="11" fill="#1F2937">batch.rs 每次落盘 → books/batch</text>
+<text x="825.0" y="299" text-anchor="middle" font-size="11" fill="#1F2937">注册表变化 → manage/services</text>
+<rect x="980" y="90" width="230" height="250" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="992" y="112" text-anchor="start" font-size="13" font-weight="700" fill="#1F2937">浏览器 EventSource</text>
+<text x="992" y="132" text-anchor="start" font-size="11.5" fill="#1F2937">GET /api/events?ka=60</text>
+<text x="992" y="149" text-anchor="start" font-size="11.5" fill="#1F2937">（受登录守卫保护）</text>
+<text x="992" y="166" text-anchor="start" font-size="11.5" fill="#1F2937"></text>
+<text x="992" y="183" text-anchor="start" font-size="11.5" fill="#1F2937">按事件的 tab 找顶层标签：</text>
+<text x="992" y="200" text-anchor="start" font-size="11.5" fill="#1F2937">books / notes / other / manage</text>
+<text x="992" y="217" text-anchor="start" font-size="11.5" fill="#1F2937">不在前台只记"待刷"</text>
+<text x="992" y="234" text-anchor="start" font-size="11.5" fill="#1F2937">前台标签按 kind / svc</text>
+<text x="992" y="251" text-anchor="start" font-size="11.5" fill="#1F2937">决定重取哪几个接口</text>
+<polyline points="290,215 340,215" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#ev-arr)"/>
+<text x="315" y="207" text-anchor="middle" font-size="11" fill="#6B7280">SSE</text>
+<polyline points="670,155 720,155" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#ev-arr)"/>
+<polyline points="825,240 825,222" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#ev-arr)"/>
+<polyline points="930,155 980,155" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#ev-arr)"/>
+<text x="955" y="147" text-anchor="middle" font-size="11" fill="#6B7280">SSE</text>
+<rect x="30" y="370" width="1180" height="160" rx="8" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="42" y="392" text-anchor="start" font-size="13" font-weight="700" fill="#1F2937">规则</text>
+<text x="42" y="419" text-anchor="start" font-size="11.5" fill="#1F2937">· 设计约束（2026-09-06 定）：不轮询、不监听全盘、日志写入不触发；事件只来自服务代码的变更点，加上注册表目录的 inotify。</text>
+<text x="42" y="443" text-anchor="start" font-size="11.5" fill="#1F2937">· 事件只说"哪块该刷新了"，不带状态；网页收到后自己去取最新数据。断线期间漏掉的事件，靠重连成功后补刷当前标签页兜底。</text>
+<text x="42" y="467" text-anchor="start" font-size="11.5" fill="#1F2937">· 归属：服务事件的 tab 由 manage.rs::MODULES 每行的 tab 字段声明，网关汇聚时覆盖服务自带的同名字段；网关自己的两种事件在发出处写定。</text>
+<text x="42" y="491" text-anchor="start" font-size="11.5" fill="#1F2937">· 网页只认 core.js 的 EV 常量表；网关、book-serve 与 ui.rs 的测试核对 EV 表认得它们发的每个取值。</text>
+<text x="42" y="515" text-anchor="start" font-size="11.5" fill="#1F2937">· 页面隐藏超过 60 秒主动断开 SSE；连上时回 401/503 导致浏览器放弃重连时，网页先查 /api/session，再 5 秒起翻倍、封顶 5 分钟退避重开。</text>
 </svg>
