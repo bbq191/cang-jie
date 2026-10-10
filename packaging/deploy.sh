@@ -20,7 +20,15 @@
 #  · 要装的服务清单取自 ../shelf/manifest.sh（与设备端 install.sh 同一份），二进制缺失在**推送前**就报错并指路
 #    `sh shelf/build.sh`（旧版静默跳过，传完 20MB 才被设备端拒绝）；
 #  · 安装无论成败都清掉设备上可能残留的 shelf-pkg/.pw 密码临时文件；HTTPS 探测 curl 失败不再输出 "000000"。
+# 2026-10-10（安装脚本加固）：
+#  · 载荷 tar 确定性打包（按名排序、mtime 归零、属主 0/0）且 umask 022：同一份内容每次打出同一个 md5，设备上已是
+#    这份载荷就不重传（lib.sh 的 push_tar_verified；SHELF_FORCE_PUSH=1 强制重传）；文件属主/权限不再随开发机的
+#    uid 与 umask（旧版在 umask 077 下打出 0600/0700，设备上 root 解包后属主是开发机的 uid）。非 GNU tar 退回普通打包
+#    （照常可用，只是每次都重传）；
+#  · 写密码文件与安装并成同一次连接（密码仍经标准输入、不上命令行，写文件时子 shell 里 umask 077）；
+#  · 交叉编译（可能十几分钟）挪到拿唤醒锁之前；本机临时目录与唤醒锁统一由 lib.sh 的 cj_traps 收尾（HUP 也清）。
 set -eu
+umask 022
 cd "$(dirname "$0")"
 # shellcheck disable=SC1091
 . ./lib.sh
@@ -67,12 +75,14 @@ done
 # 要装的服务：与设备端 install.sh 同一个函数（manifest.sh 的 shelf_select）——--only 给的 + 网关（总会装）；缺省全装
 SEL="$(shelf_select "$ONLY")" || exit 2
 
+cj_traps   # 退出/被打断时：删本机载荷暂存树（cj_cleanup_local）、放唤醒锁（lib.sh）
+STAGE=""
+cj_cleanup_local() { if [ -n "$STAGE" ] && [ -d "$STAGE" ]; then rm -rf "$STAGE"; fi; }
 require_device
-# 单独跑时持设备唤醒锁到结束（被 install-all 编排时它已持有，这里什么都不做；见 lib.sh 的 device_awake_hold）
-trap 'device_awake_release' EXIT
-trap 'exit 130' INT TERM HUP
-device_awake_hold
 [ "${SHELF_NO_BUILD:-0}" = "1" ] || sh ../shelf/build.sh
+# 单独跑时持设备唤醒锁到结束（被 install-all 编排时它已持有，这里什么都不做；见 lib.sh 的 device_awake_hold）。
+# 放在编译之后：锁带 CJ_AWAKE_SECS 超时，别让长时间编译把它耗掉
+device_awake_hold
 
 # 推送前先核对：要装的服务的二进制与单元都在（缺了指路，别传完才被设备端拒绝）
 MISSING=""; MISSING_UNITS=""
@@ -90,7 +100,7 @@ if [ -n "$MISSING" ]; then
 fi
 [ -z "$MISSING_UNITS" ] || { echo "!! 仓库里缺这些 systemd 单元：$MISSING_UNITS"; exit 1; }
 
-STAGE="$(mktemp -d)"; trap 'rm -rf "$STAGE"; device_awake_release' EXIT
+STAGE="$(mktemp -d)"
 P="$STAGE/pkg/shelf"
 mkdir -p "$P/bin" "$P/systemd" "$P/lo-alias" "$P/xovi"
 # 只放要装的服务（旧版把四个目录下的单元整批拷上去，含已退役的 koreader-serve.service）
@@ -99,20 +109,24 @@ cp ../shelf/systemd/shelf.target "$P/systemd/"
 cp ../enhance/lo-alias/lo-alias.sh "$P/lo-alias/"
 cp ../shelf/install.sh ../shelf/uninstall.sh ../shelf/manifest.sh devlib.sh "$P/"
 cp ../shelf/xovi/*.qmd "$P/xovi/"
-tar -C "$STAGE/pkg" -cf "$STAGE/shelf-pkg.tar" shelf
+# 确定性打包（GNU tar）：同一份内容 → 同一个 md5，设备上已是这份就不重传；属主一律 0/0
+if ! tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner --format=gnu -C "$STAGE/pkg" -cf "$STAGE/shelf-pkg.tar" shelf 2>/dev/null; then
+    tar -C "$STAGE/pkg" -cf "$STAGE/shelf-pkg.tar" shelf
+fi
 
 REMOTE=/home/root/shelf-pkg
 echo "-- 推送到 root@$HOST:$REMOTE/ 并安装"
-push_tar_verified "$STAGE/shelf-pkg.tar" "$REMOTE" shelf/install.sh
-if [ "$HAVE_PW" = "1" ]; then
-    printf '%s' "$PASSWORD" | rssh_in "umask 077; cat > $REMOTE/.pw"
-    REMOTE_ARGS="$REMOTE_ARGS --password-file $REMOTE/.pw"
-fi
+CJ_FORCE_PUSH="${SHELF_FORCE_PUSH:-0}" push_tar_verified "$STAGE/shelf-pkg.tar" "$REMOTE" shelf/install.sh
 # REMOTE_ARGS 每个词已 shquote，要在远端展开。install.sh 读完密码文件即删；它没跑起来（ssh 断了等）时这里兜底清，
-# 不让密码明文留在设备上
-# 兜底清理与安装同一次连接（设备端 install.sh 退出后无论成败都 rm；省一次 ssh）
+# 不让密码明文留在设备上。兜底清理与安装同一次连接（设备端 install.sh 退出后无论成败都 rm；省一次 ssh）。
+# 有 --password 时连写密码文件也并进这一次（2026-10-10）：密码经标准输入写进 0600 文件（子 shell 里 umask 077，
+# 不影响随后 install.sh 的 umask），写失败就不装
 rc=0
-rssh "sh $REMOTE/shelf/install.sh$REMOTE_ARGS; rc=\$?; rm -f $REMOTE/.pw; exit \$rc" || rc=$?
+if [ "$HAVE_PW" = "1" ]; then
+    printf '%s' "$PASSWORD" | rssh_in "if (umask 077; cat > $REMOTE/.pw); then sh $REMOTE/shelf/install.sh$REMOTE_ARGS --password-file $REMOTE/.pw; rc=\$?; else echo '!! 写密码临时文件失败'; rc=1; fi; rm -f $REMOTE/.pw; exit \$rc" || rc=$?
+else
+    rssh "sh $REMOTE/shelf/install.sh$REMOTE_ARGS; rc=\$?; rm -f $REMOTE/.pw; exit \$rc" || rc=$?
+fi
 [ "$rc" -eq 0 ] || { echo "!! 设备端 install.sh 退出码 $rc（见上面的输出；载荷仍在 $REMOTE，可 ssh 上去重跑 sh $REMOTE/shelf/install.sh）"; exit "$rc"; }
 # host 侧 HTTPS 探测（设备 busybox wget 做不了自签）：无密码应 401
 if command -v curl >/dev/null 2>&1; then

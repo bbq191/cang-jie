@@ -49,16 +49,18 @@ elif ! make -C "$DIR" aarch64; then
     fi
 fi
 
-echo "== 推送到 root@$HOST:$DEST（暂存位置，不是 extensions.d；md5 逐个校验）=="
-push_verified "$DIR/$SO" "$DEST/$SO" \
+echo "== 推送到 root@$HOST:$DEST（暂存位置，不是 extensions.d；md5 逐个校验）并在设备端安装 =="
+cj_traps   # 本机临时文件（pv_exec / run_apply 的输出记录）在任何退出路径都清掉
+pv_set "$DIR/$SO" "$DEST/$SO" \
     "$DIR/deploy/install.sh" "$DEST/deploy/install.sh" \
     ./xovi-ext-install.sh "$DEST/deploy/xovi-ext-install.sh" \
     ./devlib.sh "$DEST/deploy/devlib.sh"
 
-echo "== 设备端安装 =="
 ARGS=""
 # 注：不用 `[ ... ] && ARGS=...`——条件为假时该写法本身以非零退出，set -e 下会把整个脚本提前炸掉，必须 if/fi。
 if [ "${DEFER_XOVI_START:-0}" = "1" ]; then
     ARGS="--no-restart"
 fi
-run_apply rssh "sh $(shquote "$DEST/deploy/install.sh") $ARGS"
+# 比对暂存文件 md5 与安装同一次往返（lib.sh 的 pv_exec：没变化一次装完；有变化 scp 后"复核+安装"，复核不过不装）
+install_ext() { run_apply rssh "${CJ_PV_GUARD}sh $(shquote "$DEST/deploy/install.sh") $ARGS"; }
+pv_exec install_ext

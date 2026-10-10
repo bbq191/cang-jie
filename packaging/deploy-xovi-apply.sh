@@ -18,6 +18,8 @@
 # 没标记但想强制重启（比如手工换过 .so）：--force。
 #
 # 用法：./deploy-xovi-apply.sh [host] [--force]      host 默认 10.11.99.1
+# 环境 CJ_AWAKE_RELEASE=1（install-all 给最后一步设）：上层持着部署唤醒锁时，不整机重启的路径在同一次往返里顺手放锁、
+# 打印 CJ-AWAKE-RELEASED，上层收尾就不再单独连一次（2026-10-10）。单独跑时没有上层锁，什么都不做。
 set -eu
 cd "$(dirname "$0")"
 # shellcheck disable=SC1091
@@ -33,20 +35,25 @@ done
 host_arg "$USAGE" "$@"
 require_device
 
+REL=-
+if [ "${CJ_AWAKE_RELEASE:-0}" = 1 ]; then REL="$(awake_release_arg)"; fi
+
 echo "== 设备端让 xovi 扩展 + qmd 生效（有待生效改动才整机重启一次，约 1 分钟，会打断设备上正在做的事）=="
-run_apply dev_script "$FORCE_RESTART" <<'DEVICE_SCRIPT'
+run_apply dev_script "$FORCE_RESTART" "$REL" <<'DEVICE_SCRIPT'
 set -eu
-FORCE_RESTART="$1"
+FORCE_RESTART="$1"; REL="$2"
+# 不整机重启的出口放掉上层（install-all）的部署唤醒锁；整机重启时锁随之消失，不用放
+rel() { if [ "$REL" != - ] && [ -w "$REL" ] && echo cangjie-deploy > "$REL" 2>/dev/null; then echo CJ-AWAKE-RELEASED; fi; return 0; }
 cj_require_root || exit 1
 PENDING="$(cj_pending_list | tr '\n' ' ')"
 if [ "$FORCE_RESTART" != "1" ]; then
     if ! cj_apply_needed; then
         echo "-- 没有待生效的落盘改动，且 xovi 已在 xochitl 里生效——不重启 xochitl（要强制重启：--force）"
-        exit 0
+        rel; exit 0
     fi
     if [ -z "$PENDING" ] && ! cj_xochitl_has_xovi && [ ! -x "$CJ_XOVI/start" ]; then
         echo "-- 设备没装 xovi（没有 $CJ_XOVI/start）也没有待生效改动，没有需要生效的东西，跳过"
-        exit 0
+        rel; exit 0
     fi
 fi
 [ -z "$PENDING" ] || echo "-- 待生效：$PENDING"
@@ -62,8 +69,10 @@ done
 # shellcheck disable=SC2086  # TAGS 有意按词展开
 if cj_xochitl_health "$OLD_PID" $TAGS; then
     echo "✅ xochitl 重启完成，xovi 扩展/qmd 已重新注入"
+    rel
 else
     echo "⚠️  健康检查未达预期。查 journalctl -u xochitl"
+    rel
     exit 1
 fi
 DEVICE_SCRIPT

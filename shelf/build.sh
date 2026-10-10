@@ -2,7 +2,9 @@
 # 交叉编译书架全部服务的 aarch64 **全静态** 二进制（reMarkable Paper Pro Move）。
 # 前置：rustup target add aarch64-unknown-linux-musl + aarch64 交叉 gcc。
 # 链接器与 CC/AR 在 .cargo/config.toml。
-set -e
+# 2026-10-10：去掉 host 的 `cargo build --release`——产物用不上（设备只要 aarch64；host CLI 09-18 已砍），
+# `cargo test` 已经编过一遍全部代码，每次部署白白多一整轮 release 编译。set -u：未定义变量当场报错。
+set -eu
 cd "$(dirname "$0")"
 # shellcheck disable=SC1091
 . ./manifest.sh   # SHELF_ALL / shelf_svc_of / shelf_svc_home：要编哪些项目、列哪些产物，与 packaging/deploy.sh 同一份清单
@@ -20,8 +22,7 @@ for s in $SHELF_ALL; do
     case " $HOMES " in *" $h "*) ;; *) HOMES="$HOMES $h" ;; esac
 done
 
-echo "== host 构建 + 测试 =="
-cargo build --release --workspace --locked
+echo "== host 测试 =="
 cargo test --workspace --locked --quiet
 
 echo "== 交叉编译 $TARGET（全静态）=="
@@ -37,7 +38,10 @@ done
 echo
 echo "aarch64 全静态产物："
 # 只列出存在的产物（if 而不是 `[ -f ] && echo`：后者在最后一项缺失时会让整个脚本以 1 退出）
+HAVE_FILE=0; command -v file >/dev/null 2>&1 && HAVE_FILE=1   # 只查一次；没装 file 时不误报 "dynamic"
 report() {
-    if [ -f "$1" ]; then echo "  $1  $(wc -c <"$1")B  $(file "$1" | grep -o 'statically linked' || echo dynamic)"; fi
+    [ -f "$1" ] || return 0
+    if [ "$HAVE_FILE" = 1 ]; then lk="$(file "$1" | grep -o 'statically linked' || echo dynamic)"; else lk="（本机没装 file，未核对是否静态链接）"; fi
+    echo "  $1  $(wc -c <"$1")B  $lk"
 }
 for s in $SHELF_ALL; do report "../$(shelf_svc_home "$s")/target/$TARGET/release/$(shelf_svc_of "$s")"; done

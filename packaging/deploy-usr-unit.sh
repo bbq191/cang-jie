@@ -38,17 +38,20 @@ esac
 DEST="/home/root/$(step_payload_dir "$NAME")"   # 载荷目录与 uninstall-all 共用 lib.sh 的 step_payload
 require_device
 
-echo "== 推送 $UNIT 到 root@$HOST:$DEST（md5 校验）=="
+cj_traps   # 本机临时文件（pv_exec 的输出记录）在任何退出路径都清掉
+echo "== 推送 $UNIT 到 root@$HOST:$DEST（md5 校验）并在设备端安装（dm-verity 门 + 带 trap 的 rw 窗口，devlib.sh）=="
+# 推送与安装：设备端先比对暂存文件 md5（lib.sh 的 pv_exec 守卫），全一致就同一次往返接着装；有变化先 scp 再"复核+安装"。
+# 复核没过时守卫删掉坏的暂存文件、安装段一条都不执行（/usr 与 ~/.local/bin 都没被碰）。
 if [ -n "$EXTRA_SRC" ]; then
-    push_verified "$SRC" "$DEST/$(basename "$SRC")" "$EXTRA_SRC" "$DEST/$(basename "$EXTRA_SRC")"
+    pv_set "$SRC" "$DEST/$(basename "$SRC")" "$EXTRA_SRC" "$DEST/$(basename "$EXTRA_SRC")"
 else
-    push_verified "$SRC" "$DEST/$(basename "$SRC")"
+    pv_set "$SRC" "$DEST/$(basename "$SRC")"
 fi
 
-echo "== 设备端安装（dm-verity 门 + 带 trap 的 rw 窗口，devlib.sh）=="
 # 设备端退出码 10 = dm-verity 激活、单元从没装过、这步实际没装上（非失败，汇总里记"前置条件不满足"）
-DEV_RC=0
-dev_script "$UNIT" "$DEST/$(basename "$SRC")" "${EXTRA_SRC:+$DEST/$(basename "$EXTRA_SRC")}" "$EXTRA_DST" "$NEEDS" "$START" "$VERITY_NOTE" <<'DEVICE_SCRIPT' || DEV_RC=$?
+# 守卫由 dev_pipe 自动拼在命令行最前（lib.sh 的 CJ_PV_GUARD）
+install_unit() {
+    dev_script "$UNIT" "$DEST/$(basename "$SRC")" "${EXTRA_SRC:+$DEST/$(basename "$EXTRA_SRC")}" "$EXTRA_DST" "$NEEDS" "$START" "$VERITY_NOTE" <<'DEVICE_SCRIPT'
 set -eu
 UNIT="$1"; SRC="$2"; EXTRA_SRC="$3"; EXTRA_DST="$4"; NEEDS="$5"; START="$6"; VERITY_NOTE="$7"
 cj_require_root || exit 1
@@ -98,6 +101,9 @@ if [ "$START" = "1" ]; then
 fi
 ls -l "$CJ_SYSD/multi-user.target.wants/$UNIT"
 DEVICE_SCRIPT
+}
+DEV_RC=0
+pv_exec install_unit || DEV_RC=$?
 [ "$DEV_RC" = 0 ] || [ "$DEV_RC" = 10 ] || exit "$DEV_RC"
 if [ "$DEV_RC" = 10 ]; then
     step_skipped "dm-verity 激活，$UNIT 没法装进 /usr"
