@@ -1,8 +1,12 @@
 //! HTTP 适配层（唯一碰 tiny_http 的地方）。领域模块只见 [`Request`]/[`Reply`] 两个纯数据类型。
 //! 路由 = (方法, 路径模式) → 处理函数；路径模式支持尾部 `/*` 前缀匹配与单段 `{param}`。
+mod encoding;
 mod router;
 mod server;
+mod test_request;
+pub use encoding::{percent_decode, percent_decode_path, percent_encode};
 pub use router::{encode_query, parse_query, Router};
+pub use test_request::TestRequest;
 pub use server::{serve, serve_with, Guard, GuardFn, GuardRequest, ServeOpts, DEFAULT_MAX_CONCURRENT};
 
 use serde::Serialize;
@@ -148,10 +152,9 @@ impl Request<'_> {
     pub fn q_flag(&self, k: &str) -> bool {
         matches!(self.q(k), Some("1") | Some("true"))
     }
-    /// `application/x-www-form-urlencoded` 表单 → map（小 body）。
+    /// `application/x-www-form-urlencoded` 表单 → map（小 body）；要直接得到 413/400 的用 [`Request::form`]。
     pub fn form_body(&mut self) -> Result<HashMap<String, String>, String> {
-        let b = self.read_small_body()?;
-        Ok(parse_query(&String::from_utf8_lossy(&b).replace('+', " ")))
+        self.form().map_err(|e| e.message)
     }
     pub fn q(&self, k: &str) -> Option<&str> {
         self.query.get(k).map(|s| s.as_str())
@@ -170,25 +173,40 @@ impl Request<'_> {
     /// 小 body（JSON 表单 / 配置补丁）整体读入，上限 [`SMALL_BODY_MAX`]。**超限报错**而不是截断：此前
     /// `take(1MB)` 静默截断，超长的 KOReader 配置补丁会被切成半截再交给合并脚本、JSON 报一句莫名的解析错
     /// （2026-09-24 审计）。多读 1 字节即可判定超限，不必读完整个超长 body。
+    ///
+    /// 返回 `String`、调用方再自己定状态码；要直接得到 413/400 的用 [`Request::small_body`]。
     pub fn read_small_body(&mut self) -> Result<Vec<u8>, String> {
-        let too_big = || format!("请求体超过 {} KB 上限", SMALL_BODY_MAX / 1024);
+        self.small_body().map_err(|e| e.message)
+    }
+    /// 同 [`Request::read_small_body`]，但错误直接是回执：超过 [`SMALL_BODY_MAX`] → 413，读失败（客户端半路断开/读超时）→ 400。
+    pub fn small_body(&mut self) -> Result<Vec<u8>, ApiError> {
+        let too_big = || ApiError::too_large(format!("请求体超过 {} KB 上限", SMALL_BODY_MAX / 1024));
         if self.content_length.is_some_and(|n| n as u64 > SMALL_BODY_MAX) {
             return Err(too_big());
         }
         let mut v = Vec::new();
-        self.body.take(SMALL_BODY_MAX + 1).read_to_end(&mut v).map_err(|e| e.to_string())?;
+        self.body.take(SMALL_BODY_MAX + 1).read_to_end(&mut v).map_err(|e| ApiError::bad(e.to_string()))?;
         if v.len() as u64 > SMALL_BODY_MAX {
             return Err(too_big());
         }
         Ok(v)
     }
     pub fn json_body(&mut self) -> Result<serde_json::Value, String> {
-        let b = self.read_small_body()?;
-        serde_json::from_slice(&b).map_err(|e| format!("JSON 解析失败: {e}"))
+        self.json_value().map_err(|e| e.message)
     }
-    /// JSON body → [`JsonBody`]（解析失败 400）。
+    /// JSON body → `Value`；超限 413，读失败 / 不是合法 JSON → 400。
+    pub fn json_value(&mut self) -> Result<serde_json::Value, ApiError> {
+        let b = self.small_body()?;
+        serde_json::from_slice(&b).map_err(|e| ApiError::bad(format!("JSON 解析失败: {e}")))
+    }
+    /// `application/x-www-form-urlencoded` 表单 → map；超限 413，读失败 400。
+    pub fn form(&mut self) -> Result<HashMap<String, String>, ApiError> {
+        let b = self.small_body()?;
+        Ok(parse_query(&String::from_utf8_lossy(&b).replace('+', " ")))
+    }
+    /// JSON body → [`JsonBody`]（解析失败 400；超过 [`SMALL_BODY_MAX`] 413——2026-10-10 前超限也报 400）。
     pub fn json(&mut self) -> Result<JsonBody, ApiError> {
-        self.json_body().map(JsonBody).map_err(ApiError::bad)
+        self.json_value().map(JsonBody)
     }
     /// multipart 请求的 boundary；非 multipart → 400。
     pub fn multipart_boundary(&self) -> Result<String, ApiError> {
@@ -253,6 +271,26 @@ pub struct ApiError {
     pub message: String,
 }
 impl ApiError {
+    /// 任意状态码（下面几个具名构造器覆盖不到的，比如代理把上游的状态码原样透传）。
+    pub fn new(status: u16, m: impl Into<String>) -> ApiError {
+        ApiError { status, message: m.into() }
+    }
+    /// 409：与现有状态冲突（同名已存在、正在处理中）。
+    pub fn conflict(m: impl Into<String>) -> ApiError {
+        ApiError::new(409, m)
+    }
+    /// 413：请求体超过上限。
+    pub fn too_large(m: impl Into<String>) -> ApiError {
+        ApiError::new(413, m)
+    }
+    /// 502：调用的下游服务 / xochitl 回了错误或不像样的应答。
+    pub fn bad_gateway(m: impl Into<String>) -> ApiError {
+        ApiError::new(502, m)
+    }
+    /// 503：下游服务没在运行 / 暂时不可用（连不上）。
+    pub fn unavailable(m: impl Into<String>) -> ApiError {
+        ApiError::new(503, m)
+    }
     pub fn bad(m: impl Into<String>) -> ApiError {
         ApiError { status: 400, message: m.into() }
     }
@@ -312,12 +350,12 @@ mod tests {
         assert_eq!(b.opt_str_list("nope"), None, "没给 → None");
         assert_eq!(b.opt_str_list("s"), None, "不是数组 → None");
         assert_eq!(JsonBody(serde_json::json!({"l": []})).opt_str_list("l"), Some(vec![]), "空数组也算给了");
-        let mut empty: &[u8] = b"";
-        let r = Request { method: Method::Get, path: "/".into(), query: parse_query("limit=50&bad=x&blank=%20"), params: HashMap::new(), content_type: String::new(), content_length: None, headers: vec![], body: &mut empty };
-        assert_eq!(r.q_parse::<usize>("limit"), Some(50));
-        assert_eq!(r.q_parse::<usize>("bad"), None);
-        assert_eq!(r.q_required("limit").unwrap(), "50");
-        assert_eq!(r.q_required("blank").unwrap_err().message, "缺 blank");
+        TestRequest::new(Method::Get, "/").query_string("limit=50&bad=x&blank=%20").with(|r| {
+            assert_eq!(r.q_parse::<usize>("limit"), Some(50));
+            assert_eq!(r.q_parse::<usize>("bad"), None);
+            assert_eq!(r.q_required("limit").unwrap(), "50");
+            assert_eq!(r.q_required("blank").unwrap_err().message, "缺 blank");
+        });
     }
 
     #[test]
@@ -347,5 +385,29 @@ mod tests {
         assert!(req_with(&mut r, Some(max + 1)).read_small_body().is_err(), "声明长度超限直接拒，不读 body");
         let mut r: &[u8] = b"{\"a\":1}";
         assert_eq!(req_with(&mut r, Some(7)).json().unwrap().0["a"], 1, "正常小 body 不受影响");
+    }
+
+    /// 返回 `ApiError` 的取 body 辅助：超限 413、坏 JSON 400；旧的返回 `String` 的几个文案不变。
+    #[test]
+    fn api_body_helpers_give_413_for_oversize_and_400_for_bad_json() {
+        let max = SMALL_BODY_MAX as usize;
+        let over = vec![b'a'; max + 1];
+        let mut r: &[u8] = &over;
+        assert_eq!(req_with(&mut r, None).small_body().unwrap_err().status, 413);
+        let mut r: &[u8] = b"{}";
+        assert_eq!(req_with(&mut r, Some(max + 1)).json().err().map(|e| e.status), Some(413), "json() 超限也是 413");
+        let mut r: &[u8] = b"{}";
+        assert_eq!(req_with(&mut r, Some(max + 1)).form().unwrap_err().status, 413);
+        let mut r: &[u8] = b"{half";
+        let e = req_with(&mut r, None).json_value().unwrap_err();
+        assert!(e.status == 400 && e.message.starts_with("JSON 解析失败"), "{e:?}");
+        let mut r: &[u8] = b"{half";
+        assert!(req_with(&mut r, None).json_body().unwrap_err().starts_with("JSON 解析失败"), "旧接口文案不变");
+        let mut r: &[u8] = b"a=1+2&b=x";
+        assert_eq!(req_with(&mut r, None).form().unwrap()["a"], "1 2");
+        let mut r: &[u8] = b"a=1+2";
+        assert_eq!(req_with(&mut r, None).form_body().unwrap()["a"], "1 2");
+        assert_eq!((ApiError::new(418, "x").status, ApiError::conflict("x").status, ApiError::too_large("x").status), (418, 409, 413));
+        assert_eq!((ApiError::bad_gateway("x").status, ApiError::unavailable("x").status), (502, 503));
     }
 }

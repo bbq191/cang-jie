@@ -287,6 +287,49 @@ mod tests {
         assert!(text.contains(r#""ip":"127.0.0.1""#), "{text}");
     }
 
+    /// 回归（RUSTSEC-2024-0336）：TLS 握手中途收到 close_notify 告警，连接线程不能在 rustls `complete_io` 里空转
+    /// （rustls 0.20 整个系列都会死循环：网关 443 上任何局域网主机发 7 个字节，就能让一条连接线程吃满一个核）。
+    /// 要量"有没有线程在空转"只能看进程 CPU 时间，而同一测试进程里别的测试（PBKDF2 之类）也在吃 CPU，
+    /// 所以把探针放进独立子进程只跑它一个（`--exact … --ignored`），子进程自己量自己。
+    /// 2026-10-10 实测：rustls 0.20 时子进程 1.5 秒窗口里吃满 ~1.5 秒 CPU（红），0.23 时近 0（绿）。
+    #[test]
+    fn close_notify_during_handshake_does_not_spin() {
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "http::server::tests::close_notify_probe", "--ignored", "--test-threads=1", "--nocapture"])
+            .output()
+            .unwrap();
+        let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        assert!(out.status.success() && text.contains("1 passed"), "{text}");
+    }
+
+    /// [`close_notify_during_handshake_does_not_spin`] 的子进程探针：起 HTTPS 服务，发一条明文 close_notify 告警后
+    /// 不关自己这端，看接下来 1.5 秒本进程吃了多少 CPU。
+    #[test]
+    #[ignore = "由 close_notify_during_handshake_does_not_spin 在独立子进程里跑（要单独量本进程 CPU）"]
+    fn close_notify_probe() {
+        fn cpu_secs() -> f64 {
+            let mut u: libc::rusage = unsafe { std::mem::zeroed() };
+            // SAFETY: getrusage 只往给定的结构体里写。
+            unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut u) };
+            let tv = |t: libc::timeval| t.tv_sec as f64 + t.tv_usec as f64 / 1e6;
+            tv(u.ru_utime) + tv(u.ru_stime)
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let pem = crate::tls::ensure_ca_signed(dir.path(), &[]).unwrap();
+        let port = free_port_and_wait(move |a| {
+            let _ = serve_with(&a, Router::new(), ServeOpts { tls: Some(pem), ..ServeOpts::default() });
+        });
+        let mut s = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        // TLS 明文告警记录：类型 21（alert）、版本 3.3、长度 2、级别 1（warning）、描述 0（close_notify）
+        s.write_all(&[21, 3, 3, 0, 2, 1, 0]).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let c0 = cpu_secs();
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        let used = cpu_secs() - c0;
+        assert!(used < 0.5, "握手中收到 close_notify 后有线程在空转：1.5 秒里吃了 {used:.2} 秒 CPU");
+        drop(s);
+    }
+
     /// 只发半个请求头就不动的连接：到读空闲超时就被断开（不再永久占线程）；监听本身不受影响，
     /// 空闲超过超时时长之后新连接照常服务（曾试过把 SO_RCVTIMEO 设在监听 socket 上，accept 也跟着
     /// 超时、上游 accept 循环遇错即退出，整个服务停摆——这条测试的后半段就是防它）。

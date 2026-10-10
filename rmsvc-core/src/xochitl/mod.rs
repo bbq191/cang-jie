@@ -3,7 +3,9 @@
 //! - `POST http://<host>/upload`（multipart 字段 `file`）免重启进库；xochitl web 只绑 USB 网口，
 //!   设备端靠 lo/usb1 别名让 `10.11.99.1` 常驻可达。
 //! - **GET-then-upload 归档**：`GET /documents/<folder-uuid>` 设"当前文件夹"是全局服务端状态，
-//!   之后的 `/upload` 落进该文件夹（metadata.parent 会被忽略）。因为是全局状态，进程内的"设文件夹 → 上传"用一把锁串成一对。
+//!   之后的 `/upload` 落进该文件夹（metadata.parent 会被忽略）。因为是全局状态，"设文件夹 → 上传"用一把锁串成一对
+//!   （进程内锁 + 运行时目录下锁文件的 flock，跨进程也互斥，见 `claim::UploadLock`）。
+//! - **上传并认领**：`/upload` 不回 uuid，[`Xochitl::upload_and_claim`] 按快照 + 判据认出新文档，见 `claim` 子模块。
 //! - **防复制风暴**：大书 `/upload` 处理慢 → 408/读超时但文档已创建，此类错误**绝不重试**。
 use std::io::{Cursor, Read, Write};
 use std::path::Path;
@@ -11,6 +13,13 @@ use std::path::Path;
 // 书库 `.metadata`/`.content` 的只读查询单独一个子模块（不碰 HTTP），对外路径不变。
 mod library;
 pub use library::*;
+// 文件夹类型（根 / uuid）与上传并认领。
+mod claim;
+pub mod content;
+mod folder;
+pub use claim::{ClaimBy, ClaimError, ClaimWait, Claimed, UploadBody, LOCK_FILE_NAME};
+pub use content::PageTable;
+pub use folder::{Folder, FolderId};
 
 pub const DEFAULT_HOST: &str = "10.11.99.1";
 
@@ -30,6 +39,8 @@ pub struct Xochitl {
     agent: ureq::Agent,
     host: String,
     library_dir: std::path::PathBuf,
+    /// 跨进程上传锁文件（见 `claim::UploadLock`）；`None` 只做进程内互斥。
+    upload_lock: Option<std::path::PathBuf>,
 }
 
 impl Xochitl {
@@ -41,7 +52,42 @@ impl Xochitl {
             .timeout_connect(std::time::Duration::from_secs(10))
             .timeout(std::time::Duration::from_secs(timeout_secs))
             .build();
-        Xochitl { agent, host: host.to_string(), library_dir: library_dir.to_path_buf() }
+        let upload_lock = claim::default_lock_file(library_dir);
+        Xochitl { agent, host: host.to_string(), library_dir: library_dir.to_path_buf(), upload_lock }
+    }
+
+    /// 改用（或关掉，`None`）跨进程上传锁文件。缺省：书库目录是本机真实 xochitl 书库时用运行时目录下的
+    /// [`LOCK_FILE_NAME`]，否则不用（见 `claim::default_lock_file`）。
+    pub fn with_upload_lock(mut self, lock_file: Option<std::path::PathBuf>) -> Xochitl {
+        self.upload_lock = lock_file;
+        self
+    }
+
+    /// 按 visibleName 在**整个书库**里找活文件夹（多级同名时有歧义，见 [`find_folder_by_name`]）。按层找用 [`Self::child_folder`]。
+    pub fn folder_by_name(&self, name: &str) -> Option<FolderId> {
+        self.find_folder(name).map(|u| FolderId::unchecked(&u))
+    }
+
+    /// 在 `parent` 正下方按名字找活文件夹，见 [`find_child_folder`]。
+    pub fn child_folder(&self, parent: &Folder, name: &str) -> Option<FolderId> {
+        self.find_child_folder(parent.as_parent_str(), name).map(|u| FolderId::unchecked(&u))
+    }
+
+    /// 文档 `uuid` 当前所在的文件夹；查不到 / 在回收站 → `None`。
+    pub fn folder_of_document(&self, uuid: &str) -> Option<Folder> {
+        self.parent_folder(uuid).map(|p| Folder::from_legacy_uuid(&p))
+    }
+
+    /// 只上传、不认领（不需要新文档 uuid 的场合）。要 uuid 用 [`Self::upload_and_claim`]。
+    pub fn upload_to(&self, body: UploadBody<'_>, filename: &str, content_type: &str, folder: &Folder) -> Result<Delivery, String> {
+        match body {
+            UploadBody::File(path) => {
+                let file = std::fs::File::open(path).map_err(|e| format!("打开 {}: {e}", path.display()))?;
+                let len = file.metadata().map_err(|e| e.to_string())?.len();
+                self.upload_body(std::io::BufReader::new(file), len, filename, content_type, folder)
+            }
+            UploadBody::Bytes(b) => self.upload_body(Cursor::new(b), b.len() as u64, filename, content_type, folder),
+        }
     }
 
     /// 按 visibleName 找非回收站文件夹 uuid。
@@ -91,7 +137,7 @@ impl Xochitl {
     /// 同 [`Self::upload`]，但目标文件夹直接给 **uuid**（空串＝根），见 [`Self::upload_file_into`]。
     /// note-serve 的笔记本 zip（几 KB，内存里合成）进书本所在文件夹用这个，不用先落临时文件。
     pub fn upload_into(&self, data: &[u8], filename: &str, content_type: &str, folder_uuid: &str) -> Result<Delivery, String> {
-        self.upload_body(Cursor::new(data), data.len() as u64, filename, content_type, folder_uuid)
+        self.upload_to(UploadBody::Bytes(data), filename, content_type, &Folder::from_legacy_uuid(folder_uuid))
     }
 
     /// 文件夹名 → uuid（空名＝根；找不到也落根，best-effort）。按名字的上传接口都先过这一步，再走按 uuid 的那条路。
@@ -112,9 +158,7 @@ impl Xochitl {
     /// 同 [`Self::upload_file`]，但目标文件夹直接给 **uuid**（空串＝根），不按名字在整个书库里找——多级文件夹里
     /// 不同上级下可能有同名的子文件夹（「漫画/卷01」和「小说/卷01」），只有 uuid 不会落错（2026-10-07 直接导入按层建文件夹）。
     pub fn upload_file_into(&self, path: &Path, filename: &str, content_type: &str, folder_uuid: &str) -> Result<Delivery, String> {
-        let file = std::fs::File::open(path).map_err(|e| format!("打开 {}: {e}", path.display()))?;
-        let len = file.metadata().map_err(|e| e.to_string())?.len();
-        self.upload_body(std::io::BufReader::new(file), len, filename, content_type, folder_uuid)
+        self.upload_to(UploadBody::File(path), filename, content_type, &Folder::from_legacy_uuid(folder_uuid))
     }
 
     /// **突破网页上传的体积上限**（xochitl `/upload` 约 100MB 硬限，超了直接断连）：先上传 `placeholder`
@@ -134,7 +178,12 @@ impl Xochitl {
 
     /// 同 [`Self::upload_large_file`]，但目标文件夹直接给 **uuid**（空串＝根），见 [`Self::upload_file_into`]。
     pub fn upload_large_file_into(&self, path: &Path, filename: &str, content_type: &str, folder_uuid: &str, placeholder: &[u8], pdf_pages: Option<usize>) -> Result<String, String> {
-        let ext = filename.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+        self.upload_large(path, filename, content_type, &Folder::from_legacy_uuid(folder_uuid), placeholder, pdf_pages)
+    }
+
+    /// 同 [`Self::upload_large_file`]，目标文件夹用 [`Folder`]（根 / uuid）给。
+    pub fn upload_large(&self, path: &Path, filename: &str, content_type: &str, folder: &Folder, placeholder: &[u8], pdf_pages: Option<usize>) -> Result<String, String> {
+        let ext = crate::formats::ext_of(filename);
         if ext != "epub" && ext != "pdf" {
             return Err("只有 EPUB/PDF 能走大文件通道".into());
         }
@@ -148,51 +197,42 @@ impl Xochitl {
         // 替换完成：替换前那份文件仍是占位大小，后来者照样会认错（2026-09-25 第四轮审计）。
         static LARGE: std::sync::Mutex<()> = std::sync::Mutex::new(());
         let _serial = crate::sync::lock(&LARGE);
-        let since = crate::clock::now_ms().saturating_sub(2_000);
-        self.upload_body(Cursor::new(placeholder), placeholder.len() as u64, filename, content_type, folder_uuid)?;
-        // 等 xochitl 建好条目（`.metadata` + 占位文件都落地），按占位字节数确认是"我们这一份"而不是别人同时传的。
-        // 等书库目录的 inotify 变化再查（此前每 200ms 扫一遍书库，最长 20 秒 100 轮）。
-        let claim = || {
-            find_documents_since(&dir, since)
-                .into_iter()
-                .find(|d| std::fs::metadata(dir.join(format!("{}.{ext}", d.uuid))).map(|m| m.len() == placeholder.len() as u64).unwrap_or(false))
-                .map(|d| d.uuid)
+        // 等 xochitl 建好条目（`.metadata` + 占位文件都落地），按占位字节数确认是"我们这一份"而不是别人同时传的
+        // （快照之外的新文档里找，见 `claim` 子模块；等书库目录的 inotify 变化再查）。
+        let wait = ClaimWait { debounce: LARGE_CLAIM_DEBOUNCE, ..ClaimWait::new(LARGE_CLAIM_TIMEOUT) };
+        let uuid = match self.upload_and_claim(UploadBody::Bytes(placeholder), filename, content_type, folder, ClaimBy::SameSize, wait) {
+            Ok(c) => c.uuid,
+            Err(ClaimError::Upload(e)) => return Err(e),
+            Err(ClaimError::NotFound { .. }) => return Err("占位文档已上传，但 20 秒内没在书库里找到它（未替换成真文件）".into()),
         };
-        let uuid = crate::fswatch::wait_for(&dir, LARGE_CLAIM_DEBOUNCE, LARGE_CLAIM_TIMEOUT, claim).ok_or("占位文档已上传，但 20 秒内没在书库里找到它（未替换成真文件）")?;
-        let tmp = dir.join(format!("{uuid}.{ext}.new"));
+        // 临时副本用 ScratchFile：出错 / panic 时自动删，不把几百 MB 的半成品留在书库目录里（隐藏名，xochitl 不当文档）。
+        let tmp = crate::fs::ScratchFile::new(&dir, &format!(".{uuid}."), &format!("{ext}.new"));
         let dest = dir.join(format!("{uuid}.{ext}"));
-        let fail = |e: String| {
-            let _ = std::fs::remove_file(&tmp);
-            format!("{e}（书库里可能留有占位文档「{filename}」，请手动删除）")
-        };
-        std::fs::copy(path, &tmp).map_err(|e| fail(format!("复制大文件失败: {e}")))?;
-        let got = std::fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0);
+        let fail = |e: String| format!("{e}（书库里可能留有占位文档「{filename}」，请手动删除）");
+        std::fs::copy(path, tmp.path()).map_err(|e| fail(format!("复制大文件失败: {e}")))?;
+        let got = std::fs::metadata(tmp.path()).map(|m| m.len()).unwrap_or(0);
         if got != want_len {
             return Err(fail(format!("复制后大小不符（{got} ≠ {want_len}）")));
         }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
-        }
+        crate::fs::set_mode(tmp.path(), 0o600);
         if ext == "epub" {
             let _ = std::fs::remove_file(dir.join(format!("{uuid}.pdf")));
             let _ = std::fs::remove_file(dir.join(format!("{uuid}.epubindex")));
         } else if let Some(n) = pdf_pages {
             rewrite_pdf_content(&dir, &uuid, n, want_len).map_err(fail)?;
         }
-        std::fs::rename(&tmp, &dest).map_err(|e| fail(format!("替换文件失败: {e}")))?;
+        std::fs::rename(tmp.path(), &dest).map_err(|e| fail(format!("替换文件失败: {e}")))?;
         Ok(uuid)
     }
 
-    /// 设当前文件夹（`folder_uuid`，空串＝根）→ 流式 `/upload`。
-    fn upload_body(&self, body: impl Read, body_len: u64, filename: &str, content_type: &str, folder_uuid: &str) -> Result<Delivery, String> {
+    /// 设当前文件夹 → 流式 `/upload`。
+    fn upload_body(&self, body: impl Read, body_len: u64, filename: &str, content_type: &str, folder: &Folder) -> Result<Delivery, String> {
         // "设当前文件夹 → /upload" 必须成对、不被打断：当前文件夹是 xochitl 服务端的**全局**状态，两次投递并发时
         // （网关允许 3 本小书同时处理）A 设完文件夹、B 又设了自己的，A 的书就落进 B 的文件夹。进程内所有
-        // `Xochitl` 实例共用一把锁（static），把这一对串起来；只锁上传本身。
-        // 跨进程（note-serve 也会投笔记本）仍可能交错，这把锁管不到（2026-09-24 审计）。
-        static UPLOAD: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _serial = crate::sync::lock(&UPLOAD);
+        // `Xochitl` 实例共用一把锁，再加运行时目录下锁文件的 flock 管跨进程（note-serve 也会投笔记本，2026-09-24
+        // 审计记过它管不到；2026-10-10 补上）；只锁上传本身。
+        let _serial = claim::UploadLock::acquire(self.upload_lock.as_deref());
+        let folder_uuid = folder.as_parent_str();
         // 设文件夹失败（文件夹刚被删、xochitl 回错）时退回书库根：不退的话"当前文件夹"还是上一次投递设的那个，
         // 这本书会落进别人的文件夹，而文档承诺的是"找不到→书库根"（2026-10-09 第六轮审计）。
         if !self.set_folder(folder_uuid) && !folder_uuid.is_empty() {
@@ -200,8 +240,8 @@ impl Xochitl {
         }
         match send_multipart(&self.agent, &self.host, body, body_len, filename, content_type) {
             Ok(resp) => Ok(Delivery::Delivered(resp)),
-            Err(e) if upload_likely_delivered(&e) => Ok(Delivery::LikelyDelivered(e)),
-            Err(e) => Err(e),
+            Err(e) if e.likely_delivered() => Ok(Delivery::LikelyDelivered(e.message())),
+            Err(e) => Err(e.message()),
         }
     }
 }
@@ -216,9 +256,7 @@ fn rewrite_pdf_content(dir: &Path, uuid: &str, pages: usize, size: u64) -> Resul
     obj.insert("pages".into(), (0..pages).map(|_| serde_json::Value::String(uuid::Uuid::new_v4().to_string())).collect::<Vec<_>>().into());
     obj.insert("redirectionPageMap".into(), (0..pages).collect::<Vec<_>>().into());
     obj.insert("sizeInBytes".into(), size.to_string().into());
-    let tmp = dir.join(format!("{uuid}.content.new"));
-    std::fs::write(&tmp, serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?).map_err(|e| format!("写 .content 失败: {e}"))?;
-    std::fs::rename(&tmp, &path).map_err(|e| format!("替换 .content 失败: {e}"))
+    crate::fs::write_atomic(&path, serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?.as_bytes()).map_err(|e| format!("写 .content 失败: {e}"))
 }
 
 /// 流式发一份 multipart `/upload` 请求：`body`（文件内容，长度已知 `body_len`）不整体缓冲，
@@ -226,12 +264,12 @@ fn rewrite_pdf_content(dir: &Path, uuid: &str, pages: usize, size: u64) -> Resul
 /// `ureq` 按已知长度发送而不是退化成 chunked（`ureq::Request::send` 文档：调用方可设
 /// `Content-Length`，设了就不用 chunked）——线上字节序列跟改动前逐字节相同，只是不再囤在一个
 /// `Vec<u8>` 里。
-fn send_multipart(agent: &ureq::Agent, host: &str, body: impl Read, body_len: u64, filename: &str, content_type: &str) -> Result<String, String> {
+fn send_multipart(agent: &ureq::Agent, host: &str, body: impl Read, body_len: u64, filename: &str, content_type: &str) -> Result<String, UploadError> {
     let boundary = format!("----shelf{}", uuid::Uuid::new_v4().simple());
     let mut header = Vec::new();
     let filename = header_safe_filename(filename);
     write!(header, "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\nContent-Type: {content_type}\r\n\r\n")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| UploadError::Other(e.to_string()))?;
     let footer = format!("\r\n--{boundary}--\r\n").into_bytes();
     let total_len = header.len() as u64 + body_len + footer.len() as u64;
     let reader = Cursor::new(header).chain(body).chain(Cursor::new(footer));
@@ -241,9 +279,63 @@ fn send_multipart(agent: &ureq::Agent, host: &str, body: impl Read, body_len: u6
         .set("Content-Length", &total_len.to_string())
         .send(reader);
     match resp {
-        Ok(r) => r.into_string().map_err(|e| e.to_string()),
-        Err(ureq::Error::Status(c, r)) => Err(format!("HTTP {c}: {}", r.into_string().unwrap_or_default())),
-        Err(e) => Err(format!("上传失败: {e}")),
+        // 已经拿到 2xx：书一定进库了，读应答体出错（读超时、连接被断）也只是回执不全，按"很可能已送达"处理，绝不重试。
+        Ok(r) => r.into_string().map_err(|e| UploadError::AfterSuccess(e.to_string())),
+        Err(ureq::Error::Status(c, r)) => Err(UploadError::Status(c, r.into_string().unwrap_or_default())),
+        Err(ureq::Error::Transport(t)) => Err(UploadError::classify_transport(&t)),
+    }
+}
+
+/// `/upload` 失败的分类（按 `ureq::Error` 的种类判，不再把错误拼成字符串后找 `408`/`timeout` 子串——
+/// xochitl 回 5xx 且响应体里带这些字样时会被误判成"已送达"、不重试，2026-10-10 审计 CORE-8）。
+#[derive(Debug, PartialEq)]
+enum UploadError {
+    /// xochitl 回了非 2xx：状态码 + 响应体。408 = 它自己处理超时（大书），文档已建好。
+    Status(u16, String),
+    /// 连接阶段失败（DNS / 连不上 / 连接超时）：请求根本没送到，可安全重试。
+    Connect(String),
+    /// 连上之后读写超时：请求已经送到，xochitl 处理大书慢——很可能已创建文档。
+    Timeout(String),
+    /// 已收到 2xx，读应答体时出错。
+    AfterSuccess(String),
+    /// 其它（连接中途被断、应答格式坏……）：不确定是否送达，按失败处理（与改动前一致）。
+    Other(String),
+}
+
+impl UploadError {
+    fn classify_transport(t: &ureq::Transport) -> UploadError {
+        let msg = format!("上传失败: {t}");
+        match t.kind() {
+            ureq::ErrorKind::Dns | ureq::ErrorKind::ConnectionFailed | ureq::ErrorKind::InvalidUrl | ureq::ErrorKind::UnknownScheme => UploadError::Connect(msg),
+            ureq::ErrorKind::Io if Self::is_timeout(t) => UploadError::Timeout(msg),
+            _ => UploadError::Other(msg),
+        }
+    }
+
+    /// 传输错误的根源是 I/O 超时（ureq 把读超时的 WouldBlock 归一成 TimedOut；写超时同样是 TimedOut/WouldBlock）。
+    fn is_timeout(t: &ureq::Transport) -> bool {
+        let mut cur: Option<&(dyn std::error::Error + 'static)> = std::error::Error::source(t);
+        while let Some(e) = cur {
+            if let Some(io) = e.downcast_ref::<std::io::Error>() {
+                return matches!(io.kind(), std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock);
+            }
+            cur = e.source();
+        }
+        false
+    }
+
+    /// 是否属于"很可能已送达"（防复制风暴：这类错误绝不重试）。
+    fn likely_delivered(&self) -> bool {
+        matches!(self, UploadError::Status(408, _) | UploadError::Timeout(_) | UploadError::AfterSuccess(_))
+    }
+
+    /// 给人看的文案（与改动前的字符串格式一致：`HTTP <码>: <体>` / `上传失败: <原因>`）。
+    fn message(self) -> String {
+        match self {
+            UploadError::Status(c, body) => format!("HTTP {c}: {body}"),
+            UploadError::Connect(m) | UploadError::Timeout(m) | UploadError::Other(m) => m,
+            UploadError::AfterSuccess(m) => format!("已送达，读回执失败: {m}"),
+        }
     }
 }
 
@@ -257,12 +349,6 @@ fn header_safe_filename(name: &str) -> String {
         '\r' | '\n' => ' ',
         c => c,
     }).collect()
-}
-
-/// 错误是否属于"很可能已送达"（408/读超时且非连接阶段）。
-pub fn upload_likely_delivered(err: &str) -> bool {
-    let e = err.to_ascii_lowercase();
-    (e.contains("408") || e.contains("timed out") || e.contains("timeout")) && !e.contains("connect")
 }
 
 #[cfg(test)]
@@ -412,6 +498,96 @@ mod tests {
         assert_eq!(x.folder_path("c2"), "", "uuid 形状不对的不往上找");
     }
 
+    /// 上传并认领：快照里已有的同字节旧文档不算；按字节 / visibleName 认出新出现的那一份。
+    #[test]
+    fn upload_and_claim_skips_snapshot_and_matches_by_strategy() {
+        let lib = tempfile::tempdir().unwrap();
+        let addr = fake_xochitl(lib.path().to_path_buf());
+        let x = Xochitl::new(&addr, lib.path(), 10);
+        let now = crate::clock::now_ms();
+        // 两秒窗口内刚进库的同字节旧文档（比如上一回导入的同一本书）：快照排除它
+        std::fs::write(lib.path().join("old.epub"), b"PK-same").unwrap();
+        std::fs::write(lib.path().join("old.metadata"), format!(r#"{{"type":"DocumentType","visibleName":"a.epub","parent":"","createdTime":"{now}"}}"#)).unwrap();
+        let src = lib.path().join("src.bin");
+        std::fs::write(&src, b"PK-same").unwrap();
+        let wait = ClaimWait::new(std::time::Duration::from_secs(5));
+        let c = x.upload_and_claim(UploadBody::File(&src), "a.epub", "application/epub+zip", &Folder::Root, ClaimBy::SameBytes, wait).unwrap();
+        assert_ne!(c.uuid, "old", "快照里已有的旧文档不能认成新的");
+        assert!(matches!(c.delivery, Delivery::Delivered(_)));
+        assert_eq!(std::fs::read(lib.path().join(format!("{}.epub", c.uuid))).unwrap(), b"PK-same");
+        let n = x.upload_and_claim(UploadBody::Bytes(b"notebook"), "笔记.rmdoc", "application/zip", &Folder::Root, ClaimBy::VisibleName("笔记.rmdoc"), wait).unwrap();
+        assert!(n.uuid != c.uuid && n.uuid != "old");
+        let s = x.upload_and_claim(UploadBody::Bytes(b"%PDF-sz"), "p.pdf", "application/pdf", &Folder::Root, ClaimBy::SameSize, wait).unwrap();
+        assert_eq!(std::fs::metadata(lib.path().join(format!("{}.pdf", s.uuid))).unwrap().len(), 7);
+    }
+
+    /// 判据都不符时报"没认出来"，**绝不取最新一本**（此前渲染自检的兜底会把页边距登记到别人刚投的书上）。
+    #[test]
+    fn upload_and_claim_never_falls_back_to_newest() {
+        let lib = tempfile::tempdir().unwrap();
+        let addr = fake_xochitl(lib.path().to_path_buf());
+        let x = Xochitl::new(&addr, lib.path(), 10);
+        let wait = ClaimWait::new(std::time::Duration::from_millis(400));
+        let r = x.upload_and_claim(UploadBody::Bytes(b"PK"), "b.epub", "application/epub+zip", &Folder::Root, ClaimBy::VisibleName("别的书名"), wait);
+        assert!(matches!(r, Err(ClaimError::NotFound { delivery: Delivery::Delivered(_), .. })), "{r:?}");
+        assert_eq!(find_documents_since(lib.path(), 0).len(), 1, "书确实进库了，只是判据不符，不认");
+        let e = Xochitl::new("127.0.0.1:1", lib.path(), 1).upload_and_claim(UploadBody::Bytes(b"PK"), "b.epub", "x", &Folder::Root, ClaimBy::SameBytes, wait).unwrap_err();
+        assert!(matches!(&e, ClaimError::Upload(m) if m.starts_with("上传失败")), "{e:?}");
+        assert!(e.to_string().starts_with("上传给 xochitl 失败"));
+    }
+
+    /// 跨进程上传锁：别的进程（这里用另开的一个文件描述符模拟——flock 按打开的文件描述互斥，同进程两次 open 也互斥）
+    /// 持有锁文件时，"设文件夹 → /upload"要等它放手才开始。
+    #[test]
+    fn upload_waits_for_cross_process_lock_file() {
+        let lib = tempfile::tempdir().unwrap();
+        let lock = lib.path().join("run/shelf").join(LOCK_FILE_NAME);
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let addr = server.server_addr().to_ip().unwrap().to_string();
+        let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let h2 = hits.clone();
+        std::thread::spawn(move || {
+            for mut req in server.incoming_requests() {
+                std::io::Read::read_to_end(req.as_reader(), &mut Vec::new()).unwrap();
+                h2.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let _ = req.respond(tiny_http::Response::from_string("{}"));
+            }
+        });
+        std::fs::create_dir_all(lock.parent().unwrap()).unwrap();
+        let other = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(&lock).unwrap();
+        other.lock().unwrap();
+        let x = Xochitl::new(&addr, lib.path(), 5).with_upload_lock(Some(lock.clone()));
+        let t = std::thread::spawn(move || x.upload_into(b"PK", "a.epub", "application/epub+zip", ""));
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0, "锁被别的进程拿着时不能发请求");
+        drop(other);
+        assert!(matches!(t.join().unwrap(), Ok(Delivery::Delivered(_))));
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 2, "放手后照常 GET 设文件夹 + POST 上传");
+    }
+
+    #[test]
+    fn default_lock_file_only_for_real_library() {
+        let t = tempfile::tempdir().unwrap();
+        assert_eq!(claim::default_lock_file(t.path()), None, "临时书库（单测）不碰真实运行时目录");
+        let p = crate::paths::Paths::from_env();
+        assert_eq!(claim::default_lock_file(&p.xochitl_dir()), Some(p.runtime_dir().join(LOCK_FILE_NAME)));
+    }
+
+    #[test]
+    fn folder_helpers_return_typed_ids() {
+        let lib = tempfile::tempdir().unwrap();
+        let (a, b) = ("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+        std::fs::write(lib.path().join(format!("{a}.metadata")), r#"{"type":"CollectionType","visibleName":"漫画","parent":""}"#).unwrap();
+        std::fs::write(lib.path().join(format!("{b}.metadata")), format!(r#"{{"type":"CollectionType","visibleName":"卷01","parent":"{a}"}}"#)).unwrap();
+        std::fs::write(lib.path().join("doc.metadata"), format!(r#"{{"type":"DocumentType","visibleName":"书","parent":"{b}"}}"#)).unwrap();
+        let x = Xochitl::new("127.0.0.1:1", lib.path(), 1);
+        let ma = x.folder_by_name("漫画").unwrap();
+        assert_eq!(ma.as_str(), a);
+        assert_eq!(x.child_folder(&Folder::Id(ma), "卷01").unwrap().as_str(), b);
+        assert_eq!(x.child_folder(&Folder::Root, "卷01"), None);
+        assert_eq!(x.folder_of_document("doc"), Some(Folder::Id(FolderId::parse(b).unwrap())));
+    }
+
     #[test]
     fn upload_large_file_swaps_epub_and_drops_render_cache() {
         let lib = tempfile::tempdir().unwrap();
@@ -424,7 +600,8 @@ mod tests {
         assert_eq!(std::fs::read(lib.path().join(format!("{uuid}.epub"))).unwrap(), big_bytes, "占位必须被真文件替换");
         assert!(!lib.path().join(format!("{uuid}.pdf")).exists(), "占位的渲染缓存必须删掉，让 xochitl 重新渲染");
         assert!(!lib.path().join(format!("{uuid}.epubindex")).exists());
-        assert!(!lib.path().join(format!("{uuid}.epub.new")).exists(), "不留临时文件");
+        let leftovers: Vec<String> = std::fs::read_dir(lib.path()).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_string()).filter(|n| n.ends_with(".new") || n.ends_with(".tmp")).collect();
+        assert!(leftovers.is_empty(), "不留临时文件: {leftovers:?}");
     }
 
     /// 回归：两本大 PDF 同时走大文件通道（占位字节相同），各自认领到自己的条目、内容不串。
@@ -505,12 +682,56 @@ mod tests {
         assert_eq!(header_safe_filename("镖人 - 01卷.epub"), "镖人 - 01卷.epub", "普通名字原样");
     }
 
+    /// 回归：xochitl 回 5xx、响应体里恰好带 "timeout" 字样时，不能当成"很可能已送达"（那样调用方不会重试，
+    /// 书其实没进库）。此前把错误拼成 `"HTTP 500: …"` 字符串再找 `timeout` 子串，就会误判。
+    #[test]
+    fn server_error_mentioning_timeout_is_not_likely_delivered() {
+        let lib = tempfile::tempdir().unwrap();
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let addr = server.server_addr().to_ip().unwrap().to_string();
+        std::thread::spawn(move || {
+            for mut req in server.incoming_requests() {
+                std::io::Read::read_to_end(req.as_reader(), &mut Vec::new()).unwrap();
+                let (code, body) = if req.method() == &tiny_http::Method::Post { (500, "upstream timeout while importing") } else { (200, "{}") };
+                let _ = req.respond(tiny_http::Response::from_string(body).with_status_code(code));
+            }
+        });
+        let x = Xochitl::new(&addr, lib.path(), 5);
+        let r = x.upload_into(b"PK\x03\x04", "a.epub", "application/epub+zip", "");
+        assert!(matches!(&r, Err(e) if e.contains("HTTP 500") && e.contains("timeout")), "5xx 是明确的失败，应可重试: {r:?}");
+    }
+
     #[test]
     fn classifies_upload_errors() {
-        assert!(upload_likely_delivered("HTTP 408: 408 request timeout"));
-        assert!(upload_likely_delivered("上传失败: timed out reading response"));
-        assert!(!upload_likely_delivered("上传失败: Connection refused (os error 111)"));
-        assert!(!upload_likely_delivered("上传失败: connect timed out"));
+        assert!(UploadError::Status(408, "408 request timeout".into()).likely_delivered());
+        assert!(!UploadError::Status(500, "upstream timeout".into()).likely_delivered(), "5xx 不论体里写什么都是失败");
+        assert!(!UploadError::Status(504, "Gateway Timeout".into()).likely_delivered());
+        assert!(UploadError::Timeout("上传失败: timed out reading response".into()).likely_delivered());
+        assert!(UploadError::AfterSuccess("x".into()).likely_delivered());
+        assert!(!UploadError::Connect("上传失败: connect timed out".into()).likely_delivered());
+        assert!(!UploadError::Other("上传失败: connection reset".into()).likely_delivered());
+        assert_eq!(UploadError::Status(500, "boom".into()).message(), "HTTP 500: boom", "文案格式不变");
+    }
+
+    /// 真实传输错误的分类：连不上 → 失败可重试；连上后 xochitl 迟迟不回（大书处理慢）→ 读超时 → 很可能已送达。
+    #[test]
+    fn transport_errors_classified_by_kind() {
+        let lib = tempfile::tempdir().unwrap();
+        let refused = Xochitl::new("127.0.0.1:1", lib.path(), 2).upload_into(b"x", "a.pdf", "application/pdf", "");
+        assert!(matches!(&refused, Err(e) if e.starts_with("上传失败")), "{refused:?}");
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let addr = server.server_addr().to_ip().unwrap().to_string();
+        std::thread::spawn(move || {
+            for mut req in server.incoming_requests() {
+                std::io::Read::read_to_end(req.as_reader(), &mut Vec::new()).unwrap();
+                if req.method() == &tiny_http::Method::Post {
+                    std::thread::sleep(std::time::Duration::from_millis(2500)); // 比客户端 1 秒超时长
+                }
+                let _ = req.respond(tiny_http::Response::from_string("{}"));
+            }
+        });
+        let slow = Xochitl::new(&addr, lib.path(), 1).upload_into(b"x", "a.pdf", "application/pdf", "");
+        assert!(matches!(&slow, Ok(Delivery::LikelyDelivered(_))), "{slow:?}");
     }
 }
 

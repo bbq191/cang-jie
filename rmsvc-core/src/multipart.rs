@@ -316,66 +316,15 @@ fn parse_headers(head: &str) -> (String, Option<String>, Option<String>) {
     (name, filename, ctype)
 }
 
-fn hex_val(c: u8) -> Option<u8> {
-    match c {
-        b'0'..=b'9' => Some(c - b'0'),
-        b'a'..=b'f' => Some(c - b'a' + 10),
-        b'A'..=b'F' => Some(c - b'A' + 10),
-        _ => None,
-    }
-}
-
-/// 百分号解码（查询串 / 表单：`+` 当空格，即 `application/x-www-form-urlencoded` 语义）。
-pub fn percent_decode(s: &str) -> String {
-    decode(s, true)
-}
-
-/// 百分号解码（URL 路径段 / RFC 5987 `filename*=`：`+` 就是 `+`）。`+` 当空格只是表单编码的约定，
-/// 此前路由参数也套用它，`/fonts/C++.ttf` 这类没被客户端转义的名字会被解成 `C  .ttf`（网页走
-/// `encodeURIComponent` 会把 `+` 编成 `%2B`，不受影响；curl/脚本手写路径会踩到）。
-pub fn percent_decode_path(s: &str) -> String {
-    decode(s, false)
-}
-
-fn decode(s: &str, plus_as_space: bool) -> String {
-    let b = s.as_bytes();
-    let mut out = Vec::with_capacity(b.len());
-    let mut i = 0;
-    while i < b.len() {
-        // 按字节取两位 hex，不对 &str 按字节下标切片：`%` 后若跟多字节 UTF-8 字符，`&s[i+1..i+3]`
-        // 会切在字符中间直接 panic（当年 release 是 panic=abort，一条恶意查询串就能摔掉整个进程；现在是 unwind，
-        // 由 HTTP 层兜成 500，但照样不该 panic）。
-        // 同时不再借 `from_str_radix`（它会把 `+1` 当合法输入）。
-        if b[i] == b'%' && i + 2 < b.len() {
-            if let (Some(h), Some(l)) = (hex_val(b[i + 1]), hex_val(b[i + 2])) {
-                out.push(h << 4 | l);
-                i += 3;
-                continue;
-            }
-        }
-        out.push(if plus_as_space && b[i] == b'+' { b' ' } else { b[i] });
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).to_string()
-}
+// 百分号编解码 2026-10-10 搬到 `http::encoding`（路由、查询串、网关跨模块用的是它，不是 multipart 的事）；
+// 这里保留再导出，旧路径 `multipart::percent_*` 照常可用。
+pub use crate::http::{percent_decode, percent_decode_path, percent_encode};
 
 /// 下载响应的 `Content-Disposition`：ASCII 兜底名（非 ASCII 与 `"` 换成 `_`）+ RFC 5987 的 UTF-8 真名。
 /// 笔记导出（note-serve）与母版库原件下载（book-serve）共用。
 pub fn content_disposition(filename: &str) -> String {
     let ascii: String = filename.chars().map(|c| if c.is_ascii() && c != '"' && !c.is_ascii_control() { c } else { '_' }).collect();
     format!("attachment; filename=\"{ascii}\"; filename*=UTF-8''{}", percent_encode(filename))
-}
-
-/// 百分号编码（RFC 3986 unreserved 之外全编）：查询串 / `?next=` 跳转共用，与 [`percent_decode`] 成对。
-pub fn percent_encode(s: &str) -> String {
-    let mut o = String::with_capacity(s.len());
-    for b in s.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => o.push(b as char),
-            _ => o.push_str(&format!("%{:02X}", b)),
-        }
-    }
-    o
 }
 
 /// 只取文件名的 basename（防路径穿越），空则用 default。

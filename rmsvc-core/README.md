@@ -28,7 +28,7 @@ service::run_or_exit(&SPEC, &bind_addr, &paths, router, ServeOpts::default());
 |---|---|---|
 | 服务骨架 | `service` | 启动模板：解析 `--bind` → 建目录 → 自注册 → 起服务器，自带 `GET /health`；`run_or_exit` 是各服务 `main` 的收尾 |
 | | `registry` | 注册与发现（`$XDG_RUNTIME_DIR/shelf/services/<name>.json`，按 pid 清陈旧条目）；`SvcClient` 调另一个服务（`get_typed` 直接反序列化、`get_bytes` 带大小上限） |
-| | `http` | tiny_http 唯一适配层：路由（最具体优先）、回执、守卫、TLS、SSE 与定长下载流；并发上限 64、每连接 60 秒读空闲超时（靠 [`vendor/tiny_http`](vendor/README.md) 两处补丁）；处理函数和守卫 panic 都回 JSON 500；`JsonBody`/`q_parse`/`encode_query`/`html_escape` 等取值小件 |
+| | `http` | tiny_http 唯一适配层：路由（最具体优先）、回执、守卫、TLS、SSE 与定长下载流；并发上限 64、每连接 60 秒读空闲超时（靠 [`vendor/tiny_http`](vendor/README.md) 的补丁，共三处，含 rustls 0.23 适配）；处理函数和守卫 panic 都回 JSON 500；`JsonBody`/`q_parse`/`encode_query`/`html_escape` 等取值小件 |
 | | `events` | 事件总线 `EventBus`（`publish` / `publish_with` 带附加字段）+ SSE；`follow()` 订阅另一个服务；`Wake` 与 `registry_wake()`（注册表目录进程内一条 inotify）；`Event::parse` 解析事件行 |
 | | `proc` | 带超时的子进程 `run_timeout`、读 `/proc`（开机秒数、不 fork 地按名字找进程 `find_process`）（2026-10-09 新增） |
 | 文件与数据 | `paths` | XDG 路径的唯一路径表；`Paths::sandbox(dir)` 给测试用，HOME 与全部 XDG 目录都落进临时目录 |
@@ -40,7 +40,7 @@ service::run_or_exit(&SPEC, &bind_addr, &paths, router, ServeOpts::default());
 | | `ttf` | TTF/OTF 家族名、魔数、CJK 覆盖率（跳过 format-12 损坏组，format-4 逐码位总数设上限） |
 | | `cache` | 单值 TTL 缓存 `TtlCache`；按文件戳（长度 + mtime + inode）失效的 `StampCache`，`FileStamp::len()` 取戳里的长度 |
 | | `clock` / `sync` | unix 时间戳唯一出处 / 容忍 poison 的取锁 `sync::lock` |
-| xochitl | `xochitl` | 免重启进原生书库（"设文件夹 → `/upload`"，设失败退回书库根）；按**文件夹名**的 `upload*` 与按**文件夹 uuid** 的 `upload*_into` 两套入口；超过约 100MB 的"占位 + 磁盘替换"；书库只读查询（强类型 `Metadata`、区分"没有/读不了"的 `read_meta`、`live_entries`、`file_type` 等） |
+| xochitl | `xochitl` | 免重启进原生书库（"设文件夹 → `/upload`"，设失败退回书库根）；新入口 `upload_to`/`upload_and_claim` 收 `Folder`（根 / uuid）、按判据认领新文档 uuid（10-10）；旧的按**文件夹名**的 `upload*` 与按**文件夹 uuid** 的 `upload*_into` 保留；"设文件夹 → 上传"跨进程锁；`content::PageTable` 页表；超过约 100MB 的"占位 + 磁盘替换"；书库只读查询（强类型 `Metadata`、区分"没有/读不了"的 `read_meta`、`live_entries`、`file_type` 等） |
 | | `xochitl_conf` | 改 `xochitl.conf [General]` 单键（休眠屏 `SleepScreenPath`；文件含凭证，绝不打印行内容，保留原权限） |
 | | `fswatch` | inotify 防抖目录监听（调用方线程 `poll`，不另开读线程）：常驻 `watch_debounced`（目录被删/挪走后退避重挂）、限时 `watch_until`、等条件成立 `wait_for`（先挂监听再查） |
 | 对外与安全（只有网关用） | `auth` | PBKDF2 密码哈希、Basic/Cookie 解析、会话表、按 IP 失败限速、只缓存"校验通过"的 `VerifyCache` |
@@ -59,7 +59,7 @@ service::run_or_exit(&SPEC, &bind_addr, &paths, router, ServeOpts::default());
 | `registry::{register, find, list, SvcClient}` | 注册、发现、调另一个服务 |
 | `events::{EventBus, follow, Wake, registry_wake, Event}` | 发事件 / 订阅事件 / 等变化 |
 | `asset::{AssetStore, AssetUploadFlow}` | 实现"上传 → 校验 → 安装"的仓库 |
-| `xochitl::{Xochitl, Metadata, read_meta}` | 往原生书库上传、读书库条目 |
+| `xochitl::{Xochitl, Folder, ClaimBy, Metadata, read_meta, PageTable}` | 往原生书库上传并认领、读书库条目与页表 |
 | `fswatch::{watch_debounced, watch_until, wait_for}` | 等目录变化 |
 | `paths::Paths` | 所有文件路径的来源（测试用 `Paths::sandbox`） |
 

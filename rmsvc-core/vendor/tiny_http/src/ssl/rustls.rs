@@ -65,37 +65,31 @@ impl Write for RustlsStream {
 pub(crate) struct RustlsContext(Arc<rustls::ServerConfig>);
 
 impl RustlsContext {
+    // rmsvc 补丁（2026-10-10）：上游这段写给 rustls 0.20 + rustls-pemfile 0.2；0.20 受 RUSTSEC-2024-0336
+    // （握手中收到 close_notify 时 `complete_io` 死循环）影响且无补丁版，改写成 rustls 0.23 的 API：
+    // - 证书/私钥用 rustls 再导出的 pki-types 解 PEM（PKCS#8 / PKCS#1 / SEC1 都认，取第一把）；
+    // - 显式用 ring 后端（与 ureq 同一份，不依赖"进程默认 provider"）、安全缺省协议版本（TLS 1.2 + 1.3）；
+    // - 私钥不合法时返回错误（上游这里 `expect` 直接 panic）。
     pub(crate) fn from_pem(
         certificates: Vec<u8>,
         private_key: Zeroizing<Vec<u8>>,
     ) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        let certificate_chain: Vec<rustls::Certificate> =
-            rustls_pemfile::certs(&mut certificates.as_slice())?
-                .into_iter()
-                .map(|bytes| rustls::Certificate(bytes))
-                .collect();
+        use rustls::pki_types::pem::PemObject;
+        use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
+        let certificate_chain = CertificateDer::pem_slice_iter(&certificates)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("Couldn't parse certificate chain: {e}"))?;
         if certificate_chain.is_empty() {
             return Err("Couldn't extract certificate chain from config.".into());
         }
 
-        let private_key = rustls::PrivateKey({
-            let pkcs8_keys = rustls_pemfile::pkcs8_private_keys(
-                &mut private_key.clone().as_slice(),
-            )
-            .expect("file contains invalid pkcs8 private key (encrypted keys are not supported)");
+        let private_key = PrivateKeyDer::from_pem_slice(private_key.as_slice())
+            .map_err(|e| format!("Couldn't parse private key (encrypted keys are not supported): {e}"))?;
 
-            if let Some(pkcs8_key) = pkcs8_keys.first() {
-                pkcs8_key.clone()
-            } else {
-                let rsa_keys = rustls_pemfile::rsa_private_keys(&mut private_key.as_slice())
-                    .expect("file contains invalid rsa private key");
-                rsa_keys[0].clone()
-            }
-        });
-
-        let tls_conf = rustls::ServerConfig::builder()
-            .with_safe_defaults()
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let tls_conf = rustls::ServerConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()?
             .with_no_client_auth()
             .with_single_cert(certificate_chain, private_key)?;
 

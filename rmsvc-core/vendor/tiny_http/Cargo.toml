@@ -10,7 +10,7 @@
 # See Cargo.toml.orig for the original contents.
 
 [package]
-# 2026-09-24 从 crates.io tiny_http 0.12.0 原样复制，只加了"每条连接读空闲超时""accept 暂时性错误不退出"两处改动，见 rmsvc-core/vendor/README.md。
+# 2026-09-24 从 crates.io tiny_http 0.12.0 原样复制，改了三处："每条连接读空闲超时""accept 暂时性错误不退出"与 rustls 适配层升到 0.23，见 rmsvc-core/vendor/README.md。
 edition = "2018"
 name = "tiny_http"
 version = "0.12.0"
@@ -48,12 +48,12 @@ version = "0.4.4"
 version = "0.10"
 optional = true
 
+# 2026-10-10：rustls 0.20 → 0.23（ring 后端，与 ureq 同一份）。0.20 整个系列受 RUSTSEC-2024-0336 影响且无补丁版；
+# PEM 解析改用 rustls 再导出的 pki-types（rustls-pemfile 已停止维护）；下限 0.23.45 避开 RUSTSEC-2026-0285（0.23.13–0.23.44），见 rmsvc-core/vendor/README.md。
 [dependencies.rustls]
-version = "0.20"
-optional = true
-
-[dependencies.rustls-pemfile]
-version = "0.2.1"
+version = "0.23.45"
+default-features = false
+features = ["std", "ring", "tls12", "logging"]
 optional = true
 
 [dependencies.zeroize]
@@ -72,7 +72,6 @@ ssl-openssl = [
 ]
 ssl-rustls = [
     "rustls",
-    "rustls-pemfile",
     "zeroize",
 ]
 

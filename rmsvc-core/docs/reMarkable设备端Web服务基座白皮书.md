@@ -39,6 +39,14 @@
 | 测试 | 133 个单测通过、1 个默认忽略（需要网络命名空间的 mDNS 端到端测试），另有 1 个文档示例默认忽略（2026-10-09 实跑）。`vendor/tiny_http` 的补丁另有单测（在 vendored crate 里，不计入）。CI `rust` job 单列一步；仓库 10-09 公开后 CI 恢复执行 |
 | 真机 | 所有消费方已部署在设备上运行（2026-09-11 起 `install-all.sh` 真机跑通，之后多次整轮重装）。10-09 第六轮审计 13:48 已部署（部署自检 38✓）；同日的审计后续（小接口、`epubpkg`）随 15:53 那次部署上机（39✓）。**部署自检只说明服务起来了**：本页标 10-09 的行为大多没在真机上专门触发过，唯一专门验证过的是 `epubpkg::epubindex`（书架"原地替换后找回阅读位置"真机跑通一次）。09-24～10-07 历轮改动同理，各节分别注明 |
 
+**10-10 改了什么**（重构第一阶段：只新增 API + 内部重构，旧 API 全保留、签名不变；**未部署、未在真机上验证**；开发机单测通过）：
+
+- **安全**：vendored tiny_http 的 rustls 0.20 → 0.23.45（RUSTSEC-2024-0336：握手中收到 close_notify 时 `complete_io` 死循环；0.23.45 同时避开 RUSTSEC-2026-0285），每个 lockfile 少一整套 TLS 栈（rustls 0.20 + ring 0.16 + webpki 0.22 等 11 个包）。回归测试在独立子进程里量 CPU（0.20 时 1.5 秒窗口吃满 1.50 秒 CPU）。见 [`../vendor/README.md`](../vendor/README.md)。
+- **xochitl**：`Folder`/`FolderId`（根 / 校验过形状的 uuid，名字传不进来）；`Xochitl::upload_and_claim`（上传前快照 → 上传 → 按 `ClaimBy::{SameBytes, VisibleName, SameSize}` 在快照之外的新文档里认领，**绝不取最新一本兜底**）；`upload_to`、`folder_by_name`、`child_folder`、`folder_of_document`、`upload_large`；"设文件夹 → /upload"加跨进程锁（运行时目录下 `xochitl-upload.lock` 的 flock）；大文件通道认领改走 `upload_and_claim`；`content::PageTable`（`.content` v1/v2 页表，合并 book-serve 与 ink-serve 两份解析）；`Metadata::last_opened_page`、`EntryKind`；`/upload` 失败按 ureq 错误种类判"很可能已送达"（不再子串匹配）。删了无调用方的 `read_metadata`（原始 JSON 版）、`created_ms(&Value)`；`upload_likely_delivered` 改为内部。
+- **http / registry**：`ApiError::{new, conflict, too_large, bad_gateway, unavailable}`；`Request::{small_body, json_value, form}`（超限 413；`json()` 超限也由 400 改为 413）；`TestRequest`（测试用 Request 构造器）；`percent_*` 搬到 `http`（`multipart` 再导出）；`SvcClient::{try_get_json, try_get_typed}` 与 `From<SvcError> for ApiError`（对方 4xx 透传、5xx/坏应答 502、未运行/连不上 503）。
+- **其它**：`wire::{DeliverStatus, RenderStatus}`（线上状态枚举，JSON 不变）；`EventBus::sse_reply_for(&Request)`（显式读 `?ka=`）；`asset::UploadTarget`（`AssetStore` 经 blanket impl 自动满足）；`fswatch::WatchSpec` 与 `watch_with`/`watch_until_with`/`wait_for_with`（可参数化掩码/防抖）。
+- **没改**：书库扫描不加缓存——host 上 2050 份 `.metadata` 整库扫描约 3ms/次，各调用点都不在空闲轮询里（`xochitl::library::bench` 手动跑）。
+
 **10-09 改了什么**（第六轮审计 + 同日审计后续；已部署，行为除注明外未在真机上专门触发；开发机 133 个单测通过）：
 
 - **新共享 API**（把各服务各写一份的代码收进基座，服务已迁过去、删掉私有副本）：`proc`（新模块）、`fs::{ScratchFile, move_into, list_files, clean_dir, write_atomic_if_changed}`、`formats::{mime_of, sniff, stem_of}`、`http` 取值小件、`asset::any_ok`、`config::backup_corrupt`、`Paths::sandbox`、`SvcClient::{get_typed, get_bytes}`、`EventBus::publish_with` / `Event::parse`、`service::run_or_exit`、`xochitl::{Metadata, read_meta, file_type}`、`Xochitl::upload_into`。见 §01～§03。
@@ -128,7 +136,7 @@
 剥离移植自旧项目的真机结论。
 
 - **上传口**：`POST http://10.11.99.1/upload`（xochitl 的网页接口只绑 USB 网口，设备端靠 lo/usb1 别名让这个地址常驻可达，见 [`../../enhance/lo-alias/README.md`](../../enhance/lo-alias/README.md)）。
-- **"设文件夹 → 上传"**：先 `GET /documents/<文件夹 uuid>` 把"当前文件夹"设好（这是 xochitl 的全局状态），再上传，文件就落进该文件夹；`.metadata` 里的 parent 会被忽略。因为是全局状态，进程内"设文件夹 → 上传"由一把 static 锁串成一对（09-24）；只锁上传本身；跨进程（note-serve 也会投笔记本）不受这把锁约束。**设文件夹失败时退回书库根**（10-09，已部署，未在真机上专门触发）：此前 GET 的结果被忽略，文件夹刚被删或 xochitl 回错时，当前文件夹仍是上一次投递设的那个，这本书就落进别人的文件夹。
+- **"设文件夹 → 上传"**：先 `GET /documents/<文件夹 uuid>` 把"当前文件夹"设好（这是 xochitl 的全局状态），再上传，文件就落进该文件夹；`.metadata` 里的 parent 会被忽略。因为是全局状态，"设文件夹 → 上传"由一把进程内 static 锁串成一对（09-24）；10-10 起再加运行时目录下锁文件 `xochitl-upload.lock` 的 `flock` 管跨进程（book-serve 投书与 note-serve 投笔记本此前会交错）——只在书库目录就是本机真实 xochitl 书库时启用（单测的临时书库不碰真实运行时目录），设备上在 `/tmp/shelf-0/shelf/`（tmpfs，重启即清），打不开时退回只有进程内锁。只锁上传本身。**设文件夹失败时退回书库根**（10-09，已部署，未在真机上专门触发）：此前 GET 的结果被忽略，文件夹刚被删或 xochitl 回错时，当前文件夹仍是上一次投递设的那个，这本书就落进别人的文件夹。
 - **两套入口，参数不一样**（10-09 在文档注释里写醒目）：
 
   | 入口 | 文件夹参数 | 用途 |
@@ -138,7 +146,8 @@
 
   `parent_folder` / `find_folder` 返回的都是 uuid，拿 uuid 传给按名字的入口会静默落根——note-serve 从 2026-09-09 起就踩了这个坑，笔记本一直落在书库根（见笔记白皮书第 8 章）。`upload_into`（10-09）是按 uuid 的内存上传口，note-serve 的笔记本 zip（几 KB）用它，不必先落临时文件。
 - **multipart 头里的文件名**：`"` 换成 `'`、CR/LF 换成空格，其余字节原样（中文照旧直传）。带引号的书名此前原样拼进 `filename="…"`，xochitl 读到第一个 `"` 就截断；带换行会被当成新的头（09-24）。
-- **防复制风暴**：大书上传慢时会 408 或读超时，但文档其实已建好——这类错误**绝不重试**（`upload_likely_delivered`）。
+- **防复制风暴**：大书上传慢时会 408 或读超时，但文档其实已建好——这类错误**绝不重试**。10-10 起按 ureq 错误种类判（连接阶段失败 → 可重试；连上后读写超时、408、已拿到 2xx 但读回执出错 → 很可能已送达），此前把错误拼成字符串再找 `408`/`timeout` 子串，xochitl 回 5xx 且响应体带 timeout 字样会被误判成已送达。
+- **上传并认领** `upload_and_claim`（10-10）：`/upload` 不回 uuid。上传前快照最近两秒内建的文档，上传后等书库目录变化，按调用方给的判据（字节相同 / visibleName 相同 / 大小相同）在快照之外的新文档里找；找不到报 `ClaimError::NotFound`（"已上传但没认出来，别马上重试"），与 `ClaimError::Upload`（没传上去，可重试）分开。同一进程内整段串行。各服务的四套旧认领逻辑第二阶段迁过来。
 - `upload_file` 流式上传磁盘文件，不整本读进内存（09-19 OOM 审计：旧路径峰值能到原文件 2 倍多）。
 - **大文件通道** `upload_large_file`：绕过网页上传约 100MB 的硬限——先传几 KB 的占位文档（EPUB 要带真书名和封面）让 xochitl 建好条目，再把磁盘上的文件原子替换成真文件。EPUB 删掉占位的渲染缓存，首次打开时重渲染；PDF 要一并改 `.content` 里的逐页表和页数。2026-09-20 真机验证：154MB PDF、153MB EPUB 都能打开。失败时占位可能留在书库里，不做危险的回滚删除。
   - **认领占位条目**：10-09 起用 `fswatch::wait_for` 等书库目录变化（防抖 150ms，最多 20 秒），此前每 200ms 扫一遍整个书库目录、最多 100 轮。
@@ -150,7 +159,9 @@
   - `Metadata`（10-09）：`.metadata` 的强类型视图，只取各服务真用到的字段（`visibleName`、`type`、`parent`、`deleted`、`createdTime`），带 `is_live` / `is_document` / `is_folder` / `is_live_document` / `created_ms`。字段写成 JSON `null` 时按缺省值处理（否则一个 `"parent": null` 会让整条解析失败）。
   - `read_meta(dir, uuid)`（10-09）：**区分"没有"与"读不了"**——文件不在 → `Ok(None)`（书被彻底删了）；读失败/解析失败 → `Err`（可能正被 xochitl 改写，调用方应跳过这次，别当成书没了）。book-serve 回收站代理靠这个区分不再丢待办。
   - `file_type(dir, uuid)`：流式只取 `.content` 的 `fileType`，不整份解析。
-  - `read_metadata`（返回原始 JSON）、`live_entries`（非回收站、未删除的条目，直接给 `(uuid, Metadata)`，解析不了的跳过；网关清理页、book-serve 直接导入查重用）、`created_ms`、`is_uuid_shape`（10-07）。
+  - 10-10 起库内查询全部走强类型 `Metadata`（此前一半按原始 JSON 取字段），原始 JSON 版的 `read_metadata`、`created_ms(&Value)` 无调用方已删；`Metadata` 新增 `last_opened_page`（数字或数字字符串，怪值给 `None`）与 `entry_kind()`（`EntryKind`）。
+  - `content::PageTable`（10-10）：`.content` 的页 id 顺序与文档页 ↔ PDF 页映射（v1 `pages`/`redirectionPageMap`，v2 `cPages.pages` 按 `idx` 排序去删除页）；两份旧实现在"两种形状同时出现""v2 页对象缺 id"时语义不同，合并时各自保留并用测试钉住。
+  - `live_entries`（非回收站、未删除的条目，直接给 `(uuid, Metadata)`，解析不了的跳过；网关清理页、book-serve 直接导入查重用）、`created_ms`、`is_uuid_shape`（10-07）。
 
 ### xochitl_conf —— 改 xochitl.conf 的单键（wallpaper-serve）
 

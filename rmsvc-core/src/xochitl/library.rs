@@ -3,15 +3,17 @@
 //! 分开，各自单一职责；对外路径仍是 `rmsvc_core::xochitl::*`（父模块 `pub use` 再导出）。
 use std::path::Path;
 
-/// 书库目录里所有可解析的 `<uuid>.metadata` → (uuid, JSON)。只读；解析失败的跳过。
-fn metadata_entries(dir: &Path) -> Vec<(String, serde_json::Value)> {
+/// 书库目录里所有可解析的 `<uuid>.metadata` → (uuid, 强类型 [`Metadata`])。只读；读不了、解析不了（含字段类型不对，
+/// 如 `deleted` 不是布尔）的跳过。2026-10-10 前这里解析成 `serde_json::Value`、各查询再按字面量取字段，与下面的
+/// [`Metadata`] 是两套模型（审计 CORE-2），现在只有这一套。
+fn metadata_entries(dir: &Path) -> Vec<(String, Metadata)> {
     metadata_entries_since(dir, None)
 }
 
 /// 同 [`metadata_entries`]，`min_mtime` 给定时**只打开 mtime 不早于它的**：先用目录项自带的 stat 挡掉旧文件，
 /// 不再对整个书库（几十上百份）逐个 open+读+解析 JSON——渲染自检/占位等待这类"找刚进库的那本"的调用会在
 /// 一个 3 秒防抖 / 200ms 轮询循环里反复扫描（2026-09-22 审计）。
-fn metadata_entries_since(dir: &Path, min_mtime: Option<std::time::SystemTime>) -> Vec<(String, serde_json::Value)> {
+fn metadata_entries_since(dir: &Path, min_mtime: Option<std::time::SystemTime>) -> Vec<(String, Metadata)> {
     let Ok(rd) = std::fs::read_dir(dir) else { return vec![] };
     rd.flatten()
         .filter_map(|e| {
@@ -25,31 +27,22 @@ fn metadata_entries_since(dir: &Path, min_mtime: Option<std::time::SystemTime>) 
                 }
             }
             let uuid = p.file_stem()?.to_str()?.to_string();
-            let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&p).ok()?).ok()?;
-            Some((uuid, v))
+            let m: Metadata = serde_json::from_slice(&std::fs::read(&p).ok()?).ok()?;
+            Some((uuid, m))
         })
         .collect()
-}
-
-fn str_of<'a>(v: &'a serde_json::Value, k: &str) -> &'a str {
-    v.get(k).and_then(|x| x.as_str()).unwrap_or("")
-}
-
-/// 非回收站、未删除的条目（文件夹与文档共用的过滤）。
-fn is_live(v: &serde_json::Value) -> bool {
-    str_of(v, "parent") != "trash" && v.get("deleted").and_then(|x| x.as_bool()) != Some(true)
 }
 
 /// 书库里所有**活的**条目（非回收站、未删除，文件夹与文档都有）→ (uuid, 强类型 [`Metadata`])。只读；读不了、
 /// 解析不了（含字段类型不对，如 `deleted` 不是布尔）的跳过。网关「设备健康 → 清理」列书库、book-serve 直接导入
 /// 查同文件夹重复用（10-09 起直接给 `Metadata`，调用方不再各自 `from_value` 一遍）。
 pub fn live_entries(dir: &Path) -> Vec<(String, Metadata)> {
-    metadata_entries(dir).into_iter().filter_map(|(uuid, v)| serde_json::from_value::<Metadata>(v).ok().filter(Metadata::is_live).map(|m| (uuid, m))).collect()
+    metadata_entries(dir).into_iter().filter(|(_, m)| m.is_live()).collect()
 }
 
-/// `.metadata` 的 `createdTime`（毫秒；xochitl 写成字符串，也认数字）；缺或解析不了 → 0。
-pub fn created_ms(v: &serde_json::Value) -> u64 {
-    v.get("createdTime").and_then(|x| x.as_str().and_then(|s| s.parse().ok()).or_else(|| x.as_u64())).unwrap_or(0)
+/// 活文件夹（`CollectionType`、没删、不在回收站）。
+fn live_folders(dir: &Path) -> impl Iterator<Item = (String, Metadata)> {
+    metadata_entries(dir).into_iter().filter(|(_, m)| m.is_folder() && m.is_live())
 }
 
 /// 是不是 xochitl 文档 uuid 的形状（36 字符，只含十六进制与 `-`）。拿来当文件名片段之前先过一遍，
@@ -61,26 +54,18 @@ pub fn is_uuid_shape(s: &str) -> bool {
 /// 按 visibleName 在**整个书库**里找活文件夹（不管它在哪一层），多个同名取先扫到的。网页「加入 xochitl → 文件夹」用；
 /// 要按层找（某个父文件夹下的某个名字）用 [`find_child_folder`]。
 pub fn find_folder_by_name(dir: &Path, name: &str) -> Option<String> {
-    metadata_entries(dir).into_iter().find(|(_, v)| str_of(v, "type") == "CollectionType" && is_live(v) && str_of(v, "visibleName") == name).map(|(uuid, _)| uuid)
+    live_folders(dir).find(|(_, m)| m.visible_name == name).map(|(uuid, _)| uuid)
 }
 
 /// 在 `parent`（文件夹 uuid，空串＝书库根）**正下方**找名叫 `name` 的活文件夹（`CollectionType`、没删、不在回收站），
 /// 返回它的 uuid（2026-10-07 直接导入按层建多级文件夹用）。同一层有多个同名的取 uuid 最小的那个，结果不随目录扫描顺序变。
 pub fn find_child_folder(dir: &Path, parent: &str, name: &str) -> Option<String> {
-    metadata_entries(dir)
-        .into_iter()
-        .filter(|(_, v)| str_of(v, "type") == "CollectionType" && is_live(v) && str_of(v, "parent") == parent && str_of(v, "visibleName") == name)
-        .map(|(uuid, _)| uuid)
-        .min()
+    live_folders(dir).filter(|(_, m)| m.parent == parent && m.visible_name == name).map(|(uuid, _)| uuid).min()
 }
 
 /// 书库里所有活文件夹的（父文件夹 uuid, 名字）——建文件夹队列每次唤醒判"哪些已经建出来了"用，整库只扫一遍。
 pub fn folder_keys(dir: &Path) -> std::collections::HashSet<(String, String)> {
-    metadata_entries(dir)
-        .into_iter()
-        .filter(|(_, v)| str_of(v, "type") == "CollectionType" && is_live(v))
-        .map(|(_, v)| (str_of(&v, "parent").to_string(), str_of(&v, "visibleName").to_string()))
-        .collect()
+    live_folders(dir).map(|(_, m)| (m.parent, m.visible_name)).collect()
 }
 
 /// 文件夹 `folder` 从书库根往下的完整路径，各级名字用 `/` 连起来（`漫画/死亡筆記(愛藏版)`）；空串（书库根）→ 空串。
@@ -90,12 +75,12 @@ pub fn folder_path_of(dir: &Path, folder: &str) -> String {
     let mut names = Vec::new();
     let mut cur = folder.to_string();
     while !cur.is_empty() && is_uuid_shape(&cur) && names.len() < 64 {
-        let Some(v) = read_metadata(dir, &cur) else { break };
-        if str_of(&v, "type") != "CollectionType" || !is_live(&v) {
+        let Ok(Some(m)) = read_meta(dir, &cur) else { break };
+        if !m.is_folder() || !m.is_live() {
             break;
         }
-        names.push(str_of(&v, "visibleName").to_string());
-        cur = str_of(&v, "parent").to_string();
+        names.push(m.visible_name);
+        cur = m.parent;
     }
     names.reverse();
     names.join("/")
@@ -106,19 +91,11 @@ pub fn folder_path_of(dir: &Path, folder: &str) -> String {
 /// 写死的预设列表（2026-09-19 用户反馈：原来的「书库/批注/自定义」三选一预设看不出真实文件夹，
 /// 批注那档还常年跟书库撞成一样，见书架白皮书对应记录）。
 pub fn list_folders(dir: &Path) -> Vec<String> {
-    metadata_entries(dir)
-        .into_iter()
-        .filter(|(_, v)| str_of(v, "type") == "CollectionType" && is_live(v))
-        .map(|(_, v)| str_of(&v, "visibleName").to_string())
+    live_folders(dir)
+        .map(|(_, m)| m.visible_name)
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
         .collect()
-}
-
-/// 读一份 `<uuid>.metadata`（JSON）；不在、读不了、不是合法 JSON → `None`。调用方自己校验 uuid 形状（`is_uuid_shape`）。
-/// 书架的回收站代理、直接导入和这里的 [`parent_folder_of`] 共用（此前三处各读一遍）。
-pub fn read_metadata(dir: &Path, uuid: &str) -> Option<serde_json::Value> {
-    serde_json::from_str(&std::fs::read_to_string(dir.join(format!("{uuid}.metadata"))).ok()?).ok()
 }
 
 /// 给定一份文档的 uuid，读它 `.metadata` 的 `parent` 字段——就是它当前所在的设备文件夹 uuid
@@ -126,9 +103,8 @@ pub fn read_metadata(dir: &Path, uuid: &str) -> Option<serde_json::Value> {
 /// `None`，调用方按 best-effort 落书库根处理（2026-09-09 补：`note-serve` 生成章节笔记本时不再
 /// 新建/确保文件夹，改成直接复用书本自己已经在的文件夹）。
 pub fn parent_folder_of(dir: &Path, uuid: &str) -> Option<String> {
-    let v = read_metadata(dir, uuid)?;
-    let parent = v.get("parent").and_then(|x| x.as_str())?;
-    (parent != "trash").then(|| parent.to_string())
+    let m = read_meta(dir, uuid).ok()??;
+    (m.parent != "trash").then_some(m.parent)
 }
 
 /// 在 `folder`（文件夹 uuid，空串＝根）范围内，如果 `base_name` 已经被别的活文档占用，就在末尾加
@@ -137,8 +113,8 @@ pub fn parent_folder_of(dir: &Path, uuid: &str) -> Option<String> {
 pub fn unique_document_name(dir: &Path, folder: &str, base_name: &str) -> String {
     let names: std::collections::HashSet<String> = metadata_entries(dir)
         .into_iter()
-        .filter(|(_, v)| str_of(v, "type") == "DocumentType" && is_live(v) && str_of(v, "parent") == folder)
-        .map(|(_, v)| str_of(&v, "visibleName").to_string())
+        .filter(|(_, m)| m.is_live_document() && m.parent == folder)
+        .map(|(_, m)| m.visible_name)
         .collect();
     if !names.contains(base_name) {
         return base_name.to_string();
@@ -171,6 +147,19 @@ pub struct Metadata {
     /// xochitl 写成毫秒字符串，也认数字；用 [`Metadata::created_ms`] 取。
     #[serde(rename = "createdTime")]
     pub created_time: serde_json::Value,
+    /// 上次看到的页（文档页序，0 起；EPUB 里插了笔记页时与 PDF 页不同，换算见 [`super::PageTable`]）。数字或数字字符串都认；
+    /// 缺、`null`、认不出 → `None`（不让一个怪值把整份 `.metadata` 解析失败）。
+    #[serde(rename = "lastOpenedPage", deserialize_with = "lenient_i64")]
+    pub last_opened_page: Option<i64>,
+}
+
+/// 数字或数字字符串 → `Some`；其余（缺、`null`、别的类型、解析不了）→ `None`。
+fn lenient_i64<'de, D>(d: D) -> Result<Option<i64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let v = <serde_json::Value as serde::Deserialize>::deserialize(d)?;
+    Ok(v.as_i64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())))
 }
 
 /// 字段写成 JSON `null` 时按缺省值处理（迁移前各服务手写的 `as_str().unwrap_or("")` 就是这样认的；
@@ -183,16 +172,39 @@ where
     Ok(<Option<T> as serde::Deserialize>::deserialize(d)?.unwrap_or_default())
 }
 
+/// `.metadata` 的 `type`：文档 / 文件夹 / 别的（xochitl 新版本加了类型时不至于解析失败）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum EntryKind {
+    Document,
+    Folder,
+    Other,
+}
+
+impl EntryKind {
+    /// xochitl 的字面量（`DocumentType` / `CollectionType`）→ 枚举；别的（含空串）→ `Other`。
+    pub fn parse(s: &str) -> EntryKind {
+        match s {
+            "DocumentType" => EntryKind::Document,
+            "CollectionType" => EntryKind::Folder,
+            _ => EntryKind::Other,
+        }
+    }
+}
+
 impl Metadata {
     /// 非回收站、未删除（与 [`live_entries`] 同一判据）。
     pub fn is_live(&self) -> bool {
         self.parent != "trash" && !self.deleted
     }
+    /// `type` 字段的枚举视图（`kind` 字段仍是原样字符串）。
+    pub fn entry_kind(&self) -> EntryKind {
+        EntryKind::parse(&self.kind)
+    }
     pub fn is_document(&self) -> bool {
-        self.kind == "DocumentType"
+        self.entry_kind() == EntryKind::Document
     }
     pub fn is_folder(&self) -> bool {
-        self.kind == "CollectionType"
+        self.entry_kind() == EntryKind::Folder
     }
     pub fn is_live_document(&self) -> bool {
         self.is_document() && self.is_live()
@@ -243,10 +255,10 @@ pub fn find_documents_since(dir: &Path, since_ms: u64) -> Vec<DocInfo> {
     let floor = (since_ms > 0).then(|| std::time::UNIX_EPOCH + std::time::Duration::from_millis(since_ms.saturating_sub(5_000)));
     let mut out: Vec<DocInfo> = metadata_entries_since(dir, floor)
         .into_iter()
-        .filter(|(_, v)| str_of(v, "type") == "DocumentType" && is_live(v))
-        .filter_map(|(uuid, v)| {
-            let created_ms = created_ms(&v);
-            (created_ms >= since_ms).then(|| DocInfo { uuid, visible_name: str_of(&v, "visibleName").to_string(), created_ms })
+        .filter(|(_, m)| m.is_live_document())
+        .filter_map(|(uuid, m)| {
+            let created_ms = m.created_ms();
+            (created_ms >= since_ms).then_some(DocInfo { uuid, visible_name: m.visible_name, created_ms })
         })
         .collect();
     out.sort_by_key(|d| std::cmp::Reverse(d.created_ms));
@@ -270,6 +282,19 @@ mod tests {
         assert_eq!(m.parent, "");
         assert!(!m.deleted);
         assert!(m.is_live_document());
+        assert_eq!(m.last_opened_page, None);
+    }
+
+    /// `lastOpenedPage`：数字、数字字符串都认（同 book-serve progress.rs 手解的规则）；怪值不拖垮整份解析。
+    #[test]
+    fn metadata_last_opened_page_is_lenient() {
+        let page = |j: &str| serde_json::from_str::<Metadata>(&format!(r#"{{"visibleName":"书","lastOpenedPage":{j}}}"#)).unwrap().last_opened_page;
+        assert_eq!(page("12"), Some(12));
+        assert_eq!(page(r#"" 7 ""#), Some(7));
+        assert_eq!(page("null"), None);
+        assert_eq!(page(r#""x""#), None);
+        assert_eq!(page("[1]"), None);
+        assert_eq!(page("-1"), Some(-1), "负数原样给，调用方自己判");
     }
 
     #[test]
@@ -285,6 +310,7 @@ mod tests {
         assert_eq!((a.visible_name.as_str(), a.created_ms()), ("书", 1_700_000_000_123));
         let b = read_meta(d, "b").unwrap().unwrap();
         assert!(b.is_folder() && !b.is_live() && b.created_ms() == 5);
+        assert_eq!((a.entry_kind(), b.entry_kind(), EntryKind::parse("SomethingNew"), Metadata::default().entry_kind()), (EntryKind::Document, EntryKind::Folder, EntryKind::Other, EntryKind::Other));
         assert_eq!(read_meta(d, "missing").unwrap(), None, "没有 → Ok(None)");
         assert!(read_meta(d, "c").is_err(), "半截 → Err，不当成没有");
         assert_eq!(file_type(d, "a").as_deref(), Some("epub"));
@@ -433,5 +459,40 @@ mod tests {
         assert_eq!(got, ["fresh"]);
         let all: Vec<String> = find_documents_since(t.path(), 0).into_iter().map(|d| d.uuid).collect();
         assert_eq!(all.len(), 3, "since=0（补记全库）不设 mtime 下限");
+    }
+}
+
+#[cfg(test)]
+mod bench {
+    use super::*;
+
+    /// 手动跑：`cargo test --release --lib xochitl::library::bench -- --ignored --nocapture`
+    #[test]
+    #[ignore = "性能测量，手动跑"]
+    fn scan_2000_docs() {
+        let t = tempfile::tempdir().unwrap();
+        let d = t.path();
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(86_400);
+        for i in 0..2000 {
+            let p = d.join(format!("{i:08}-0000-4000-8000-000000000000.metadata"));
+            std::fs::write(&p, format!(r#"{{"visibleName":"书{i}","type":"DocumentType","parent":"","createdTime":"1700000000000","lastModified":"1700000000000","lastOpened":"0","lastOpenedPage":12,"pinned":false,"synced":true,"version":3,"deleted":false,"metadatamodified":false,"modified":false}}"#)).unwrap();
+            std::fs::File::options().write(true).open(&p).unwrap().set_modified(old).unwrap();
+        }
+        for i in 0..50 {
+            std::fs::write(d.join(format!("f{i:07}-0000-4000-8000-000000000000.metadata")), format!(r#"{{"visibleName":"夹{i}","type":"CollectionType","parent":""}}"#)).unwrap();
+        }
+        let time = |label: &str, n: u32, f: &dyn Fn()| {
+            f();
+            let t0 = std::time::Instant::now();
+            for _ in 0..n {
+                f();
+            }
+            println!("{label}: {:.2} ms/次", t0.elapsed().as_secs_f64() * 1000.0 / n as f64);
+        };
+        time("find_folder_by_name", 20, &|| assert!(find_folder_by_name(d, "夹49").is_some()));
+        time("list_folders", 20, &|| assert_eq!(list_folders(d).len(), 50));
+        time("live_entries", 20, &|| assert_eq!(live_entries(d).len(), 2050));
+        let since = crate::clock::now_ms() - 60_000;
+        time("find_documents_since(1 分钟内)", 20, &|| assert!(find_documents_since(d, since).is_empty()));
     }
 }
