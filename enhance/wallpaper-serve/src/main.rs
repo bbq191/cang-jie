@@ -95,7 +95,7 @@ fn main() {
             Ok(Reply::ok(&serde_json::json!({"items": s.store.list(), "mode": w.mode, "current": w.current})))
         }))
         .get("/status", bind(&st, |s, _| Ok(Reply::ok(&s.status()))))
-        .get("/events", bind(&st, |s, _| Ok(s.bus.sse_reply())))
+        .get("/events", bind(&st, |s, r| Ok(s.bus.sse_reply_for(r))))
         .post("/", bind(&st, |s, r| {
             let b = r.multipart_boundary()?;
             // `?activate=1` 显式激活首张成功项；池里还没有当前图时也自动激活（上传即可用）。

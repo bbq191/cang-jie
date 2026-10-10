@@ -115,7 +115,7 @@ fn main() {
             s.bus.publish("fonts", "ui");
             Ok(Reply::ok(&ui_status(s)))
         }))
-        .get("/events", bind(&st, |s, _| Ok(s.bus.sse_reply())))
+        .get("/events", bind(&st, |s, r| Ok(s.bus.sse_reply_for(r))))
         .delete("/{family}", bind(&st, |s, r| {
             let removed = s.store.remove_family(r.param("family")).map_err(ApiError::bad)?;
             s.bus.publish("fonts", "fonts");
