@@ -14,42 +14,5 @@ pub mod naming;
 pub mod pdfmeta;
 pub mod placeholder;
 
-/// xochitl 能直接读的格式（母版库落库与下载用）。
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub enum ContentType {
-    Epub,
-    Pdf,
-}
-
-impl ContentType {
-    pub fn mime(self) -> &'static str {
-        match self {
-            ContentType::Epub => "application/epub+zip",
-            ContentType::Pdf => "application/pdf",
-        }
-    }
-}
-
-/// 按扩展名判 xochitl 能直接读的格式（EPUB/PDF），其余 `None`。
-pub fn direct_content_type(filename: &str) -> Option<ContentType> {
-    let l = filename.to_ascii_lowercase();
-    if l.ends_with(".epub") {
-        Some(ContentType::Epub)
-    } else if l.ends_with(".pdf") {
-        Some(ContentType::Pdf)
-    } else {
-        None
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn direct_types_by_extension() {
-        assert_eq!(direct_content_type("A.EPUB"), Some(ContentType::Epub));
-        assert_eq!(direct_content_type("b.pdf").map(|c| c.mime()), Some("application/pdf"));
-        assert_eq!(direct_content_type("c.cbz"), None);
-    }
-}
+// 2026-10-10 删 `ContentType` / `direct_content_type`（审计 SH-2）：与基座 `rmsvc_core::formats`（`NATIVE_EXTS`、`mime_of`、`has_ext`）
+// 重复，book-serve 同一个文件里两套混用；一律改用基座那份。

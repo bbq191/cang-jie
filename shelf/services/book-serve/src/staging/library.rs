@@ -167,7 +167,7 @@ impl Staging {
 
     /// xochitl 书库里这份文档 `.content` 的页数（经 [`ListCaches::pages`]）。
     fn content_pages(&self, uuid: &str) -> Option<u64> {
-        let lib = self.xochitl.library_dir();
+        let lib = self.delivery.library_dir();
         let stamp = FileStamp::read(&lib.join(format!("{uuid}.content")))?;
         self.caches.pages.get_or(uuid, stamp, || rmsvc_core::xochitl::page_count(lib, uuid))
     }
@@ -184,11 +184,8 @@ impl Staging {
             if name.starts_with('.') || !md.is_file() {
                 continue;
             }
-            let format = match formats::ext_of(&name).as_str() {
-                "epub" => "epub",
-                "pdf" => "pdf",
-                _ => "other",
-            };
+            let ext = formats::ext_of(&name);
+            let format = formats::NATIVE_EXTS.iter().copied().find(|e| *e == ext).unwrap_or("other");
             seen.insert(name.clone());
             let mtime = md.modified().ok().map(rmsvc_core::clock::secs_of).unwrap_or(0);
             let busy = self.is_busy(&name);
@@ -201,7 +198,7 @@ impl Staging {
                     if let Some(n) = self.content_pages(&rc.uuid) {
                         // 记录里是 0 = 投递时没等到占位页数（极少见）：这时 `.content` 里的数可能还是占位的，不能当已渲染；
                         // 改看 `.epubindex`——大文件通道替换时删掉了它，重新出现只能是 xochitl 渲染了真书。
-                        let rendered = rc.pages != 0 || self.xochitl.library_dir().join(format!("{}.epubindex", rc.uuid)).exists();
+                        let rendered = rc.pages != 0 || self.delivery.library_dir().join(format!("{}.epubindex", rc.uuid)).exists();
                         if n != rc.pages && rendered {
                             rc.status = "ok".into();
                             rc.pages = n;
@@ -218,6 +215,9 @@ impl Staging {
                     }
                 }
             }
+            let title = list_title(&name);
+            let series = series_of(&title);
+            let done = is_done(busy, delivered.as_ref());
             out.push(StagingEntry {
                 name,
                 bytes: md.len(),
@@ -225,6 +225,9 @@ impl Staging {
                 mtime,
                 delivered,
                 busy,
+                title,
+                series,
+                done,
             });
         }
         // 已被删除/改名的条目从缓存清掉，避免缓存无限增长
