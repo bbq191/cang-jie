@@ -215,6 +215,9 @@ impl Staging {
                     }
                 }
             }
+            let title = list_title(&name);
+            let series = series_of(&title);
+            let done = is_done(busy, delivered.as_ref());
             out.push(StagingEntry {
                 name,
                 bytes: md.len(),
@@ -222,6 +225,9 @@ impl Staging {
                 mtime,
                 delivered,
                 busy,
+                title,
+                series,
+                done,
             });
         }
         // 已被删除/改名的条目从缓存清掉，避免缓存无限增长

@@ -51,6 +51,53 @@ pub struct StagingEntry {
     /// （大书上传、等建文件夹能拖到分钟级）。
     #[serde(default)]
     pub busy: bool,
+    /// 列表显示名（[`list_title`]，2026-10-10 起由后端算，网页不再自己算）。
+    pub title: String,
+    /// 搜索建议的分组名（[`series_of`]）。
+    pub series: String,
+    /// 已经不用管了（[`is_done`]），网页「已加入 / 未加入」筛选用。
+    pub done: bool,
+}
+
+// ── 列表派生字段（2026-10-10，跨服务契约 S4）：以下三个函数**逐字移植**网页 `gateway/ui/app.js` 原来的 `stgClean` / `stgTitle` /
+// `isBookDone`，网页改为直接用这三个字段。规则是用户定的（`series` 2026-09-20 指定"第一个 - 之前"），不要改成 `canonical_book_name`。
+
+/// JS `String.prototype.trim` 去掉的字符：ECMAScript 的 WhiteSpace（含全部 Zs 类与 U+FEFF）+ LineTerminator。跟 Rust 的
+/// `str::trim`（Unicode White_Space）差两个：JS 去 U+FEFF、不去 U+0085。
+fn is_js_space(c: char) -> bool {
+    matches!(c, '\t' | '\n' | '\u{B}' | '\u{C}' | '\r' | ' ' | '\u{A0}' | '\u{1680}' | '\u{2000}'..='\u{200A}' | '\u{2028}' | '\u{2029}' | '\u{202F}' | '\u{205F}' | '\u{3000}' | '\u{FEFF}')
+}
+
+fn js_trim(s: &str) -> &str {
+    s.trim_matches(is_js_space)
+}
+
+/// 列表显示名（网页 `stgClean`）：去掉末尾的 `.epub` / `.pdf`（不分大小写），取第一个 ` -- ` 之前（去掉 sheng-ren 文件名里
+/// `-- 作者 -- hash` 的尾巴；之前是空就用整串），去首尾空白。
+pub fn list_title(name: &str) -> String {
+    // JS 的 `/\.(epub|pdf)$/i`：只认末尾、ASCII 不分大小写
+    let strip = |ext: &str| name.len().checked_sub(ext.len()).filter(|&cut| name.is_char_boundary(cut) && name[cut..].eq_ignore_ascii_case(ext)).map(|cut| &name[..cut]);
+    let s = strip(".epub").or_else(|| strip(".pdf")).unwrap_or(name);
+    let head = s.split(" -- ").next().unwrap_or("");
+    js_trim(if head.is_empty() { s } else { head }).to_string()
+}
+
+/// 搜索建议的分组名（网页 `stgTitle`）：[`list_title`] 再取第一个 `-` 之前、去首尾空白——"亂馬1⁄2 典藏版 - 07卷" → "亂馬1⁄2 典藏版"，
+/// 同一本书的多卷合成一条。
+pub fn series_of(title: &str) -> String {
+    js_trim(title.split('-').next().unwrap_or("")).to_string()
+}
+
+/// "已经不用管了"（网页 `isBookDone`）：不在处理中、最近一次加入没失败、加入过 xochitl（`native` 时刻非 0）。
+pub fn is_done(busy: bool, delivered: Option<&Delivered>) -> bool {
+    if busy {
+        return false;
+    }
+    let Some(d) = delivered else { return false };
+    if d.deliver.as_ref().is_some_and(|c| c.status == "failed") {
+        return false;
+    }
+    d.native.is_some_and(|n| n != 0)
 }
 
 /// 投原生成功后交给自检线程的计划：上传前的书库快照 + 母版路径（按字节认书）+ 文件名 / dc:title（母版已被删、改名时按书名认）

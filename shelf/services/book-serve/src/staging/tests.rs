@@ -904,3 +904,38 @@ fn spawn_deliver_queues_behind_running_job() {
     let dc = s.list().into_iter().find(|e| e.name == "q.pdf").unwrap().delivered.and_then(|d| d.deliver).unwrap();
     assert_eq!(dc.status, "failed", "轮到它才真去投（测试里 xochitl 不可达）");
 }
+
+/// 列表派生字段逐字移植网页 `stgClean` / `stgTitle` / `isBookDone`（2026-10-10，契约 S4）。用例取自网页注释与真实书名；
+/// 另在开发机用 node 跑原 JS 函数对拍过（见书架白皮书对应记录）。
+#[test]
+fn list_title_series_and_done_match_web_rules() {
+    let cases = [
+        ("亂馬1⁄2 典藏版 - 07卷.epub", "亂馬1⁄2 典藏版 - 07卷", "亂馬1⁄2 典藏版"),
+        ("三体 -- 刘慈欣 -- 3f9a.EPUB", "三体", "三体"),
+        ("Tell Me Your Dreams (v6).Pdf", "Tell Me Your Dreams (v6)", "Tell Me Your Dreams (v6)"),
+        (" -- 只有尾巴.epub", "-- 只有尾巴", ""),
+        ("a-b-c.epub.epub", "a-b-c.epub", "a"),
+        ("无扩展名", "无扩展名", "无扩展名"),
+        ("\u{FEFF}书\u{3000}.epub", "书", "书"),
+        (".epub", "", ""),
+        ("x.epub.bak", "x.epub.bak", "x.epub.bak"),
+    ];
+    for (name, title, series) in cases {
+        assert_eq!((list_title(name).as_str(), series_of(&list_title(name)).as_str()), (title, series), "{name:?}");
+    }
+    let d = |native: Option<u64>, st: Option<&str>| Delivered { native, render: None, deliver: st.map(|s| sidecar::DeliverCheck { status: s.into(), message: String::new(), at: 1 }) };
+    assert!(is_done(false, Some(&d(Some(5), Some("ok")))));
+    assert!(is_done(false, Some(&d(Some(5), None))));
+    assert!(!is_done(true, Some(&d(Some(5), Some("ok")))), "处理中不算");
+    assert!(!is_done(false, Some(&d(Some(5), Some("failed")))), "上次加入失败不算");
+    assert!(!is_done(false, Some(&d(None, Some("ok")))), "没加入过");
+    assert!(!is_done(false, Some(&d(Some(0), None))), "JS !!0 为假");
+    assert!(!is_done(false, None));
+    // 列表里带上这三个字段
+    let t = tempfile::tempdir().unwrap();
+    let s = staging(&t);
+    s.stage_new("亂馬1⁄2 典藏版 - 07卷.pdf", b"%PDF").unwrap();
+    s.mark_delivered("亂馬1⁄2 典藏版 - 07卷.pdf").unwrap();
+    let v = serde_json::to_value(&s.list()[0]).unwrap();
+    assert_eq!((v["title"].as_str(), v["series"].as_str(), v["done"].as_bool()), (Some("亂馬1⁄2 典藏版 - 07卷"), Some("亂馬1⁄2 典藏版"), Some(true)));
+}
