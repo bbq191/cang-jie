@@ -1,7 +1,9 @@
 name: CI
 
-# cang-jie 最小回归网：离线可跑的四类检查（不含真机——设备行为靠工程纪律人工真机验证）。
-# 四类检查：shell 静态检查 / host 侧 pytest + 前端 JS + enhance/shared C 单测 / 各 Rust crate cargo test / aarch64 交叉编译冒烟。
+# cang-jie 最小回归网：离线可跑的五类检查（不含真机——设备行为靠工程纪律人工真机验证）。
+# 五类检查：shell 静态检查 / host 侧 pytest + 前端 JS + enhance/shared C 单测 / 各 Rust crate cargo test /
+# 依赖漏洞公告（cargo audit）/ aarch64 交叉编译冒烟（Rust 设备二进制 + 两个 C 写的 xovi 扩展）。
+# cargo 一律 --locked（2026-10-10，审计 SEC-3）：Cargo.lock 与 Cargo.toml 对不上就失败，不在 CI 里悄悄重新解析依赖。
 
 on:
   push:
@@ -69,16 +71,37 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: cargo test（共享基座 + 网关 + enhance 的两个独立服务，各自独立 crate）
         run: |
-          cargo test --manifest-path rmsvc-core/Cargo.toml
-          cargo test --manifest-path rmsvc-core/epubpkg/Cargo.toml
-          cargo test --manifest-path gateway/Cargo.toml
-          cargo test --manifest-path enhance/wallpaper-serve/Cargo.toml
-          cargo test --manifest-path enhance/font-serve/Cargo.toml
+          cargo test --locked --manifest-path rmsvc-core/Cargo.toml
+          cargo test --locked --manifest-path rmsvc-core/epubpkg/Cargo.toml
+          cargo test --locked --manifest-path gateway/Cargo.toml
+          cargo test --locked --manifest-path enhance/wallpaper-serve/Cargo.toml
+          cargo test --locked --manifest-path enhance/font-serve/Cargo.toml
       # 2026-10-07 起书架不再依赖 sheng-ren 的 bookconv，读 EPUB 用自带的 shelf-conv，无外部 git 依赖
       - name: cargo test（shelf 内部 workspace：shelf-conv/book-serve）
         run: cargo test --manifest-path shelf/Cargo.toml --workspace --locked
       - name: cargo test（notes 内部 workspace：rmv6/notecore/vendorcfg/四服务）
-        run: cargo test --manifest-path notes/Cargo.toml --workspace
+        run: cargo test --manifest-path notes/Cargo.toml --workspace --locked
+
+  # ── 依赖漏洞公告（RustSec 数据库）：每个 Cargo.lock 逐个查（2026-10-10，审计 SEC-3：rustls 0.20 的
+  #    RUSTSEC-2024-0336 本该由这一步抓到）。只在有漏洞公告时失败；unmaintained/yanked 只打警告。
+  #    不设 ignore 名单：真要放过某条公告，在这里写明编号与理由再加 --ignore。
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - name: cargo audit（7 个 lockfile，一个不过也查完其余的再失败）
+        run: |
+          rc=0
+          for d in rmsvc-core rmsvc-core/epubpkg gateway shelf notes enhance/font-serve enhance/wallpaper-serve; do
+            echo "::group::$d/Cargo.lock"
+            cargo audit --file "$d/Cargo.lock" || rc=1
+            echo "::endgroup::"
+          done
+          exit $rc
 
   # ── aarch64 全静态交叉编译冒烟（打包器分发的设备二进制，别让 musl/链接悄悄坏掉）──
   cross-build:
@@ -95,3 +118,10 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
       - name: shelf + gateway + notes 交叉编译（shelf/build.sh 顺手编译 ../gateway、../notes，复用仓库 build.sh，与打包器同路径）
         run: sh shelf/build.sh
+      # 两个 C 写的 xovi 扩展（2026-10-10，审计 SEC-2）：部署脚本构建失败时会退回仓库里提交的 .so，源码改坏/出警告
+      # 不会被发现——这里按"交叉编译零警告"门槛编一遍。xovi 胶水 xovi_glue.{c,h} 已提交，不需要 asivery/xovi clone。
+      # 只验证编得过，不比对仓库里提交的 .so（runner 的 gcc 版本与开发机不同，产物字节必然不同）。
+      - name: enhance C 扩展交叉编译（hl-snap / ui-font，-Werror）
+        run: |
+          make -C enhance/hl-snap aarch64 EXTRA_CFLAGS=-Werror
+          make -C enhance/ui-font aarch64 EXTRA_CFLAGS=-Werror
