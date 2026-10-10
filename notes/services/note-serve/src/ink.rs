@@ -1,25 +1,14 @@
 //! 条目库的只读访问口（本服务只读，不改字段——改字段是 ink-serve/transcribe-serve/mind-serve 的事）。
-//! 生产走注册表找 ink-serve；测试用内存桩。同款套路见 `transcribe-serve::ink`。
-//!
-//! 传输层委托 `rmsvc_core::registry::SvcClient`（2026-09-09 消重复，见该模块文档）。
+//! 生产实现是共用的 `notesvc::InkClient`（2026-10-10 三份 `InkHttp` 收成一份）；测试用内存桩。
 use notecore::model::Book;
-use rmsvc_core::paths::Paths;
-use rmsvc_core::registry::{enc, SvcClient};
+use notesvc::InkClient;
 
 pub trait EntryStore: Send + Sync {
     fn book(&self, uuid: &str) -> Result<Book, String>;
 }
 
-pub struct InkHttp(SvcClient);
-
-impl InkHttp {
-    pub fn new(paths: Paths) -> InkHttp {
-        InkHttp(SvcClient::new(paths, "ink-serve", 30))
-    }
-}
-
-impl EntryStore for InkHttp {
+impl EntryStore for InkClient {
     fn book(&self, uuid: &str) -> Result<Book, String> {
-        self.0.get_typed(&format!("/books/{}", enc(uuid)))
+        InkClient::book(self, uuid)
     }
 }

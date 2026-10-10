@@ -1,5 +1,5 @@
 //! 生成编排（Strategy + 纯函数骨架，trait 全桩、可离线单测；真机网络只在 `XochitlUploader`/`BookServeTrash`/
-//! `InkHttp` 三处生产实现里）：
+//! `notesvc::InkClient` 三处生产实现里）：
 //! 条目库取书 → `notecore::project` 投影每一章 → 指纹未变就跳过（不重传） → `rmv6::write` 打包 `.rmdoc` →
 //! `/upload` 进书本自己已经在的设备文件夹 → 按 `visibleName`+时间窗认领刚生成的设备 uuid → 这一章如果
 //! 之前生成过、且这次真的换了新文档，旧版本入 `book-serve` 回收站队列 → 记新记录（`notebooks.rs`）。

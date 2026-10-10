@@ -30,11 +30,11 @@ pub const PRESETS: &[Preset] = &[
 /// 官方已下线的预置 id → 现行 id（老配置里存的选择自动迁过去）。
 const RETIRED_PRESETS: &[(&str, &str)] = &[("deepseek-v4-flash-vision-exp", "deepseek-flash")];
 
+/// 老配置里的 `backend` 键（恒为 "qwen"，2026-10-10 前会被写进草稿/回答的 `backend`）已删：读到时直接忽略，
+/// 新版不再写出；旧版本读新文件缺这个键按它自己的缺省补上。草稿/回答现在记真实模型标识 `usage_key()`。
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct TranscribeConfig {
-    /// 后端标识（写进草稿 `backend` 字段，便于区分不同模型的建议）。
-    pub backend: String,
     /// 当前选中的预置 id；`"custom"` 走下面两个手填字段。
     pub preset: String,
     #[serde(skip_serializing_if = "String::is_empty")]
@@ -74,7 +74,6 @@ pub struct TranscribeConfig {
 impl Default for TranscribeConfig {
     fn default() -> Self {
         TranscribeConfig {
-            backend: "qwen".into(),
             preset: PRESETS[0].id.to_string(),
             custom_model: String::new(),
             custom_base_url: String::new(),
@@ -125,12 +124,8 @@ impl TranscribeConfig {
     /// `clearKey:true` 清当前厂商那把。`preset` 切换预置（未知预置名拒绝）；`preset:"custom"` 时
     /// `model`/`baseUrl` 才生效，写进 `customModel`/`customBaseUrl`。`price:{inputPer1k,outputPer1k}`（老写法 `price:{input,output}` 也认）存到当前
     /// 预置名下。共享部分见 `vendorcfg::apply_common`，这里只补这条服务独有的字段
-    /// （`backend`/节流四件套/`prompt`）。
+    /// （节流四件套/`prompt`）。
     pub fn apply(&mut self, j: &JsonBody) -> Result<(), String> {
-        let backend = j.str_or("backend", "");
-        if !backend.is_empty() {
-            self.backend = backend.to_string();
-        }
         vendorcfg::apply_common(PRESETS, j, &mut self.preset, &mut self.custom_model, &mut self.custom_base_url, &mut self.keys, &mut self.prices)?;
         if let Some(v) = j.opt_u64("timeoutSecs") { self.timeout_secs = v.clamp(5, 600); }
         if let Some(v) = j.opt_u64("maxPerRun") { self.max_per_run = (v as usize).clamp(1, 500); }
@@ -286,5 +281,8 @@ mod tests {
         assert_eq!(c.provider(), "dashscope");
         assert_eq!(c.key().as_deref(), Some("REDACTED-KEY"));
         assert!(!c.auto, "真机上这轮采样时自动转写是关的");
+        let back = serde_json::to_string(&c).unwrap();
+        assert!(!back.contains("backend"), "老 backend 键只读不写: {back}");
+        assert_eq!(c.usage_key(), "qwen3-vl-plus", "草稿 backend 记的是这个");
     }
 }

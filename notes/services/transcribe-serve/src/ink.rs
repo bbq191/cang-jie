@@ -1,63 +1,29 @@
 //! 条目库的访问口（只经 ink-serve 的 HTTP，**不直接碰文件**：条目库唯一写者是 ink-serve）。
-//! `EntryStore` 抽象出四个动作，生产走注册表找 ink-serve，测试用内存桩。
-//!
-//! 传输层委托 `rmsvc_core::registry::SvcClient`（2026-09-09 消重复，见该模块文档）；`crop` 下载
-//! 原始字节走 `SvcClient::get_bytes`（有上限，非 2xx 带上 ink-serve 的错误原因）。
-use notecore::marker::Marker;
-use notecore::model::{Book, Draft};
-use serde::Deserialize;
-use rmsvc_core::paths::Paths;
-use rmsvc_core::registry::{enc, SvcClient};
-
-/// 单张裁图的读取上限：裁图是一条勾画的局部渲染（ink-serve 限 400 万像素，PNG 正常几十到几百 KB）；
-/// 给到 RGBA 不压缩的体积还有余量，只防异常应答把内存吃光。
-const CROP_MAX_BYTES: u64 = 24 * 1024 * 1024;
-
-#[derive(Deserialize, Debug, Clone)]
-pub struct BookBrief {
-    pub uuid: String,
-    #[serde(default)]
-    pub pending: usize,
-}
-
-/// ink-serve `GET /books` 的应答外壳（`{"items": [...]}`）。
-#[derive(serde::Deserialize)]
-struct Items {
-    #[serde(default)]
-    items: Vec<BookBrief>,
-}
+//! `EntryStore` 只声明本服务用到的四个动作，生产实现是共用的 `notesvc::InkClient`（2026-10-10 三份 `InkHttp`
+//! 收成一份），测试用内存桩。
+use notecore::api::{BookBrief, DraftPost};
+use notecore::model::Book;
+use notesvc::InkClient;
 
 pub trait EntryStore: Send + Sync {
     fn list_books(&self) -> Result<Vec<BookBrief>, String>;
     fn book(&self, uuid: &str) -> Result<Book, String>;
     fn crop(&self, uuid: &str, file: &str) -> Result<Vec<u8>, String>;
-    /// 写回草稿（与可选的行首标记：样式修正，或 `##`/`###` 挂分区/覆盖小节）。ink-serve 保证不覆盖已校对 `text`。
-    fn post_draft(&self, uuid: &str, id: &str, draft: &Draft, marker: Option<Marker>) -> Result<(), String>;
+    /// 写回草稿（转写**原文**；剥行首标记、样式采不采纳由 ink-serve 的 `Entry::accept_draft` 定，已校对 `text` 永不被覆盖）。
+    fn post_draft(&self, uuid: &str, id: &str, draft: &DraftPost) -> Result<(), String>;
 }
 
-pub struct InkHttp(SvcClient);
-
-impl InkHttp {
-    pub fn new(paths: Paths) -> InkHttp {
-        InkHttp(SvcClient::new(paths, "ink-serve", 30))
-    }
-}
-
-impl EntryStore for InkHttp {
+impl EntryStore for InkClient {
     fn list_books(&self) -> Result<Vec<BookBrief>, String> {
-        Ok(self.0.get_typed::<Items>("/books")?.items)
+        InkClient::list_books(self)
     }
     fn book(&self, uuid: &str) -> Result<Book, String> {
-        self.0.get_typed(&format!("/books/{}", enc(uuid)))
+        InkClient::book(self, uuid)
     }
     fn crop(&self, uuid: &str, file: &str) -> Result<Vec<u8>, String> {
-        self.0.get_bytes(&format!("/books/{}/crops/{}", enc(uuid), enc(file)), CROP_MAX_BYTES).map_err(|e| format!("取裁图 {file}: {e}"))
+        InkClient::crop(self, uuid, file)
     }
-    fn post_draft(&self, uuid: &str, id: &str, draft: &Draft, marker: Option<Marker>) -> Result<(), String> {
-        let mut body = serde_json::json!({"draft": draft});
-        if let Some(Marker::Style(s)) = marker {
-            body["style"] = serde_json::to_value(s).unwrap_or_default();
-        }
-        self.0.post_json(&format!("/books/{}/entries/{}", enc(uuid), enc(id)), &body)
+    fn post_draft(&self, uuid: &str, id: &str, draft: &DraftPost) -> Result<(), String> {
+        InkClient::post_draft(self, uuid, id, draft)
     }
 }

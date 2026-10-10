@@ -6,7 +6,8 @@ use crate::backend::TextModel;
 use crate::config::MindConfig;
 use crate::ink::EntryStore;
 use crate::ledger::Ledger;
-use notecore::model::{Answer, Entry};
+use notecore::api::AnswerPost;
+use notecore::model::Entry;
 use vendorcfg::VendorConfig;
 
 pub struct Ctx<'a> {
@@ -49,7 +50,8 @@ pub fn ask_entry(c: &Ctx<'_>, uuid: &str, book_title: &str, e: &Entry) -> Result
             return Err(err);
         }
     };
-    let answer = Answer { text: reply.text.clone(), backend: c.model.name().to_string(), at: c.now, brief: question.to_string() };
+    // `backend` 记真实模型标识（`ChatClient` 以 `usage_key()` 建，见 main.rs `State::model`），不再恒为配置里的 "qwen"。
+    let answer = AnswerPost { text: reply.text.clone(), backend: c.model.name().to_string(), brief: question.to_string() };
     // 先记账再写回：模型已经答了、token 已经花了，写回 ink-serve 失败也不该让这笔用量凭空消失。
     c.ledger.record_ok(&c.cfg.usage_key(), reply.prompt_tokens, reply.completion_tokens, c.now);
     c.store.post_answer(uuid, &e.id, &answer)?;
@@ -60,7 +62,7 @@ pub fn ask_entry(c: &Ctx<'_>, uuid: &str, book_title: &str, e: &Entry) -> Result
 mod tests {
     use super::*;
     use crate::backend::Fixed;
-    use notecore::model::{Book, Ink, Quote, Status, Style};
+    use notecore::model::{Ink, Quote, Status, Style};
     use std::sync::Mutex;
 
     fn entry(ask_ai: bool, question: Option<&str>) -> Entry {
@@ -88,20 +90,16 @@ mod tests {
     }
 
     struct Mem {
-        book: Mutex<Book>,
-        posted: Mutex<Vec<(String, Answer)>>,
+        posted: Mutex<Vec<(String, AnswerPost)>>,
     }
     impl EntryStore for Mem {
-        fn book(&self, _uuid: &str) -> Result<Book, String> {
-            Ok(self.book.lock().unwrap().clone())
-        }
-        fn post_answer(&self, _uuid: &str, id: &str, answer: &Answer) -> Result<(), String> {
+        fn post_answer(&self, _uuid: &str, id: &str, answer: &AnswerPost) -> Result<(), String> {
             self.posted.lock().unwrap().push((id.into(), answer.clone()));
             Ok(())
         }
     }
     fn mem() -> Mem {
-        Mem { book: Mutex::new(Book { uuid: "u".into(), title: "测试书".into(), ..Default::default() }), posted: Mutex::new(vec![]) }
+        Mem { posted: Mutex::new(vec![]) }
     }
     fn cfg() -> MindConfig {
         MindConfig::default()

@@ -1,7 +1,8 @@
 //! transcribe-serve —— 笔记·转写（loopback 8796）。订阅 ink-serve 事件：条目库有新手写 → 取裁图 → 视觉模型 → 草稿写回
 //! （经 ink-serve 的 HTTP，条目库唯一写者仍是它；已校对 `text` 永不被覆盖）。唯一出网的笔记服务：设备自己的 WiFi 直连。
 //! 路由（经网关前缀 `/api/transcribe`）：`GET /status` · `GET /config` · `PUT /config`（`apiKey` 只写不读）·
-//! `POST /run`（同步跑一轮）· `POST /books/{uuid}/entries/{id}`（强制转写一条）· `POST /retry`（清失败记录）· `GET /events`。
+//! `POST /books/{uuid}/entries/{id}`（强制转写一条，网页「重新转写」）· `GET /events`。
+//! （`POST /run`、`POST /retry` 网页早已不调，2026-10-10 删。）
 mod backend;
 mod config;
 mod ink;
@@ -10,7 +11,7 @@ mod prompt;
 mod worker;
 
 use config::TranscribeConfig;
-use ink::{EntryStore, InkHttp};
+use notesvc::InkClient;
 use ledger::Ledger;
 use rmsvc_core::events::{follow, Event, EventBus};
 use rmsvc_core::http::{bind, ApiError, Reply, Router, ServeOpts};
@@ -34,7 +35,7 @@ struct State {
     ledger: Ledger,
     failures: Failures,
     bus: Arc<EventBus>,
-    store: InkHttp,
+    store: InkClient,
     /// 同一时刻只跑一轮（自动与手动互斥）。
     run_lock: Mutex<()>,
     trigger: SyncSender<()>,
@@ -47,7 +48,8 @@ impl State {
     }
     /// 配置没变就复用上一轮的调用端（连同还活着的 HTTPS 连接），见 `vendorcfg::ClientCache`。
     fn vision(&self, cfg: &TranscribeConfig) -> Result<Arc<vendorcfg::ChatClient>, String> {
-        self.clients.get(cfg, &cfg.backend, Duration::from_secs(cfg.timeout_secs), "未配置 API key（网页「转写设置」里粘贴，或环境变量 DASHSCOPE_API_KEY）")
+        // 后端标识用 `usage_key()`（预置 id 或 `custom:<model>`）：写进草稿 `backend`，跟用量账本同一个键（NT-3）。
+        self.clients.get(cfg, &cfg.usage_key(), Duration::from_secs(cfg.timeout_secs), "未配置 API key（网页「管理 → 模型管理」里粘贴，或环境变量 DASHSCOPE_API_KEY）")
     }
     /// 跑一轮（阻塞拿锁）。没 key → 直接报告不出网。
     fn run(&self, only: Option<Target<'_>>) -> ledger::RunReport {
@@ -112,7 +114,7 @@ fn main() {
         ledger: Ledger::open(&paths.app_state_dir(APP).join("transcribe.json")),
         failures: Failures::default(),
         bus: Arc::new(EventBus::new()),
-        store: InkHttp::new(paths.clone()),
+        store: InkClient::new(paths.clone()),
         run_lock: Mutex::new(()),
         trigger: tx,
         clients: Default::default(),
@@ -148,7 +150,6 @@ fn main() {
             }
             Ok(Reply::ok(&next.public()))
         }))
-        .post("/run", bind(&st, |s, _| Ok(Reply::ok(&s.run(None)))))
         .post("/books/{uuid}/entries/{id}", bind(&st, |s, r| {
             let (uuid, id) = (r.param("uuid").to_string(), r.param("id").to_string());
             let rep = s.run(Some(Target { uuid: &uuid, id: &id }));
@@ -158,12 +159,8 @@ fn main() {
             } else {
                 Err(ApiError::bad(if rep.note.is_empty() { "没有这条目或它没有手写".to_string() } else { rep.note }))
             }
-        }))
-        .post("/retry", bind(&st, |s, _| {
-            s.failures.clear();
-            s.kick();
-            Ok(Reply::ok(&serde_json::json!({"ok": true})))
         }));
-    println!("[transcribe-serve] 配置 {}；后端 {} {}；key {:?}", st.cfg.path().display(), st.cfg().backend, st.cfg().model(), st.cfg().key_source());
+    let c = st.cfg();
+    println!("[transcribe-serve] 配置 {}；模型 {}（{} @ {}）；key {:?}", st.cfg.path().display(), c.usage_key(), c.model(), c.base_url(), c.key_source());
     service::run_or_exit(&SPEC, &bind_addr, &paths, router, ServeOpts::default())
 }
