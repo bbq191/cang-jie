@@ -2,7 +2,9 @@
 //! 路由 = (方法, 路径模式) → 处理函数；路径模式支持尾部 `/*` 前缀匹配与单段 `{param}`。
 mod router;
 mod server;
+mod test_request;
 pub use router::{encode_query, parse_query, Router};
+pub use test_request::TestRequest;
 pub use server::{serve, serve_with, Guard, GuardFn, GuardRequest, ServeOpts, DEFAULT_MAX_CONCURRENT};
 
 use serde::Serialize;
@@ -346,12 +348,12 @@ mod tests {
         assert_eq!(b.opt_str_list("nope"), None, "没给 → None");
         assert_eq!(b.opt_str_list("s"), None, "不是数组 → None");
         assert_eq!(JsonBody(serde_json::json!({"l": []})).opt_str_list("l"), Some(vec![]), "空数组也算给了");
-        let mut empty: &[u8] = b"";
-        let r = Request { method: Method::Get, path: "/".into(), query: parse_query("limit=50&bad=x&blank=%20"), params: HashMap::new(), content_type: String::new(), content_length: None, headers: vec![], body: &mut empty };
-        assert_eq!(r.q_parse::<usize>("limit"), Some(50));
-        assert_eq!(r.q_parse::<usize>("bad"), None);
-        assert_eq!(r.q_required("limit").unwrap(), "50");
-        assert_eq!(r.q_required("blank").unwrap_err().message, "缺 blank");
+        TestRequest::new(Method::Get, "/").query_string("limit=50&bad=x&blank=%20").with(|r| {
+            assert_eq!(r.q_parse::<usize>("limit"), Some(50));
+            assert_eq!(r.q_parse::<usize>("bad"), None);
+            assert_eq!(r.q_required("limit").unwrap(), "50");
+            assert_eq!(r.q_required("blank").unwrap_err().message, "缺 blank");
+        });
     }
 
     #[test]

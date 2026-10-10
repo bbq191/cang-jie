@@ -179,9 +179,7 @@ mod tests {
     use crate::http::{bind, ApiError};
 
     fn call(router: &Router, m: Method, path: &str, q: &str) -> (u16, String) {
-        let mut empty: &[u8] = b"";
-        let mut r = Request { method: m, path: path.into(), query: parse_query(q), params: HashMap::new(), content_type: String::new(), content_length: None, headers: vec![], body: &mut empty };
-        let rep = router.dispatch(&mut r);
+        let rep = crate::http::TestRequest::new(m, path).query_string(q).content_length(None).dispatch(router);
         (rep.status, String::from_utf8_lossy(&rep.body).to_string())
     }
 
