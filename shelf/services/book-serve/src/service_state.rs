@@ -1,6 +1,7 @@
 //! 服务组合根：配置、inbox 队列、母版库、xochitl 客户端；inbox 追平处理。
 use crate::agent_failures::AgentFailures;
 use crate::config::BookConfig;
+use crate::delivery::XochitlDelivery;
 use crate::mkdir::MkdirQueue;
 use crate::spool::Spool;
 use crate::staging::{self, Staging};
@@ -29,16 +30,16 @@ pub struct State {
     /// 原地替换后找回阅读位置的快照（QML 代理 shelf-keep-progress.qmd 在书打开时查、跳完销账，见 progress.rs）。
     pub progress: Arc<crate::progress::Progress>,
     /// 原生书库「建文件夹」队列（QML 代理 shelf-mkdir-agent.qmd 拉取执行，2026-09-19 复活，
-    /// 见 mkdir.rs 模块文档）；`Arc` 是因为 `Staging::deliver` 的后台线程要跟 `bus` 一样带着走。
+    /// 见 mkdir.rs 模块文档）；`Arc`：投递层（`XochitlDelivery`）也持一份。
     pub mkdir: Arc<MkdirQueue>,
     /// 回收站 / 建文件夹代理执行不成、已放弃的记录（网页页头横幅，见 agent_failures.rs）。
     pub agent_failures: Arc<AgentFailures>,
     /// 直接导入 xochitl（不进母版库，sheng-ren 经 SSH 端口转发调，见 import.rs）。
     pub import: crate::import::Importer,
-    /// 直接导入的后台任务队列（一次一个，结果在内存里留 1 小时，见 import_jobs.rs）。
-    pub import_jobs: crate::import_jobs::ImportJobs,
+    /// 投进 xochitl 的后台作业队列：直接导入与母版库落库共用，一次一个（导入任务的结果在内存里留 1 小时，见 jobs.rs）。
+    pub jobs: crate::jobs::Jobs,
     /// `GET /status` 的结果缓存（[`STATUS_TTL`]）。网页全量刷新时打这个接口，里面要读全部 `.metadata` 列文件夹。
-    /// 本服务自己可能建出新文件夹的操作（落库、直接导入）完成后 [`State::invalidate_status`] 主动失效；
+    /// 本服务自己可能建出新文件夹的操作（直接导入）完成后 [`State::invalidate_status`] 主动失效；
     /// 用户在设备上新建文件夹这类外部变化最多滞后一个 TTL。
     /// `Arc`：直接导入的后台任务做完时也要让它失效（见 [`State::status_invalidator`]）。
     status_cache: Arc<TtlCache<serde_json::Value>>,
@@ -74,15 +75,16 @@ impl State {
         let books_state = paths.state_dir().join("books"); // inbox/.work/failed 与三个待办队列共用的状态目录
         let spool = Spool::new(books_state.clone());
         let comic_margins = Arc::new(ComicMargins::new(&books_state, &paths.xochitl_dir()));
-        let staging = Staging::new(paths.staging_dir(), xochitl.clone(), cfg.native_upload_limit_bytes())
-            .with_comic_margins(comic_margins.clone());
         let progress = Arc::new(crate::progress::Progress::new(&books_state, &paths.xochitl_dir()));
-        let import = crate::import::Importer::new(xochitl.clone(), staging.clone(), books_state.join("import-tmp"), cfg.native_upload_limit_bytes()).with_progress(progress.clone());
         let bus = Arc::new(EventBus::new());
         let agent_failures = Arc::new(AgentFailures::new(&books_state, Some(bus.clone())));
         let trash = TrashQueue::new(&books_state, &paths.xochitl_dir()).with_failures(agent_failures.clone());
         let mkdir = Arc::new(MkdirQueue::new(&books_state, &paths.xochitl_dir()).with_failures(agent_failures.clone()));
-        State { cfg, spool, staging, xochitl, bus, trash, comic_margins, progress, mkdir, agent_failures, import, import_jobs: crate::import_jobs::ImportJobs::default(), status_cache: Arc::new(TtlCache::new(STATUS_TTL)), inbox_settle: INBOX_SETTLE }
+        // 投进 xochitl 那一层只组装这一份，母版库落库与直接导入共用（见 delivery.rs）。
+        let delivery = Arc::new(XochitlDelivery::new(xochitl.clone(), mkdir.clone(), cfg.native_upload_limit_bytes()).with_comic_margins(comic_margins.clone()));
+        let staging = Staging::new(paths.staging_dir(), delivery.clone());
+        let import = crate::import::Importer::new(delivery, books_state.join("import-tmp")).with_progress(progress.clone());
+        State { cfg, spool, staging, xochitl, bus, trash, comic_margins, progress, mkdir, agent_failures, import, jobs: crate::jobs::Jobs::default(), status_cache: Arc::new(TtlCache::new(STATUS_TTL)), inbox_settle: INBOX_SETTLE }
     }
 
     pub fn ensure_dirs(&self) -> std::io::Result<()> {
@@ -131,7 +133,7 @@ impl State {
             "ok": true,
             // 原生书库**根下**真实存在的文件夹名（去重排序），给网页「加入原生书库 → 文件夹」下拉候选用——
             // 2026-09-19 取代原来写死的「书库/批注/自定义」三选一预设（`annotFolder` 已删）。
-            // 2026-10-10 起只列根下的：落库按名字只在书库根正下方找 / 建（`Staging::ensure_folder`），列出子文件夹的名字，
+            // 2026-10-10 起只列根下的：落库按名字只在书库根正下方找 / 建（`XochitlDelivery::ensure_folder`），列出子文件夹的名字，
             // 选了它反而会在根下另建一个同名文件夹。
             "xochitlFolders": root_folders(self.xochitl.library_dir()),
             // 2026-10-07 删掉网页从来没读过的三项：`uploadReachable`（xochitl 不在时每次白等 3 秒探活）、

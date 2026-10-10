@@ -8,7 +8,7 @@ mod comic_margins;
 mod config;
 mod delivery;
 mod import;
-mod import_jobs;
+mod jobs;
 mod mkdir;
 mod ops;
 mod pending_queue;

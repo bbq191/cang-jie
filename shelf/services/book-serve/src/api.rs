@@ -14,7 +14,7 @@
 //! 2026-09-05 起规则统一"所有书只落母版库"：旧 `POST /?target=` 直投路已删（`/staging*` 是网页的唯一入口）。
 //! 直接导入 xochitl、不进母版库（2026-10-07，电脑上的 sheng-ren `booklib sync` 经 SSH 端口转发直连 8790 调，见 import.rs）。
 //! **异步**（同 `/staging/deliver`）：收完请求体、做完快速校验就回 `202 {job}`，建文件夹、上传、等 xochitl 排版、认领在后台
-//! 任务队列里一次一个做（import_jobs.rs），结果用任务 id 查：
+//! 作业队列里一次一个做（jobs.rs，与 `/staging/deliver` 共用），结果用任务 id 查：
 //! · `POST /import?name=<文件名.epub>&folder=<文件夹路径，`/` 分多级，可空＝书库根>`（请求体＝EPUB 原始字节）→ `202 {job}`
 //!   （文件夹逐级找、没有就建；目标文件夹里已有逐字节相同的书就认回它、不重复加入）
 //! · `POST /import?uuid=<uuid>&name=<文件名.epub>`：原地替换已有文档内容、uuid 不变 → `202 {job}`；文档不在 / 已删 / 在回收站 / 不是 EPUB → 404
@@ -65,8 +65,9 @@ pub fn router(st: Arc<State>) -> Router {
             let j = r.json()?;
             let name = j.str("name")?.to_string();
             // 母版库永远保留（可再投另一读器对照，2026-09-19 起不再有"投完自动删除"这条路）；
-            // folder 空＝书库根；非空且真不存在会先经 mkdir 队列建出来再投，见 ensure_folder。
-            s.staging.spawn_deliver(&name, j.str_or("folder", ""), s.mkdir.clone(), s.bus.clone()).map_err(ApiError::bad)?;
+            // folder 空＝书库根；非空＝书库根下这个名字的文件夹，没有会先经 mkdir 队列建出来再投，见 XochitlDelivery::ensure_folder。
+            // 排进与直接导入共用的后台作业队列，一次一本（见 jobs.rs）。
+            s.staging.spawn_deliver(&name, j.str_or("folder", ""), &s.jobs, s.bus.clone()).map_err(ApiError::bad)?;
             s.bus.publish("books", "staging"); // 立即推一次，UI 马上看到这条目进入 busy 状态
             Ok(Reply::ok(&serde_json::json!({"ok": true, "message": format!("《{name}》已开始投递，完成后自动刷新"), "async": true})))
         }))
@@ -140,7 +141,7 @@ pub fn router(st: Arc<State>) -> Router {
         }))
         // ── 直接导入 xochitl（不进母版库，见 import.rs）：异步，回 202 + 任务 id，结果查 /import/jobs/{id} ──
         .post("/import", bind(&st, import_book))
-        .get("/import/jobs/{id}", bind(&st, |s, r| s.import_jobs.get(r.param("id")).map(|v| Reply::ok(&v)).ok_or_else(|| ApiError::not_found("没有这个导入任务（可能 book-serve 重启过，或做完超过 1 小时已清掉）"))))
+        .get("/import/jobs/{id}", bind(&st, |s, r| s.jobs.get(r.param("id")).map(|v| Reply::ok(&v)).ok_or_else(|| ApiError::not_found("没有这个导入任务（可能 book-serve 重启过，或做完超过 1 小时已清掉）"))))
         .post("/import/states", bind(&st, import_states))
         .get("/import/{uuid}", bind(&st, |s, r| match s.import.describe(r.param("uuid")) {
             Some(d) => Ok(Reply::ok(&serde_json::json!({"uuid": d.uuid, "name": d.name, "folder": d.folder, "deleted": d.deleted, "replacing": d.replacing}))),
@@ -216,9 +217,9 @@ fn import_book(st: &State, r: &mut Request<'_>) -> ApiResult {
             ImportError::Failed(m) => ApiError::internal(m),
         }
     })?;
-    let (import, mkdir, bus, invalidate) = (st.import.clone(), st.mkdir.clone(), st.bus.clone(), st.status_invalidator());
-    let id = st.import_jobs.submit(Box::new(move |stage| {
-        let res = import.run(accepted, &mkdir, stage);
+    let (import, bus, invalidate) = (st.import.clone(), st.bus.clone(), st.status_invalidator());
+    let id = st.jobs.submit(Box::new(move |stage| {
+        let res = import.run(accepted, stage);
         match &res {
             Ok(_) => {
                 invalidate(); // 可能新建了文件夹

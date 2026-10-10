@@ -4,26 +4,21 @@
 //! 阅读模式优化好再上传，这里原样投进 xochitl；原来的「优化」、入库 PDF 转换、原 PDF 备份、抓网文、联网补封面都已删除，见 git 历史。
 //! 目录 `$XDG_STATE_HOME/shelf/books/staging/`（/home 分区，重启/OTA 不丢；**不套 LRU 淘汰**，留住用户还没落库的书）。
 //! 落库记录是同目录隐藏 sidecar `.<name>.delivered`（`sidecar` 模块管读写；本模块只在落库/删书时调它）。
-use crate::mkdir::MkdirQueue;
+use crate::delivery::XochitlDelivery;
 use crate::ops::{OpGuard, OpRegistry};
-use crate::render_check;
 use rmsvc_core::fs::ScratchFile;
 use crate::sidecar::{self, Delivered, RenderCheck};
 use serde::Serialize;
 use rmsvc_core::asset::{AssetItem, AssetStore};
 use rmsvc_core::formats::{self, BOOK_EXTS};
 use rmsvc_core::fs::{plain_name, same_content, unique_path, Content};
-use rmsvc_core::xochitl::{Delivery, Xochitl};
+use rmsvc_core::xochitl::Delivery;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 // 按职责拆成子模块（原 `staging.rs` 一个文件 1800+ 行）：`Staging` 的方法按动作分散在各子模块的 `impl Staging` 里，
 // 对外路径（`crate::staging::Staging` 等）不变；子模块内的私有项以 `pub(super)` 提供给兄弟模块与测试。
 mod deliver;
-/// 大文件通道的安全上限，直接导入（`crate::import`）也用同一个。
-pub(crate) use self::deliver::MAX_DIRECT_BYTES;
-/// 等代理建出文件夹的上限，直接导入逐级建文件夹也用同一个。
-pub(crate) use self::deliver::FOLDER_WAIT_TIMEOUT;
 mod intake;
 mod library;
 pub use self::library::low_space;
@@ -83,15 +78,12 @@ pub struct DeliverOutcome {
 #[derive(Clone)]
 pub struct Staging {
     dir: PathBuf,
-    xochitl: Arc<Xochitl>,
-    /// 投原生体积门（字节，0=不拦）：xochitl `/upload` 超限会直接断连，先拦下来给指引。
-    native_limit: u64,
+    /// 投进 xochitl 那一层（建文件夹、上传 / 大文件通道、认领、登记页边距），与直接导入共用一份，见 [`crate::delivery`]。
+    delivery: Arc<XochitlDelivery>,
     /// 正在处理的条目登记簿（忙锁），见 [`crate::ops`]。
     ops: OpRegistry,
     /// 列表的缓存（落库边车 / xochitl 页数），各按对应文件的戳失效，见 [`ListCaches`]。
     caches: Arc<ListCaches>,
-    /// 漫画页边距待办（可选：测试里不装）。见 [`crate::comic_margins`]。
-    comic_margins: Option<Arc<crate::comic_margins::ComicMargins>>,
     /// 母版库"落名"临界区：挑一个不撞名的文件名（`unique_path` 先查存在）再 rename/写入，两步之间不能插进别的落名，
     /// 否则两个同名书会挑到同一个名字、后到的把先到的覆盖掉。网页上传 / inbox 追平 / 改名
     /// 都从这里过。只包"挑名 + 落地"这一小段本地文件操作——此前网页上传是把 spool 锁一直攥到整个 multipart
@@ -153,32 +145,11 @@ fn canonical_staged_name(name: &str) -> String {
 }
 
 impl Staging {
-    pub fn new(dir: PathBuf, xochitl: Arc<Xochitl>, native_limit: u64) -> Staging {
-        Staging {
-            dir,
-            xochitl,
-            native_limit,
-            ops: OpRegistry::default(),
-            caches: Arc::default(),
-            comic_margins: None,
-            land: Arc::new(std::sync::Mutex::new(())),
-        }
+    pub fn new(dir: PathBuf, delivery: Arc<XochitlDelivery>) -> Staging {
+        Staging { dir, delivery, ops: OpRegistry::default(), caches: Arc::default(), land: Arc::new(std::sync::Mutex::new(())) }
     }
-    /// 接上漫画页边距待办队列（`State::new` 用）。
-    pub fn with_comic_margins(mut self, q: Arc<crate::comic_margins::ComicMargins>) -> Staging {
-        self.comic_margins = Some(q);
-        self
-    }
-    /// 登记"这本书首次打开时设页边距 `margins`"。失败只记日志，不影响投书；没接队列（测试里）就不登记。
-    /// 只登记按页边距模式排的漫画：`margins` 来自 sheng-ren 优化器写的 `META-INF/eink-reader-margins`
-    /// （[`shelf_conv::epub::Book::reader_margins`]）。补白比例是按那个页边距算的，没按这个模式排的漫画设成 1 反而更糟
-    /// （贴左、右侧空一块，文字贴屏幕边）；文字书 / PDF 完全不碰。本仓库旧版（v15、v16）优化出来的漫画不再认。
-    pub(crate) fn register_comic_margins(&self, uuid: &str, name: &str, margins: u32) {
-        let Some(q) = &self.comic_margins else { return };
-        match q.add(uuid, margins) {
-            Ok(_) => println!("[book-serve] 《{name}》是按页边距模式排的漫画，已登记首次打开时设页边距 {margins}"),
-            Err(e) => println!("[book-serve] 《{name}》登记页边距失败（不影响投书）: {e}"),
-        }
+    pub fn delivery(&self) -> &Arc<XochitlDelivery> {
+        &self.delivery
     }
     /// 这条目当前是否有操作在跑。
     pub fn is_busy(&self, name: &str) -> bool {

@@ -167,7 +167,7 @@ impl Staging {
 
     /// xochitl 书库里这份文档 `.content` 的页数（经 [`ListCaches::pages`]）。
     fn content_pages(&self, uuid: &str) -> Option<u64> {
-        let lib = self.xochitl.library_dir();
+        let lib = self.delivery.library_dir();
         let stamp = FileStamp::read(&lib.join(format!("{uuid}.content")))?;
         self.caches.pages.get_or(uuid, stamp, || rmsvc_core::xochitl::page_count(lib, uuid))
     }
@@ -201,7 +201,7 @@ impl Staging {
                     if let Some(n) = self.content_pages(&rc.uuid) {
                         // 记录里是 0 = 投递时没等到占位页数（极少见）：这时 `.content` 里的数可能还是占位的，不能当已渲染；
                         // 改看 `.epubindex`——大文件通道替换时删掉了它，重新出现只能是 xochitl 渲染了真书。
-                        let rendered = rc.pages != 0 || self.xochitl.library_dir().join(format!("{}.epubindex", rc.uuid)).exists();
+                        let rendered = rc.pages != 0 || self.delivery.library_dir().join(format!("{}.epubindex", rc.uuid)).exists();
                         if n != rc.pages && rendered {
                             rc.status = "ok".into();
                             rc.pages = n;

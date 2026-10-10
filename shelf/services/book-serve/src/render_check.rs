@@ -48,7 +48,7 @@ pub fn run_with(staging: &Staging, bus: &EventBus, lib_dir: &Path, plan: &Render
         if claimed.borrow().is_none() {
             let uuid = claim_of(lib_dir, plan)?;
             if let Some(m) = plan.comic_margins {
-                staging.register_comic_margins(&uuid, &plan.name, m);
+                staging.delivery().register_comic_margins(&uuid, &plan.name, m);
             }
             *claimed.borrow_mut() = Some(uuid);
         }
@@ -104,10 +104,15 @@ mod tests {
 
     /// 母版库里有 a.epub，书库目录 `xochitl/`（空）；返回 (staging, 书库目录)。
     fn setup(t: &tempfile::TempDir) -> (Staging, std::path::PathBuf) {
+        setup_with(t, None)
+    }
+
+    /// 同 [`setup`]，投递层接上漫画页边距队列 `margins`。
+    fn setup_with(t: &tempfile::TempDir, margins: Option<Arc<crate::comic_margins::ComicMargins>>) -> (Staging, std::path::PathBuf) {
         let lib = t.path().join("xochitl");
         std::fs::create_dir_all(&lib).unwrap();
         let x = Arc::new(Xochitl::new("127.0.0.1:1", &lib, 1));
-        let s = Staging::new(t.path().join("staging"), x, 1024 * 1024);
+        let s = crate::staging::tests::staging_in(t.path().join("staging"), x, 1024 * 1024, margins);
         s.ensure().unwrap();
         s.stage_new("a.epub", OURS).unwrap();
         (s, lib)
@@ -156,9 +161,8 @@ mod tests {
         const U: &str = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
         for (comic, expect) in [(Some(1), Some(1)), (None, None)] {
             let t = tempfile::tempdir().unwrap();
-            let (s, lib) = setup(&t);
-            let q = std::sync::Arc::new(crate::comic_margins::ComicMargins::new(t.path(), &lib));
-            let s = s.with_comic_margins(q.clone());
+            let q = std::sync::Arc::new(crate::comic_margins::ComicMargins::new(t.path(), &t.path().join("xochitl")));
+            let (s, lib) = setup_with(&t, Some(q.clone()));
             render_doc(&lib, U, "a", 100);
             let mut p = plan_in(&s);
             p.comic_margins = comic;
@@ -225,9 +229,8 @@ mod tests {
         const THEIRS: &str = "aaaaaaaa-0000-4000-8000-000000000002";
         const OLD: &str = "aaaaaaaa-0000-4000-8000-000000000003";
         let t = tempfile::tempdir().unwrap();
-        let (s, lib) = setup(&t);
-        let q = Arc::new(crate::comic_margins::ComicMargins::new(t.path(), &lib));
-        let s = s.with_comic_margins(q.clone());
+        let q = Arc::new(crate::comic_margins::ComicMargins::new(t.path(), &t.path().join("xochitl")));
+        let (s, lib) = setup_with(&t, Some(q.clone()));
         render_doc(&lib, MINE, "a", 10);
         std::fs::write(lib.join(format!("{THEIRS}.metadata")), r#"{"type":"DocumentType","visibleName":"a","parent":"","createdTime":"9000"}"#).unwrap();
         std::fs::write(lib.join(format!("{THEIRS}.epub")), b"PK-them").unwrap();
@@ -238,9 +241,8 @@ mod tests {
         assert_eq!((render_of(&s).unwrap().uuid.as_str(), q.get(MINE), q.get(THEIRS)), (MINE, Some(1), None));
         // 只有投递前就在的同字节文档：不认，不登记
         let t = tempfile::tempdir().unwrap();
-        let (s, lib) = setup(&t);
-        let q = Arc::new(crate::comic_margins::ComicMargins::new(t.path(), &lib));
-        let s = s.with_comic_margins(q.clone());
+        let q = Arc::new(crate::comic_margins::ComicMargins::new(t.path(), &t.path().join("xochitl")));
+        let (s, lib) = setup_with(&t, Some(q.clone()));
         render_doc(&lib, OLD, "a", 10);
         let mut p = plan_in(&s);
         p.claim.before.insert(OLD.into());

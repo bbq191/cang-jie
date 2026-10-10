@@ -6,7 +6,7 @@
 //!   母版库目录，不进母版库列表），再照落库那条路加入 xochitl——≤ 体积门走普通 `/upload`，超了走大文件通道（占位 + 磁盘替换）。
 //!   `/upload` 不回 uuid：按"上传前没有、上传后新出现、`<uuid>.epub` 与上传的字节逐字节相同"认出这份新文档。
 //! - **多级文件夹**（2026-10-07）：`folder` 是原件在用户书目录里的相对子目录，`/` 分隔（`漫画/死亡筆記(愛藏版)`）。按层建：
-//!   先在书库根找（或建）「漫画」，再在「漫画」里找（或建）「死亡筆記(愛藏版)」，书放进最里层（[`Staging::ensure_folder_path`]，
+//!   先在书库根找（或建）「漫画」，再在「漫画」里找（或建）「死亡筆記(愛藏版)」，书放进最里层（[`XochitlDelivery::ensure_folder_path`]，
 //!   按（上级 uuid, 名字）找，上传按 uuid 指定文件夹）。此前整串当一个名字，建出一个叫「漫画/死亡筆記(愛藏版)」的顶层文件夹。
 //! - **原地替换**（[`Importer::accept_replace`] + [`Importer::run`]）：已有文档的 `<uuid>.epub` 换成新内容，uuid 不变（阅读进度 `lastOpenedPage`、
 //!   所在文件夹、页边距等 `.content`/`.metadata` 里的东西都不动，漫画页边距也不重新登记——用户在阅读器里调过的不被覆盖）；
@@ -18,28 +18,17 @@
 //! **内存**：book-serve 的 systemd `MemoryMax=192M`，整本书绝不读进内存——请求体按块直接写盘，上传也是流式（`upload_file`）。
 //! **异步处理**（2026-10-07 起，同网页「加入 xochitl」的 `spawn_deliver`）：HTTP 请求只做收体和快速校验（[`Importer::accept_new`] /
 //! [`Importer::accept_replace`]），就把耗时部分（[`Importer::run`]：建文件夹、上传、等 xochitl 排版、认领、登记页边距 / 替换）
-//! 交给后台任务队列（`import_jobs.rs`，一次一个、按提交顺序），立即回 202 + 任务 id，结果由客户端事后查。此前同步挂着等：
+//! 交给后台作业队列（`jobs.rs`，一次一个、按提交顺序，与网页落库共用），立即回 202 + 任务 id，结果由客户端事后查。此前同步挂着等：
 //! xochitl 导入时当场排版，《阿加莎全集》30MB 排了 8 分多钟，客户端 10 分钟超时、服务端认领 120 秒超时，书加进去了却回了失败，
 //! 电脑上没记录、下次重复传。
-use crate::mkdir::MkdirQueue;
+use crate::delivery::{XochitlDelivery, MAX_DIRECT_BYTES};
 use crate::ops::OpRegistry;
-use crate::staging::{Staging, MAX_DIRECT_BYTES};
-use rmsvc_core::formats::{mime_of, sniff};
+use rmsvc_core::formats::sniff;
 use rmsvc_core::fs::{clean_dir, plain_name, same_content, Content, ScratchFile};
-use rmsvc_core::xochitl::{is_uuid_shape, read_meta, Delivery, Metadata, Xochitl};
+use rmsvc_core::xochitl::{is_uuid_shape, read_meta, Metadata};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
-
-/// 普通上传回 2xx 之后，等 xochitl 在书库里建好这份文档的上限（真机导入当下同步渲染，回执时多半已经落盘）。
-pub const CLAIM_WAIT: Duration = Duration::from_secs(20);
-/// `/upload` 读超时 / 408（"很可能已送达"，见 `upload_likely_delivered`）时多等一会：xochitl 还在处理大书。
-/// 2026-10-07 真机：《阿加莎全集》（30MB、85 册）排在几卷大漫画后面，xochitl 导入时排版前后 8 分多钟才落盘，原来的 120 秒认不出、
-/// 回了失败（书其实已经加进去了）。放宽到 30 分钟。
-pub const CLAIM_WAIT_SLOW: Duration = Duration::from_secs(30 * 60);
-/// 认领时书库目录写入的防抖（xochitl 导入时连写 metadata/content/epub）。
-const CLAIM_DEBOUNCE: Duration = Duration::from_millis(500);
 
 /// 直接导入的错误：HTTP 层按种类映射成 400 / 404 / 500（领域模块不碰 http 类型）。
 #[derive(Debug, PartialEq)]
@@ -100,28 +89,21 @@ enum Kind {
 /// 字段都是共享句柄（`Arc` / `Clone` 的），`clone()` 出来的和原来的是同一个导入器（同一把替换忙锁），可以带进后台任务线程。
 #[derive(Clone)]
 pub struct Importer {
-    xochitl: Arc<Xochitl>,
-    /// 借用落库那套：`ensure_folder`（经建文件夹队列建出目标文件夹）、漫画页边距的判定与登记。母版库本身不碰。
-    staging: Staging,
+    /// 投进 xochitl 那一层（逐级建文件夹、上传 / 大文件通道、认领、登记页边距），与母版库落库共用一份。母版库本身不碰。
+    delivery: Arc<XochitlDelivery>,
     /// 新导入和原地替换的请求体都先落在这（`$XDG_STATE_HOME/shelf/books/import-tmp/`，/home 分区，与 xochitl 书库同分区，
     /// 替换时收完再 rename 进书库）。进程中途被杀留下的半成品由 [`Importer::ensure`] 在启动时清掉——此前替换直接写书库里的
     /// `<uuid>.epub.new`，被杀就一直留在书库目录里（最大 1GB）。
     tmp_dir: PathBuf,
-    /// 普通上传的体积门（字节，0=不拦），同 `BookConfig::native_upload_limit_bytes`。
-    native_limit: u64,
     /// 正在替换的 uuid：同一份文档同时只允许一个替换。
     replacing: OpRegistry,
-    pub claim_wait: Duration,
-    pub claim_wait_slow: Duration,
-    /// 每一级文件夹等代理建出来的上限，同落库的 `FOLDER_WAIT_TIMEOUT`（单测改短）。
-    pub folder_wait: Duration,
     /// 原地替换前给阅读位置拍快照（见 progress.rs）；`None` 时不拍（单测）。
     progress: Option<Arc<crate::progress::Progress>>,
 }
 
 impl Importer {
-    pub fn new(xochitl: Arc<Xochitl>, staging: Staging, tmp_dir: PathBuf, native_limit: u64) -> Importer {
-        Importer { xochitl, staging, tmp_dir, native_limit, replacing: OpRegistry::default(), claim_wait: CLAIM_WAIT, claim_wait_slow: CLAIM_WAIT_SLOW, folder_wait: crate::staging::FOLDER_WAIT_TIMEOUT, progress: None }
+    pub fn new(delivery: Arc<XochitlDelivery>, tmp_dir: PathBuf) -> Importer {
+        Importer { delivery, tmp_dir, replacing: OpRegistry::default(), progress: None }
     }
 
     pub fn with_progress(mut self, p: Arc<crate::progress::Progress>) -> Importer {
@@ -136,7 +118,7 @@ impl Importer {
     }
 
     fn lib(&self) -> Result<&Path, ImportError> {
-        let lib = self.xochitl.library_dir();
+        let lib = self.delivery.library_dir();
         if !lib.is_dir() {
             return Err(ImportError::Failed(format!("xochitl 书库目录不在（{}），直接导入只能在设备上用", lib.display())));
         }
@@ -144,7 +126,7 @@ impl Importer {
     }
 
     /// 新导入的同步部分：校验文件名、请求体流式落临时文件并做快速校验（非空、大小、zip 头）。耗时的建文件夹、上传、认领
-    /// 留给 [`Self::run`]（HTTP 层放进后台任务队列，见 `import_jobs.rs`）。`folder` 原样带着，到 [`Self::run`] 里才拆、才建。
+    /// 留给 [`Self::run`]（HTTP 层放进后台任务队列，见 `jobs.rs`）。`folder` 原样带着，到 [`Self::run`] 里才拆、才建。
     pub fn accept_new(&self, name: &str, folder: &str, body: &mut dyn Read, declared_len: Option<usize>) -> Result<Accepted, ImportError> {
         check_name(name)?;
         self.lib()?;
@@ -172,10 +154,10 @@ impl Importer {
 
     /// 后台部分（**阻塞**，可达分钟级）：新导入走 [`Self::finish_new`]，替换走 [`Self::finish_replace`]。`stage` 报当前阶段
     /// （给人看的短语，任务查询接口原样回出去）。临时文件随 `a` 一起在这里用完删掉。
-    pub fn run(&self, a: Accepted, mkdir: &MkdirQueue, stage: &dyn Fn(&str)) -> Result<DocState, ImportError> {
+    pub fn run(&self, a: Accepted, stage: &dyn Fn(&str)) -> Result<DocState, ImportError> {
         let Accepted { name, body, kind } = a;
         match kind {
-            Kind::New { folder } => self.finish_new(&name, &folder, &body, mkdir, stage),
+            Kind::New { folder } => self.finish_new(&name, &folder, &body, stage),
             Kind::Replace { uuid, _busy } => self.finish_replace(&uuid, &name, body, stage),
         }
     }
@@ -183,28 +165,28 @@ impl Importer {
     /// 新导入：逐级确保文件夹 →（同字节幂等检查）→ 加入 xochitl → 认出 uuid → （漫画）登记页边距。
     /// `folder` 是 `/` 分隔的多级路径（去掉空段和各段首尾空白；空＝书库根）：逐级找，没有的经建文件夹队列在上一级里建，
     /// 某一级等不到就停在已经有的那一级（回执的 `folder` 照实写实际落进的路径）。
-    fn finish_new(&self, name: &str, folder: &str, body: &Received, mkdir: &MkdirQueue, stage: &dyn Fn(&str)) -> Result<DocState, ImportError> {
+    fn finish_new(&self, name: &str, folder: &str, body: &Received, stage: &dyn Fn(&str)) -> Result<DocState, ImportError> {
         let lib = self.lib()?;
         let (part, size) = (body.part.path(), body.size);
         stage("建文件夹");
         let segments = folder_segments(folder);
-        let (folder_uuid, _) = self.staging.ensure_folder_path(&segments, mkdir, self.folder_wait);
+        let (folder_uuid, _) = self.delivery.ensure_folder_path(&segments);
         let folder = folder_uuid.as_str();
         // 目标文件夹里已经有一份内容逐字节相同的活文档（上一次导入其实成功了、只是客户端没等到回执，再来一次）：认它，不再传一份重复的
         if let Some(uuid) = self.same_in_folder(lib, folder, part, size) {
             println!("[book-serve] 直接导入《{name}》：文件夹里已有内容相同的 {uuid}，不再重复加入");
             return self.describe(&uuid).ok_or_else(|| ImportError::Failed(format!("读不到 {uuid} 的 .metadata")));
         }
-        let uuid = if self.native_limit > 0 && size > self.native_limit {
+        let uuid = if self.delivery.over_limit(size) {
             // 大文件通道自己登记漫画页边距（同母版库落库那条路）。
             stage("上传给 xochitl（大文件通道）");
-            let up = self.staging.upload_large(part, name, folder).map_err(ImportError::Failed)?;
+            let up = self.delivery.upload_large(part, name, folder).map_err(ImportError::Failed)?;
             up.ok_or_else(|| ImportError::Bad("读不了这本 EPUB，造不出大文件通道的占位文档".into()))?.uuid
         } else {
-            let uuid = self.upload_and_claim(lib, part, name, folder, stage)?;
+            let uuid = self.delivery.upload_and_claim(part, name, folder, stage).map_err(ImportError::Failed)?;
             if let Some(m) = shelf_conv::epub::Book::open(part).ok().and_then(|mut b| b.reader_margins()) {
                 stage("登记页边距");
-                self.staging.register_comic_margins(&uuid, name, m);
+                self.delivery.register_comic_margins(&uuid, name, m);
             }
             uuid
         };
@@ -214,17 +196,16 @@ impl Importer {
 
     /// 测试用：同步做完一次新导入（[`Self::accept_new`] + [`Self::run`]）。
     #[cfg(test)]
-    pub fn import_new(&self, name: &str, folder: &str, body: &mut dyn Read, declared_len: Option<usize>, mkdir: &MkdirQueue) -> Result<DocState, ImportError> {
+    pub fn import_new(&self, name: &str, folder: &str, body: &mut dyn Read, declared_len: Option<usize>) -> Result<DocState, ImportError> {
         let a = self.accept_new(name, folder, body, declared_len)?;
-        self.run(a, mkdir, &|_| {})
+        self.run(a, &|_| {})
     }
 
     /// 测试用：同步做完一次原地替换（[`Self::accept_replace`] + [`Self::run`]）。
     #[cfg(test)]
     pub fn replace(&self, uuid: &str, name: &str, body: &mut dyn Read, declared_len: Option<usize>) -> Result<DocState, ImportError> {
         let a = self.accept_replace(uuid, name, body, declared_len)?;
-        let state = tempfile::tempdir().unwrap(); // 替换不建文件夹，给个用不上的队列
-        self.run(a, &MkdirQueue::new(state.path(), self.xochitl.library_dir()), &|_| {})
+        self.run(a, &|_| {})
     }
 
     /// 文件夹 `folder`（uuid，空串＝根）里内容和 `part` 逐字节相同的活文档。先比大小，一样才读。
@@ -237,28 +218,6 @@ impl Importer {
                 let epub = lib.join(format!("{uuid}.epub"));
                 std::fs::metadata(&epub).is_ok_and(|m| m.len() == size) && same_content(&epub, Content::File(part))
             })
-    }
-
-    /// 普通 `/upload` + 认领：上传前先记下"已经在的候选"，上传后找新出现、内容逐字节相同的那份。
-    /// 整段串行（进程内一把锁）：两次导入同一份字节时，后一次不会把前一次刚建的文档认成自己的。
-    /// `folder` 是目标文件夹 uuid（空串＝根）。
-    fn upload_and_claim(&self, lib: &Path, part: &Path, name: &str, folder: &str, stage: &dyn Fn(&str)) -> Result<String, ImportError> {
-        static CLAIM: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _serial = rmsvc_core::sync::lock(&CLAIM);
-        // xochitl 收 `/upload` 时当场排版，回 2xx 前大书能挂好几分钟（2026-10-07《阿加莎全集》8 分多钟）。
-        stage("上传给 xochitl");
-        let snap = crate::delivery::Claim::snapshot(lib);
-        let wait = match self.xochitl.upload_file_into(part, name, mime_of(name), folder) {
-            Ok(Delivery::Delivered(_)) => self.claim_wait,
-            Ok(Delivery::LikelyDelivered(_)) => self.claim_wait_slow,
-            Err(e) => return Err(ImportError::Failed(format!("上传给 xochitl 失败: {e}"))),
-        };
-        stage("等 xochitl 排版");
-        // 先查一次（真机导入当下同步渲染，回执时多半已经落盘），没有再等书库目录的变化（事件驱动，此前每 200ms 扫一遍书库）。
-        let claim = || snap.find(lib, part);
-        rmsvc_core::fswatch::wait_for(lib, CLAIM_DEBOUNCE, wait, claim).ok_or_else(|| {
-            ImportError::Failed(format!("已上传给 xochitl，但 {} 秒内没在书库里认出《{name}》（可能稍后才出现；先在设备上看一眼，别马上重试，免得重复）", wait.as_secs()))
-        })
     }
 
     /// 原地替换 `<uuid>.epub`，uuid 不变：请求体已在临时目录（0600，[`Self::accept_replace`] 收好）→ 给阅读位置拍快照
@@ -296,7 +255,7 @@ impl Importer {
         match self.describe(uuid) {
             None => Err(ImportError::NotFound("xochitl 书库里没有这份文档".into())),
             Some(d) if d.deleted => Err(ImportError::NotFound("这份文档已删除或在回收站里".into())),
-            Some(_) if !self.xochitl.library_dir().join(format!("{uuid}.epub")).is_file() => Err(ImportError::NotFound("这份文档不是 EPUB".into())),
+            Some(_) if !self.delivery.library_dir().join(format!("{uuid}.epub")).is_file() => Err(ImportError::NotFound("这份文档不是 EPUB".into())),
             Some(_) => Ok(()),
         }
     }
@@ -306,9 +265,9 @@ impl Importer {
         if !is_uuid_shape(uuid) {
             return None;
         }
-        let m = read_meta(self.xochitl.library_dir(), uuid).ok().flatten().filter(Metadata::is_document)?;
+        let m = read_meta(self.delivery.library_dir(), uuid).ok().flatten().filter(Metadata::is_document)?;
         let deleted = !m.is_live();
-        let folder = if deleted { String::new() } else { self.xochitl.folder_path(&m.parent) };
+        let folder = if deleted { String::new() } else { self.delivery.xochitl().folder_path(&m.parent) };
         Some(DocState { uuid: uuid.to_string(), name: m.visible_name, folder, deleted, replacing: self.replacing.is_busy(uuid) })
     }
 }
@@ -369,25 +328,29 @@ fn receive(body: &mut dyn Read, declared_len: Option<usize>, dest: &Path) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mkdir::MkdirQueue;
     use crate::staging::tests::{fake_xochitl, mini_epub, spawn_agent};
+    use rmsvc_core::xochitl::Xochitl;
+    use std::time::Duration;
 
     const U: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
-    /// 书库目录 + 指向 `host` 的 xochitl 客户端 + 体积门 `limit`。
-    fn importer(t: &tempfile::TempDir, host: &str, limit: u64) -> (Importer, PathBuf) {
+    /// 书库目录 + 指向 `host` 的 xochitl 客户端 + 体积门 `limit` + 每级文件夹等 `folder_wait`；返回（导入器, 书库目录, 建文件夹队列）。
+    fn importer_with(t: &tempfile::TempDir, host: &str, limit: u64, folder_wait: Duration) -> (Importer, PathBuf, Arc<MkdirQueue>) {
         let lib = t.path().join("xochitl");
         std::fs::create_dir_all(&lib).unwrap();
         let x = Arc::new(Xochitl::new(host, &lib, 10));
-        let s = Staging::new(t.path().join("staging"), x.clone(), limit);
-        let mut im = Importer::new(x, s, t.path().join("import-tmp"), limit);
+        let q = Arc::new(MkdirQueue::new(&t.path().join("state"), &lib));
+        let d = Arc::new(XochitlDelivery::new(x, q.clone(), limit).with_waits(folder_wait, Duration::from_secs(3)));
+        let im = Importer::new(d, t.path().join("import-tmp"));
         im.ensure().unwrap();
-        im.claim_wait = Duration::from_secs(3);
-        im.claim_wait_slow = Duration::from_secs(3);
-        (im, lib)
+        (im, lib, q)
     }
 
-    fn mkdir(t: &tempfile::TempDir) -> MkdirQueue {
-        MkdirQueue::new(&t.path().join("state"), &t.path().join("xochitl"))
+    /// 同 [`importer_with`]，不关心建文件夹（没有代理，等 1 秒就放弃）。
+    fn importer(t: &tempfile::TempDir, host: &str, limit: u64) -> (Importer, PathBuf) {
+        let (im, lib, _) = importer_with(t, host, limit, Duration::from_secs(1));
+        (im, lib)
     }
 
     fn put_doc(lib: &Path, uuid: &str, meta: &str) {
@@ -405,15 +368,15 @@ mod tests {
         std::fs::create_dir_all(&lib).unwrap();
         let (im, lib) = importer(&t, &fake_xochitl(lib), 1 << 20);
         let a = mini_epub(&[("OEBPS/a.xhtml", "<p>甲</p>")]);
-        let d = im.import_new("甲.epub", "", &mut a.as_slice(), Some(a.len()), &mkdir(&t)).unwrap();
+        let d = im.import_new("甲.epub", "", &mut a.as_slice(), Some(a.len())).unwrap();
         assert_eq!(std::fs::read(lib.join(format!("{}.epub", d.uuid))).unwrap(), a, "认出的是自己上传的那份");
         assert_eq!((d.name.as_str(), d.folder.as_str(), d.deleted), ("甲.epub", "", false));
         // 同一份字节往同一文件夹再导入一次（上次其实成功了、客户端没等到回执）：认回那份，不重复加入
-        let d2 = im.import_new("甲.epub", "", &mut a.as_slice(), Some(a.len()), &mkdir(&t)).unwrap();
+        let d2 = im.import_new("甲.epub", "", &mut a.as_slice(), Some(a.len())).unwrap();
         assert_eq!(d.uuid, d2.uuid);
         // 内容不同的才另加一本
         let b2 = mini_epub(&[("OEBPS/a.xhtml", "<p>乙</p>")]);
-        let d3 = im.import_new("甲.epub", "", &mut b2.as_slice(), Some(b2.len()), &mkdir(&t)).unwrap();
+        let d3 = im.import_new("甲.epub", "", &mut b2.as_slice(), Some(b2.len())).unwrap();
         assert_ne!(d.uuid, d3.uuid);
         assert_eq!(std::fs::read_dir(t.path().join("import-tmp")).unwrap().count(), 0, "临时文件用完就删");
         assert!(!t.path().join("staging").exists() || std::fs::read_dir(t.path().join("staging")).unwrap().count() == 0, "不进母版库");
@@ -424,17 +387,15 @@ mod tests {
         rmsvc_core::xochitl::find_child_folder(lib, parent, name).unwrap_or_else(|| panic!("没有 {parent}/{name}"))
     }
 
-    /// 带假 xochitl 和模拟建夹代理的一套：返回（导入器, 书库目录, 队列, 代理建过的记录, 停止开关）。
+    /// 带假 xochitl 和模拟建夹代理的一套（每级文件夹最多等 `folder_wait`）：返回（导入器, 书库目录, 代理建过的记录, 停止开关）。
     #[allow(clippy::type_complexity)]
-    fn with_agent(t: &tempfile::TempDir, only_root: bool) -> (Importer, PathBuf, Arc<MkdirQueue>, Arc<std::sync::Mutex<Vec<(String, String)>>>, Arc<std::sync::atomic::AtomicBool>) {
+    fn with_agent(t: &tempfile::TempDir, only_root: bool, folder_wait: Duration) -> (Importer, PathBuf, Arc<std::sync::Mutex<Vec<(String, String)>>>, Arc<std::sync::atomic::AtomicBool>) {
         let lib = t.path().join("xochitl");
         std::fs::create_dir_all(&lib).unwrap();
-        let (mut im, lib) = importer(t, &fake_xochitl(lib), 1 << 20);
-        im.folder_wait = Duration::from_secs(5);
-        let q = Arc::new(mkdir(t));
+        let (im, lib, q) = importer_with(t, &fake_xochitl(lib), 1 << 20, folder_wait);
         let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let made = spawn_agent(q.clone(), lib.clone(), only_root, stop.clone());
-        (im, lib, q, made, stop)
+        (im, lib, made, stop)
     }
 
     #[test]
@@ -448,9 +409,9 @@ mod tests {
     #[test]
     fn import_new_builds_nested_folders_level_by_level() {
         let t = tempfile::tempdir().unwrap();
-        let (im, lib, q, made, stop) = with_agent(&t, false);
+        let (im, lib, made, stop) = with_agent(&t, false, Duration::from_secs(5));
         let a = mini_epub(&[("OEBPS/a.xhtml", "<p>死</p>")]);
-        let d = im.import_new("死亡筆記01.epub", "漫画/死亡筆記(愛藏版)", &mut a.as_slice(), Some(a.len()), &q).unwrap();
+        let d = im.import_new("死亡筆記01.epub", "漫画/死亡筆記(愛藏版)", &mut a.as_slice(), Some(a.len())).unwrap();
         stop.store(true, std::sync::atomic::Ordering::Relaxed);
         let top = folder(&lib, "", "漫画");
         let inner = folder(&lib, &top, "死亡筆記(愛藏版)");
@@ -465,14 +426,14 @@ mod tests {
     #[test]
     fn import_new_reuses_existing_parent_and_keeps_same_named_children_apart() {
         let t = tempfile::tempdir().unwrap();
-        let (im, lib, q, made, stop) = with_agent(&t, false);
+        let (im, lib, made, stop) = with_agent(&t, false, Duration::from_secs(5));
         let manga = "aaaaaaaa-0000-4000-8000-000000000001";
         std::fs::write(lib.join(format!("{manga}.metadata")), r#"{"type":"CollectionType","visibleName":"漫画","parent":""}"#).unwrap();
         let a = mini_epub(&[("OEBPS/a.xhtml", "<p>甲</p>")]);
         let b = mini_epub(&[("OEBPS/a.xhtml", "<p>乙</p>")]);
-        let da = im.import_new("甲.epub", "漫画/卷01", &mut a.as_slice(), Some(a.len()), &q).unwrap();
+        let da = im.import_new("甲.epub", "漫画/卷01", &mut a.as_slice(), Some(a.len())).unwrap();
         assert_eq!(*made.lock().unwrap(), [(manga.to_string(), "卷01".to_string())], "已有的上级不重建，只建下级");
-        let db = im.import_new("乙.epub", "小说/卷01", &mut b.as_slice(), Some(b.len()), &q).unwrap();
+        let db = im.import_new("乙.epub", "小说/卷01", &mut b.as_slice(), Some(b.len())).unwrap();
         stop.store(true, std::sync::atomic::Ordering::Relaxed);
         let novel = folder(&lib, "", "小说");
         let (v1m, v1n) = (folder(&lib, manga, "卷01"), folder(&lib, &novel, "卷01"));
@@ -482,7 +443,7 @@ mod tests {
         assert_eq!((da.folder.as_str(), db.folder.as_str()), ("漫画/卷01", "小说/卷01"));
         // 再导入到已经全有的路径：一个都不建
         let n = made.lock().unwrap().len();
-        let dc = im.import_new("丙.epub", "小说/卷01", &mut a.as_slice(), Some(a.len()), &q).unwrap();
+        let dc = im.import_new("丙.epub", "小说/卷01", &mut a.as_slice(), Some(a.len())).unwrap();
         assert_eq!((made.lock().unwrap().len(), dc.folder.as_str()), (n, "小说/卷01"));
     }
 
@@ -490,10 +451,10 @@ mod tests {
     #[test]
     fn import_new_single_segment_matches_old_behavior() {
         let t = tempfile::tempdir().unwrap();
-        let (im, lib, q, _made, stop) = with_agent(&t, false);
+        let (im, lib, _made, stop) = with_agent(&t, false, Duration::from_secs(5));
         let a = mini_epub(&[("OEBPS/a.xhtml", "<p>甲</p>")]);
-        let d = im.import_new("甲.epub", " 小说 ", &mut a.as_slice(), Some(a.len()), &q).unwrap();
-        let d0 = im.import_new("乙.epub", "", &mut a.as_slice(), Some(a.len()), &q).unwrap();
+        let d = im.import_new("甲.epub", " 小说 ", &mut a.as_slice(), Some(a.len())).unwrap();
+        let d0 = im.import_new("乙.epub", "", &mut a.as_slice(), Some(a.len())).unwrap();
         stop.store(true, std::sync::atomic::Ordering::Relaxed);
         assert_eq!(rmsvc_core::xochitl::parent_folder_of(&lib, &d.uuid), Some(folder(&lib, "", "小说")));
         assert_eq!((d.folder.as_str(), d0.folder.as_str()), ("小说", ""));
@@ -503,10 +464,9 @@ mod tests {
     #[test]
     fn import_new_stops_at_last_folder_that_exists() {
         let t = tempfile::tempdir().unwrap();
-        let (mut im, lib, q, _made, stop) = with_agent(&t, true);
-        im.folder_wait = Duration::from_millis(500);
+        let (im, lib, _made, stop) = with_agent(&t, true, Duration::from_millis(500));
         let a = mini_epub(&[("OEBPS/a.xhtml", "<p>甲</p>")]);
-        let d = im.import_new("甲.epub", "漫画/卷01", &mut a.as_slice(), Some(a.len()), &q).unwrap();
+        let d = im.import_new("甲.epub", "漫画/卷01", &mut a.as_slice(), Some(a.len())).unwrap();
         stop.store(true, std::sync::atomic::Ordering::Relaxed);
         assert_eq!(rmsvc_core::xochitl::parent_folder_of(&lib, &d.uuid), Some(folder(&lib, "", "漫画")));
         assert_eq!(d.folder, "漫画");
@@ -521,14 +481,14 @@ mod tests {
         let opf = r#"<package version="2.0"><metadata><dc:title>大书</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>"#;
         let container = r#"<container><rootfiles><rootfile full-path="content.opf"/></rootfiles></container>"#;
         let big = mini_epub(&[("META-INF/container.xml", container), ("content.opf", opf), ("c1.xhtml", &"字".repeat(500))]);
-        let d = im.import_new("大书.epub", "", &mut big.as_slice(), Some(big.len()), &mkdir(&t)).unwrap();
+        let d = im.import_new("大书.epub", "", &mut big.as_slice(), Some(big.len())).unwrap();
         assert_eq!(std::fs::read(lib.join(format!("{}.epub", d.uuid))).unwrap(), big, "占位已换成真书");
         // 大文件通道也按 uuid 落进多级文件夹的最里层（两级都已存在，不用代理）；另一个上级下的同名文件夹不会被认错
         let (top, inner, other) = ("aaaaaaaa-0000-4000-8000-00000000000a", "aaaaaaaa-0000-4000-8000-00000000000b", "aaaaaaaa-0000-4000-8000-00000000000c");
         std::fs::write(lib.join(format!("{top}.metadata")), r#"{"type":"CollectionType","visibleName":"漫画","parent":""}"#).unwrap();
         std::fs::write(lib.join(format!("{other}.metadata")), r#"{"type":"CollectionType","visibleName":"大","parent":""}"#).unwrap();
         std::fs::write(lib.join(format!("{inner}.metadata")), format!(r#"{{"type":"CollectionType","visibleName":"大","parent":"{top}"}}"#)).unwrap();
-        let d = im.import_new("大书.epub", "漫画/大", &mut big.as_slice(), Some(big.len()), &mkdir(&t)).unwrap();
+        let d = im.import_new("大书.epub", "漫画/大", &mut big.as_slice(), Some(big.len())).unwrap();
         assert_eq!((rmsvc_core::xochitl::parent_folder_of(&lib, &d.uuid).as_deref(), d.folder.as_str()), (Some(inner), "漫画/大"));
     }
 
@@ -536,7 +496,6 @@ mod tests {
     fn import_rejects_non_epub_bad_body_and_cleans_up() {
         let t = tempfile::tempdir().unwrap();
         let (im, _) = importer(&t, "127.0.0.1:9", 1 << 20);
-        let m = mkdir(&t);
         let ok = mini_epub(&[]);
         for (name, body, len, hint) in [
             ("a.pdf", ok.clone(), Some(ok.len()), "只收 .epub"),
@@ -547,7 +506,7 @@ mod tests {
             ("a.epub", ok.clone(), Some(ok.len() + 5), "不完整"),
             ("a.epub", ok.clone(), Some((MAX_DIRECT_BYTES + 1) as usize), "上限"),
         ] {
-            match im.import_new(name, "", &mut body.as_slice(), len, &m) {
+            match im.import_new(name, "", &mut body.as_slice(), len) {
                 Err(ImportError::Bad(e)) => assert!(e.contains(hint), "{name}: {e}"),
                 other => panic!("{name}: {other:?}"),
             }
@@ -632,8 +591,8 @@ mod tests {
         std::fs::create_dir_all(&lib).unwrap();
         let x = Arc::new(Xochitl::new("127.0.0.1:9", &lib, 1));
         let q = Arc::new(crate::comic_margins::ComicMargins::new(&t.path().join("state"), &lib));
-        let s = Staging::new(t.path().join("staging"), x.clone(), 0).with_comic_margins(q.clone());
-        let im = Importer::new(x, s, t.path().join("import-tmp"), 0);
+        let mk = Arc::new(MkdirQueue::new(&t.path().join("state"), &lib));
+        let im = Importer::new(Arc::new(XochitlDelivery::new(x, mk, 0).with_comic_margins(q.clone())), t.path().join("import-tmp"));
         im.ensure().unwrap();
         put_doc(&lib, U, r#"{"type":"DocumentType","visibleName":"漫画","parent":""}"#);
         let manga = mini_epub(&[(shelf_conv::epub::READER_MARGINS_MARKER, "1")]);

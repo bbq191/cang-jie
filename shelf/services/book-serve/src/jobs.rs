@@ -1,10 +1,12 @@
-//! 直接导入的**后台任务队列**（2026-10-07）：`POST /import` 收完请求体、做完快速校验就把剩下的活（建文件夹、上传给 xochitl、
-//! 等它排版、认领 uuid、登记页边距 / 原地替换）交到这里，立即回 202 + 任务 id；客户端（电脑上的 sheng-ren `booklib sync`）
-//! 用 `GET /import/jobs/{id}` 事后查结果。做法同网页「加入 xochitl」的 `Staging::spawn_deliver`（后台线程做、接口立即返回、
-//! 结果事后看），区别是结果不落母版库边车，只记在内存里。
+//! 投进 xochitl 的**后台作业队列**：直接导入（2026-10-07）与母版库落库（2026-10-10 起，审计 X-1）共用一个工作线程。
+//! - 直接导入（[`Jobs::submit`]）：`POST /import` 收完请求体、做完快速校验就把剩下的活（建文件夹、上传给 xochitl、等它排版、认领 uuid、
+//!   登记页边距 / 原地替换）交到这里，立即回 202 + 任务 id；客户端（电脑上的 sheng-ren `booklib sync`）用 `GET /import/jobs/{id}`
+//!   事后查结果，结果只记在内存里。
+//! - 落库（[`Jobs::run`]）：`Staging::spawn_deliver` 加好忙锁、边车记 `pending` 后排进来，结果写回母版库边车（网页看列表），
+//!   这里不记。此前每次落库新起一个线程，与直接导入是两套任务模型，几本书同时落库就同时往 xochitl 传。
 //!
-//! - **串行**：只有一个工作线程，任务按提交顺序一次做一个（xochitl 的 `/upload` 本来就得一本一本来，认领也靠"上传前后
-//!   书库多了哪份"）。排队中的任务 `state` 是 `running`、`stage` 是「排队」。
+//! - **串行**：只有一个工作线程，作业按提交顺序一次做一个（xochitl 的"设当前文件夹 → `/upload`"是全局状态，本来就得一本一本来，
+//!   认领也靠"上传前后书库多了哪份"）。排队中的导入任务 `state` 是 `running`、`stage` 是「排队」；排队中的落库在网页上是"处理中"。
 //! - **只在内存里**：book-serve 重启任务就没了（查询回 404，客户端据此按"不知道结果"处理——下次同步再导入时，目标文件夹里
 //!   已有逐字节相同的书会被认回来，不会重复加入，见 `Importer::same_in_folder`）。任务 id 带进程启动时刻，重启后的新任务
 //!   不会和旧 id 撞上。
@@ -38,59 +40,70 @@ struct Job {
     finished: Option<Instant>,
 }
 
-type Jobs = Arc<Mutex<HashMap<String, Job>>>;
+type JobTable = Arc<Mutex<HashMap<String, Job>>>;
 
-pub struct ImportJobs {
-    jobs: Jobs,
-    /// 交给唯一的工作线程；`ImportJobs` 销毁时发送端跟着没了，工作线程做完手头的就退出。
-    tx: Mutex<mpsc::Sender<(String, Task)>>,
+/// 交给工作线程的一件活。
+type Work = Box<dyn FnOnce() + Send>;
+
+pub struct Jobs {
+    jobs: JobTable,
+    /// 交给唯一的工作线程；`Jobs` 销毁时发送端跟着没了，工作线程做完手头的就退出。
+    tx: Mutex<mpsc::Sender<Work>>,
     /// 任务 id 前缀：进程启动时刻（毫秒，十六进制）。
     boot: String,
     seq: AtomicU64,
     keep: Duration,
 }
 
-impl Default for ImportJobs {
+impl Default for Jobs {
     fn default() -> Self {
         Self::new(JOB_KEEP)
     }
 }
 
-impl ImportJobs {
-    /// 起工作线程。`keep` 是做完的任务保留多久（线上 [`JOB_KEEP`]，单测改短）。
-    pub fn new(keep: Duration) -> ImportJobs {
-        let jobs: Jobs = Arc::default();
-        let (tx, rx) = mpsc::channel::<(String, Task)>();
-        let j2 = jobs.clone();
+impl Jobs {
+    /// 起工作线程。`keep` 是做完的导入任务保留多久（线上 [`JOB_KEEP`]，单测改短）。
+    pub fn new(keep: Duration) -> Jobs {
+        let (tx, rx) = mpsc::channel::<Work>();
         std::thread::spawn(move || {
-            for (id, task) in rx {
-                let report = |stage: &str| {
-                    if let Some(j) = lock(&j2).get_mut(&id) {
-                        j.stage = stage.to_string();
-                    }
-                };
-                report("开始");
-                let outcome = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| task(&report))) {
-                    Ok(Ok(d)) => Outcome::Done(d),
-                    Ok(Err(m)) => Outcome::Failed(m),
-                    Err(_) => Outcome::Failed("导入过程内部异常（已捕获，不影响其他任务）".into()),
-                };
-                if let Some(j) = lock(&j2).get_mut(&id) {
-                    j.stage = if matches!(outcome, Outcome::Done(_)) { "完成" } else { "失败" }.to_string();
-                    j.outcome = outcome;
-                    j.finished = Some(Instant::now());
-                }
+            for work in rx {
+                // 作业自己会兜住 panic（导入见 `submit`，落库见 `Staging::spawn_deliver`）；这里再兜一层，保证工作线程不会因此退出。
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(work));
             }
         });
-        ImportJobs { jobs, tx: Mutex::new(tx), boot: format!("{:x}", rmsvc_core::clock::now_ms()), seq: AtomicU64::new(1), keep }
+        Jobs { jobs: Arc::default(), tx: Mutex::new(tx), boot: format!("{:x}", rmsvc_core::clock::now_ms()), seq: AtomicU64::new(1), keep }
     }
 
-    /// 排进队尾，回任务 id。
+    /// 排进队尾（不记任务，结果由作业自己落盘）。工作线程没了（不该发生）→ `Err`，作业没做。
+    pub fn run(&self, work: Work) -> Result<(), String> {
+        lock(&self.tx).send(work).map_err(|_| "后台作业队列已停止，请重启 book-serve".to_string())
+    }
+
+    /// 排一个直接导入任务进队尾，回任务 id。
     pub fn submit(&self, task: Task) -> String {
         self.prune();
         let id = format!("{}-{}", self.boot, self.seq.fetch_add(1, Ordering::Relaxed));
         lock(&self.jobs).insert(id.clone(), Job { stage: "排队".into(), outcome: Outcome::Running, finished: None });
-        if lock(&self.tx).send((id.clone(), task)).is_err() {
+        let (j2, id2) = (self.jobs.clone(), id.clone());
+        let work: Work = Box::new(move || {
+            let report = |stage: &str| {
+                if let Some(j) = lock(&j2).get_mut(&id2) {
+                    j.stage = stage.to_string();
+                }
+            };
+            report("开始");
+            let outcome = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| task(&report))) {
+                Ok(Ok(d)) => Outcome::Done(d),
+                Ok(Err(m)) => Outcome::Failed(m),
+                Err(_) => Outcome::Failed("导入过程内部异常（已捕获，不影响其他任务）".into()),
+            };
+            if let Some(j) = lock(&j2).get_mut(&id2) {
+                j.stage = if matches!(outcome, Outcome::Done(_)) { "完成" } else { "失败" }.to_string();
+                j.outcome = outcome;
+                j.finished = Some(Instant::now());
+            }
+        });
+        if self.run(work).is_err() {
             // 工作线程没了（不该发生）：照实记成失败，别让客户端一直等
             if let Some(j) = lock(&self.jobs).get_mut(&id) {
                 j.stage = "失败".into();
@@ -140,7 +153,7 @@ pub(crate) mod tests {
     }
 
     /// 等任务做完（最多 5 秒），回最后一次查询的结果。
-    pub(crate) fn wait_done(jobs: &ImportJobs, id: &str) -> serde_json::Value {
+    pub(crate) fn wait_done(jobs: &Jobs, id: &str) -> serde_json::Value {
         let t0 = Instant::now();
         loop {
             let v = jobs.get(id).expect("任务应该在");
@@ -153,7 +166,7 @@ pub(crate) mod tests {
 
     #[test]
     fn done_failed_panic_and_unknown() {
-        let jobs = ImportJobs::default();
+        let jobs = Jobs::default();
         let ok = jobs.submit(Box::new(|stage| {
             stage("上传给 xochitl");
             Ok(doc("u1"))
@@ -173,7 +186,7 @@ pub(crate) mod tests {
     /// 一次一个、按提交顺序；后面的在排队时 state=running、stage=排队；阶段随任务报告变化。
     #[test]
     fn serial_in_submit_order_with_queued_stage() {
-        let jobs = ImportJobs::default();
+        let jobs = Jobs::default();
         let (go_tx, go_rx) = mpsc::channel::<()>();
         let order = Arc::new(Mutex::new(Vec::new()));
         let (o1, o2) = (order.clone(), order.clone());
@@ -203,7 +216,7 @@ pub(crate) mod tests {
 
     #[test]
     fn finished_jobs_are_dropped_after_keep() {
-        let jobs = ImportJobs::new(Duration::from_millis(100));
+        let jobs = Jobs::new(Duration::from_millis(100));
         let id = jobs.submit(Box::new(|_| Ok(doc("u"))));
         assert_eq!(wait_done(&jobs, &id)["state"], "done");
         std::thread::sleep(Duration::from_millis(150));
