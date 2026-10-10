@@ -550,9 +550,25 @@ fn deliver_ensures_folder_enqueues_and_waits_for_agent_to_create_it() {
     assert_eq!(mkdir.list()[0].name, "新文件夹");
 }
 
+/// 假 xochitl 的行为（认领的复现测试用）。
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum Fake {
+    /// 原样收下。
+    Faithful,
+    /// 收下但 `<uuid>.epub` 存成别的字节（按字节永远认不出）。
+    Rewrites,
+    /// 收下我们这本之前，"别人"同时投的一本先进库：同 visibleName、不同字节、`createdTime` 更晚（新→旧排在我们前面）。
+    Intruder,
+}
+
 /// 假 xochitl：`POST /upload` 把文件部分落成 `<uuid>.{ext}` + `.metadata`（+ EPUB 的渲染缓存 `.pdf`、PDF 的 `.content`）
-/// 回 201，其余请求回 200——够 `Xochitl::upload_large_file` 走通"占位→替换成真文件"这条大文件通道。
+/// 回 201，其余请求回 200——够 `Xochitl::upload_large` 走通"占位→替换成真文件"这条大文件通道。
 pub(crate) fn fake_xochitl(lib: std::path::PathBuf) -> String {
+    fake_xochitl_with(lib, Fake::Faithful)
+}
+
+/// 同 [`fake_xochitl`]，行为见 [`Fake`]。
+pub(crate) fn fake_xochitl_with(lib: std::path::PathBuf, mode: Fake) -> String {
     let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
     let addr = server.server_addr().to_ip().unwrap().to_string();
     std::thread::spawn(move || {
@@ -576,7 +592,14 @@ pub(crate) fn fake_xochitl(lib: std::path::PathBuf) -> String {
             n += 1;
             let uuid = format!("0000000{n}-0000-4000-8000-000000000000");
             let ext = fname.rsplit('.').next().unwrap();
-            std::fs::write(lib.join(format!("{uuid}.{ext}")), &body[start..tail]).unwrap();
+            if mode == Fake::Intruder {
+                let theirs = format!("fffffff{n}-0000-4000-8000-000000000000");
+                std::fs::write(lib.join(format!("{theirs}.{ext}")), b"PK-them").unwrap();
+                std::fs::write(lib.join(format!("{theirs}.content")), r#"{"pageCount":99}"#).unwrap();
+                std::fs::write(lib.join(format!("{theirs}.metadata")), format!(r#"{{"type":"DocumentType","visibleName":"{fname}","parent":"","createdTime":"{}"}}"#, rmsvc_core::clock::now_ms() + 5_000)).unwrap();
+            }
+            let stored: &[u8] = if mode == Fake::Rewrites { b"PK-rewritten" } else { &body[start..tail] };
+            std::fs::write(lib.join(format!("{uuid}.{ext}")), stored).unwrap();
             std::fs::write(lib.join(format!("{uuid}.metadata")), format!(r#"{{"type":"DocumentType","visibleName":"{fname}","parent":"{current}","createdTime":"{}"}}"#, rmsvc_core::clock::now_ms())).unwrap();
             if ext == "epub" {
                 std::fs::write(lib.join(format!("{uuid}.pdf")), b"render-cache").unwrap();
@@ -938,4 +961,72 @@ fn list_title_series_and_done_match_web_rules() {
     s.mark_delivered("亂馬1⁄2 典藏版 - 07卷.pdf").unwrap();
     let v = serde_json::to_value(&s.list()[0]).unwrap();
     assert_eq!((v["title"].as_str(), v["series"].as_str(), v["done"].as_bool()), (Some("亂馬1⁄2 典藏版 - 07卷"), Some("亂馬1⁄2 典藏版"), Some(true)));
+}
+
+/// 回归（2026-10-10，审计 X-1；第二阶段改由基座 `upload_and_claim` 认领后照样成立）：落库 EPUB 当场按字节认出自己那份——
+/// 别人同时投的、书名相同、比我们晚进库的那本不认；投递前就在书库里的同字节文档（快照里有）也不认。漫画页边距只登记到自己那份。
+#[test]
+fn deliver_epub_claims_own_bytes_not_concurrent_or_preexisting() {
+    const OLD: &str = "aaaaaaaa-0000-4000-8000-000000000003";
+    let t = tempfile::tempdir().unwrap();
+    let lib = t.path().join("xochitl");
+    std::fs::create_dir_all(&lib).unwrap();
+    let q = Arc::new(crate::comic_margins::ComicMargins::new(&t.path().join("state"), &lib));
+    let x = Arc::new(Xochitl::new(&fake_xochitl_with(lib.clone(), Fake::Intruder), &lib, 10));
+    let s = staging_in(t.path().join("staging"), x, 1 << 20, Some(q.clone()));
+    s.ensure().unwrap();
+    let book = mini_epub(&[(shelf_conv::epub::READER_MARGINS_MARKER, "1"), ("OEBPS/p1.xhtml", "<p>x</p>")]);
+    s.stage_new("a.epub", &book).unwrap();
+    std::fs::write(lib.join(format!("{OLD}.metadata")), format!(r#"{{"type":"DocumentType","visibleName":"a.epub","parent":"","createdTime":"{}"}}"#, rmsvc_core::clock::now_ms())).unwrap();
+    std::fs::write(lib.join(format!("{OLD}.epub")), &book).unwrap();
+    let out = s.deliver("a.epub", "").unwrap();
+    let plan = out.render.expect("EPUB 有渲染自检计划");
+    const MINE: &str = "00000001-0000-4000-8000-000000000000";
+    assert_eq!(plan.uuid, MINE, "认的是自己上传的那份");
+    std::fs::write(lib.join(format!("{MINE}.content")), r#"{"pageCount":10}"#).unwrap();
+    crate::render_check::run_with(&s, &rmsvc_core::events::EventBus::new(), &lib, &plan, std::time::Duration::from_millis(20), std::time::Duration::from_millis(200));
+    assert_eq!((q.get(MINE), q.get("fffffff1-0000-4000-8000-000000000000"), q.get(OLD)), (Some(1), None, None));
+    let rc = sidecar::read(&s.dir().join("a.epub")).and_then(|d| d.render).unwrap();
+    assert_eq!((rc.status, rc.pages, rc.uuid.as_str()), (RenderStatus::Ok, 10, MINE));
+}
+
+/// 回归（2026-10-10，审计 X-1）：认不出就不认——书库里只有别人刚投的书（书名相同、比我们新）、我们那份字节对不上时，
+/// 落库照算成功（书已交给 xochitl），渲染记 timeout、uuid 留空、不登记页边距；此前"都不符时取最新一本"会把别人的书认成自己的。
+#[test]
+fn deliver_epub_unclaimed_records_timeout_and_never_takes_newest() {
+    let t = tempfile::tempdir().unwrap();
+    let lib = t.path().join("xochitl");
+    std::fs::create_dir_all(&lib).unwrap();
+    let q = Arc::new(crate::comic_margins::ComicMargins::new(&t.path().join("state"), &lib));
+    let x = Arc::new(Xochitl::new(&fake_xochitl_with(lib.clone(), Fake::Rewrites), &lib, 10));
+    let mut d = XochitlDelivery::new(x, Arc::new(crate::mkdir::MkdirQueue::new(&t.path().join("state"), &lib)), 1 << 20).with_comic_margins(q.clone());
+    d = d.with_waits(std::time::Duration::from_secs(1), std::time::Duration::from_millis(500));
+    let s = Staging::new(t.path().join("staging"), Arc::new(d));
+    s.ensure().unwrap();
+    s.stage_new("a.epub", &mini_epub(&[(shelf_conv::epub::READER_MARGINS_MARKER, "1")])).unwrap();
+    const NEWER: &str = "bbbbbbbb-0000-4000-8000-000000000001";
+    std::fs::write(lib.join(format!("{NEWER}.metadata")), format!(r#"{{"type":"DocumentType","visibleName":"a","parent":"","createdTime":"{}"}}"#, rmsvc_core::clock::now_ms() + 60_000)).unwrap();
+    std::fs::write(lib.join(format!("{NEWER}.epub")), b"PK-them").unwrap();
+    let out = s.deliver("a.epub", "").unwrap();
+    assert!(out.render.is_none() && out.message.contains("已加入 xochitl"), "{}", out.message);
+    let rc = sidecar::read(&s.dir().join("a.epub")).and_then(|d| d.render).unwrap();
+    assert_eq!((rc.status, rc.uuid.as_str()), (RenderStatus::Timeout, ""));
+    assert_eq!((q.get(NEWER), q.get("00000001-0000-4000-8000-000000000000")), (None, None), "谁的页边距都不登记");
+}
+
+/// PDF 落库只上传、不认领（没有渲染自检、不登记页边距，用不着 uuid）：不拍书库快照、不等认领。
+#[test]
+fn deliver_pdf_uploads_without_claiming() {
+    let t = tempfile::tempdir().unwrap();
+    let lib = t.path().join("xochitl");
+    std::fs::create_dir_all(&lib).unwrap();
+    let x = Arc::new(Xochitl::new(&fake_xochitl_with(lib.clone(), Fake::Rewrites), &lib, 10));
+    let s = staging_in(t.path().join("staging"), x, 1 << 20, None);
+    s.ensure().unwrap();
+    s.stage_new("d.pdf", b"%PDF-1.4").unwrap();
+    let started = std::time::Instant::now();
+    let out = s.deliver("d.pdf", "").unwrap();
+    assert!(started.elapsed() < std::time::Duration::from_secs(2), "字节对不上也不等认领（staging_in 的认领上限是 3 秒）");
+    assert_eq!((out.message.as_str(), out.render), ("已加入 xochitl《d.pdf》", None));
+    assert!(sidecar::read(&s.dir().join("d.pdf")).and_then(|d| d.render).is_none());
 }

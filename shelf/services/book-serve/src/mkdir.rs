@@ -97,7 +97,7 @@ impl MkdirQueue {
     /// "路径分隔符防误传"拦掉，2026-09-19 真机反馈坐实是误伤：这个名字全程只当 JSON `visibleName`
     /// 字符串走（`Library.createCollection(parentId, name)` 收的是普通 JS 字符串，不是文件系统路径，
     /// 本模块不把名字当路径拆——多级文件夹由直接导入逐级调 `add_in` 建，见 `delivery::XochitlDelivery::ensure_folder_path`），真实书名/文件夹名带斜杠很常见（如《乱马1/2》），
-    /// 拦它没有技术依据、只会挡合法输入——见 `Xochitl::find_folder`/`find_child_folder`/`Xochitl::upload_file` 全程都是按
+    /// 拦它没有技术依据、只会挡合法输入——见 `Xochitl::folder_by_name`/`child_folder`/`upload_and_claim` 全程都是按
     /// `visibleName` 字符串整体比较，folder 的文件系统路径只走 uuid，从不落到名字里。
     ///
     /// 建在书库根（`POST /mkdir/add`、网页落库用），等于 `add_in("", name)`。

@@ -2,6 +2,7 @@
 //! 登记页边距）在 [`crate::delivery::XochitlDelivery`]，与直接导入共用。
 use super::*;
 use crate::jobs::Jobs;
+use rmsvc_core::xochitl::{ClaimError, Folder};
 
 /// 大文件通道投 EPUB 后等占位 `.content` 写出 pageCount 的上限与防抖（见 `try_deliver_direct`）。
 const PLACEHOLDER_PAGES_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
@@ -19,31 +20,43 @@ impl Staging {
     pub fn deliver(&self, name: &str, folder: &str) -> Result<DeliverOutcome, String> {
         let p = self.deliverable(name)?;
         let size = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
-        let folder_uuid = self.delivery.ensure_folder(folder);
+        let folder = self.delivery.ensure_folder(folder);
         if self.delivery.over_limit(size) {
             // 超限：走大文件通道（2026-09-20 用户要求突破上传限制，真机验证 PDF 154MB/EPUB 153MB 可行）——
             // 占位文档 + 磁盘上替换成真文件。本机没有 xochitl 书库目录（非设备环境）、超过 `MAX_DIRECT_BYTES`
             // 或造占位失败才拒绝。**不再按卷拆分**（2026-09-30 用户定移除；此前 EPUB 漫画按 NCX、PDF 按书签拆成
             // 若干份分别上传，作为大文件通道之后的回退）。
-            if let Some(outcome) = self.try_deliver_direct(name, &p, size, &folder_uuid)? {
+            if let Some(outcome) = self.try_deliver_direct(name, &p, size, &folder)? {
                 return Ok(outcome);
             }
             return Err(format!("《{name}》{} MB 超过 xochitl 上传上限（{} MB），也走不了大文件通道（超过 1GB，或造不出占位文档），没有加入", size >> 20, self.delivery.native_limit() >> 20));
         }
-        // 全程不把整本读进内存：上传是流式的（见 rmsvc_core::xochitl 文档），自检只读 OPF 里的书名。书名和漫画页边距标记从同一次打开的 zip 里取。
-        let meta = (formats::ext_of(name) == "epub").then(|| {
-            let mut book = shelf_conv::epub::Book::open(&p).ok();
-            (book.as_ref().and_then(|b| b.title()), book.as_mut().and_then(|b| b.reader_margins()))
-        });
-        // `upload` 在上传前给书库拍快照（`delivery::Claim`），自检线程据此按字节认出这本书。
-        let (delivery, claim) = self.delivery.upload(&p, name, &folder_uuid)?;
-        let message = match delivery {
-            Delivery::Delivered(_) => format!("已加入 xochitl《{name}》"),
-            Delivery::LikelyDelivered(_) => format!("已加入 xochitl《{name}》（设备处理较慢，稍候刷新书库）"),
-        };
-        let render = meta.map(|(title, comic_margins)| RenderPlan { name: name.to_string(), title, path: p.clone(), claim, comic_margins });
-        let _ = self.mark_delivered(name);
-        Ok(DeliverOutcome { message, render })
+        // 全程不把整本读进内存：上传是流式的（见 rmsvc_core::xochitl 文档）。
+        if formats::ext_of(name) != "epub" {
+            // PDF：没有渲染自检、不登记页边距，用不着 uuid，只上传。
+            let delivery = self.delivery.upload(&p, name, &folder)?;
+            let _ = self.mark_delivered(name);
+            return Ok(DeliverOutcome { message: delivered_message(name, &delivery), render: None });
+        }
+        // EPUB：当场按字节认出这本书（与直接导入同一判据、同样的等待，见 `XochitlDelivery::upload_and_claim`），渲染自检线程拿着 uuid
+        // 只等页数。2026-10-10 第二阶段前是上传前拍快照、交给自检线程在 10 分钟里慢慢认；母版在这期间被删 / 改名时没法比字节，
+        // 只好退而按书名认。现在认领时忙锁还占着（删除 / 改名都被拦下），母版一定还在，书名兜底随之删掉。
+        let comic_margins = shelf_conv::epub::Book::open(&p).ok().and_then(|mut b| b.reader_margins());
+        match self.delivery.upload_and_claim(&p, name, &folder) {
+            Ok(c) => {
+                let _ = self.mark_delivered(name);
+                Ok(DeliverOutcome { message: delivered_message(name, &c.delivery), render: Some(RenderPlan { name: name.to_string(), uuid: c.uuid, comic_margins }) })
+            }
+            Err(ClaimError::Upload(e)) => Err(e),
+            // 书已经交给 xochitl 了，只是没在等待时限内认出来：落库照算成功（与以前"上传成功即成功"一致），渲染记成 timeout、
+            // 不登记页边距（认不出就不认，绝不把别人的书当成自己的）。
+            Err(ClaimError::NotFound { delivery, waited }) => {
+                println!("[book-serve] 《{name}》已上传给 xochitl，但 {} 秒内没在书库里认出它（不认别人的书，也不登记页边距）", waited.as_secs());
+                let _ = self.mark_delivered(name);
+                let _ = self.set_render(name, RenderCheck { uuid: String::new(), pages: 0, status: RenderStatus::Timeout, at: rmsvc_core::clock::now_secs() });
+                Ok(DeliverOutcome { message: delivered_message(name, &delivery), render: None })
+            }
+        }
     }
 
     /// 落库前的零耗时校验：xochitl 读得了的格式 + 书还在母版库。返回路径。
@@ -56,9 +69,9 @@ impl Staging {
 
     /// 母版库这本书走大文件通道（见 [`XochitlDelivery::upload_large`]）并记好落库/渲染记录：成功 `Ok(Some)`；条件不满足 → `Ok(None)`，
     /// 调用方整本拒绝；占位已上传之后才出的错 → `Err`（不再退回拒绝，否则书库里会留下半成品占位）。
-    /// `folder_uuid` 是目标文件夹的 uuid（空串＝根，见 [`XochitlDelivery::ensure_folder`]）。
-    fn try_deliver_direct(&self, name: &str, p: &Path, size: u64, folder_uuid: &str) -> Result<Option<DeliverOutcome>, String> {
-        let Some(up) = self.delivery.upload_large(p, name, folder_uuid)? else { return Ok(None) };
+    /// `folder` 是目标文件夹（见 [`XochitlDelivery::ensure_folder`]）。
+    fn try_deliver_direct(&self, name: &str, p: &Path, size: u64, folder: &Folder) -> Result<Option<DeliverOutcome>, String> {
+        let Some(up) = self.delivery.upload_large(p, name, folder)? else { return Ok(None) };
         let _ = self.mark_delivered(name);
         // 渲染记录也写上，让"加入 xochitl"的书在列表里都有统一的渲染徽章：
         // - PDF：页数就是我们写进 `.content` 的真页数 → 直接 ok；
@@ -137,5 +150,13 @@ impl Staging {
     pub fn mark_delivered(&self, name: &str) -> Result<(), String> {
         let now = rmsvc_core::clock::now_secs();
         self.update_sidecar(name, |d| d.native = Some(now))
+    }
+}
+
+/// 落库回执：xochitl 回了 2xx →"已加入"；读超时 / 408（很可能已送达，大书还在排版）→ 多一句"稍候刷新书库"。
+fn delivered_message(name: &str, delivery: &Delivery) -> String {
+    match delivery {
+        Delivery::Delivered(_) => format!("已加入 xochitl《{name}》"),
+        Delivery::LikelyDelivered(_) => format!("已加入 xochitl《{name}》（设备处理较慢，稍候刷新书库）"),
     }
 }

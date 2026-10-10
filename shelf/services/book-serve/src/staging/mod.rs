@@ -101,16 +101,13 @@ pub fn is_done(busy: bool, delivered: Option<&Delivered>) -> bool {
     d.native.is_some_and(|n| n != 0)
 }
 
-/// 投原生成功后交给自检线程的计划：上传前的书库快照 + 母版路径（按字节认书）+ 文件名 / dc:title（母版已被删、改名时按书名认）
-/// + 漫画页边距。
+/// 投原生成功后交给自检线程的计划：母版库里的文件名 + 投递时已经认出的文档 uuid（2026-10-10 第二阶段起投递当场认领，
+/// 见 [`crate::delivery::XochitlDelivery::upload_and_claim`]）+ 漫画页边距。
 #[derive(Clone, Debug, PartialEq)]
 pub struct RenderPlan {
     pub name: String,
-    pub title: Option<String>,
-    /// 母版库里这本书的路径。
-    pub path: PathBuf,
-    /// 上传前拍的书库快照（见 [`crate::delivery::Claim`]）。
-    pub claim: crate::delivery::Claim,
+    /// 认出的 xochitl 文档 uuid。
+    pub uuid: String,
     /// 按页边距模式排的漫画：导入完成后登记"首次打开时设成这个页边距"（见 `comic_margins.rs`）；其余 `None`。
     pub comic_margins: Option<u32>,
 }
