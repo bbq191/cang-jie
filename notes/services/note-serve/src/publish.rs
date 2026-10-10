@@ -1,6 +1,6 @@
-//! 生成编排（Strategy + 纯函数骨架，trait 全桩、可离线单测；真机网络只在 `XochitlUploader`/`BookServeTrash`/
-//! `notesvc::InkClient` 三处生产实现里）：
-//! 条目库取书 → `notecore::project` 投影每一章 → 指纹未变就跳过（不重传） → `rmv6::write` 打包 `.rmdoc` →
+//! 生成编排（Strategy + 纯函数骨架，trait 全桩、可离线单测；真机网络只在 `XochitlUploader`/`BookServeTrash`
+//! 两处生产实现里）：
+//! 条目库取书（调用方经 `notesvc::InkClient` 取好再传进来，取书失败按 ink-serve 的状态码回执，见 main.rs） → `notecore::project` 投影每一章 → 指纹未变就跳过（不重传） → `rmv6::write` 打包 `.rmdoc` →
 //! `/upload` 进书本自己已经在的设备文件夹 → 按 `visibleName`+时间窗认领刚生成的设备 uuid → 这一章如果
 //! 之前生成过、且这次真的换了新文档，旧版本入 `book-serve` 回收站队列 → 记新记录（`notebooks.rs`）。
 //! 一章失败不影响其它章；旧版本入队失败也不算这一章失败（新文档已经生成好了，旧的多留一份不是数据丢失）。
@@ -11,6 +11,7 @@
 //! 链路更直接、也没有重名建夹的风险。笔记本名字直接用章节标题（不再加"第N章"前缀），撞名在同一文件夹
 //! 范围内加数字后缀（`unique_document_name`）；**只有首次生成才走去重**，同一章重新生成时沿用当时定
 //! 下来的名字（否则旧文档还没来得及入回收站，会把自己也判成"重名"，错误多加一次后缀）。
+#[cfg(test)]
 use crate::ink::EntryStore;
 use crate::notebooks::{ChapterRecord, NotebookState};
 use crate::rmdoc::{self, Page};
@@ -62,7 +63,6 @@ pub struct ChapterResult {
 }
 
 pub struct Ctx<'a> {
-    pub store: &'a dyn EntryStore,
     pub uploader: &'a dyn Uploader,
     pub trash: &'a dyn TrashSink,
     pub state: &'a NotebookState,
@@ -125,8 +125,8 @@ pub fn generate_chapter(c: &Ctx, book: &Book, idx: usize) -> ChapterResult {
 
 /// 一本书全部章节各生成/校验一遍（只给测试用：网页按章推送，整本生成的端点 2026-10-09 已删）。
 #[cfg(test)]
-pub fn generate_book(c: &Ctx, book_uuid: &str) -> Result<Vec<ChapterResult>, String> {
-    let book = c.store.book(book_uuid)?;
+pub fn generate_book(store: &dyn EntryStore, c: &Ctx, book_uuid: &str) -> Result<Vec<ChapterResult>, String> {
+    let book = store.book(book_uuid).map_err(|e| e.message)?;
     Ok((0..book.chapters.len()).map(|i| generate_chapter(c, &book, i)).collect())
 }
 
@@ -138,10 +138,11 @@ pub fn generate_book(c: &Ctx, book_uuid: &str) -> Result<Vec<ChapterResult>, Str
 /// 返回 `(实际用上的设备文档名, 设备分配的 uuid)`——名字可能因为撞名被 `unique_name` 加了后缀，
 /// 调用方（网页）该显示这个真名，不是自己传进来的 `title` 原样，不然用户以为存的是自己起的名字，
 /// 实际设备上是带后缀的另一个名字，对不上。
-pub fn import_markdown(c: &Ctx, book_uuid: &str, title: &str, markdown: &str) -> Result<(String, String), String> {
-    c.store.book(book_uuid)?; // 只为确认这本书存在，错的 uuid 早点报错，比 best-effort 落根更清楚
+/// `book` 由调用方先从条目库取好：错的 uuid 在那一步就按 ink-serve 的 404 报错（比 best-effort 落根更清楚），
+/// 走到这里的错误都是打包/上传/认领这类服务端故障。
+pub fn import_markdown(c: &Ctx, book: &Book, title: &str, markdown: &str) -> Result<(String, String), String> {
     let paragraphs = notecore::mdimport::markdown_to_paragraphs(markdown);
-    let folder = c.uploader.folder_of_document(book_uuid).unwrap_or_default();
+    let folder = c.uploader.folder_of_document(&book.uuid).unwrap_or_default();
     let visible_name = c.uploader.unique_name(&folder, title);
     let new_uuid = upload_page(c, &paragraphs, &folder, &visible_name)?;
     Ok((visible_name, new_uuid))
@@ -199,12 +200,13 @@ impl Uploader for XochitlUploader {
 mod tests {
     use super::*;
     use notecore::model::{Destination, Entry, Status, Style};
+    use rmsvc_core::registry::SvcError;
     use std::sync::Mutex;
 
     struct FakeStore(Book);
     impl EntryStore for FakeStore {
-        fn book(&self, uuid: &str) -> Result<Book, String> {
-            if uuid == self.0.uuid { Ok(self.0.clone()) } else { Err("没有这本书".into()) }
+        fn book(&self, uuid: &str) -> Result<Book, SvcError> {
+            if uuid == self.0.uuid { Ok(self.0.clone()) } else { Err(SvcError { status: Some(404), message: "没有这本书的条目".into() }) }
         }
     }
 
@@ -283,8 +285,8 @@ mod tests {
         }
     }
 
-    fn ctx<'a>(store: &'a FakeStore, uploader: &'a dyn Uploader, trash: &'a FakeTrash, state: &'a NotebookState, now_ms: u64) -> Ctx<'a> {
-        Ctx { store, uploader, trash, state, now_ms }
+    fn ctx<'a>(uploader: &'a dyn Uploader, trash: &'a FakeTrash, state: &'a NotebookState, now_ms: u64) -> Ctx<'a> {
+        Ctx { uploader, trash, state, now_ms }
     }
 
     #[test]
@@ -295,7 +297,7 @@ mod tests {
         let trash = FakeTrash::default();
         let store = FakeStore(book());
 
-        let results = generate_book(&ctx(&store, &uploader, &trash, &state, 1000), "book1").unwrap();
+        let results = generate_book(&store, &ctx(&uploader, &trash, &state, 1000), "book1").unwrap();
         assert_eq!(results.len(), 2, "两章");
         match &results[0].outcome {
             ChapterOutcome::Generated { doc_uuid } => assert_eq!(doc_uuid, "claimed-第一章-1", "名字直接用章节标题，不再带「第N章」前缀"),
@@ -307,7 +309,7 @@ mod tests {
         assert!(trash.0.lock().unwrap().is_empty(), "第一次生成没有旧版本要清");
 
         // 再跑一遍、书没变 → 不重传
-        let results2 = generate_book(&ctx(&store, &uploader, &trash, &state, 2000), "book1").unwrap();
+        let results2 = generate_book(&store, &ctx(&uploader, &trash, &state, 2000), "book1").unwrap();
         assert_eq!(results2[0].outcome, ChapterOutcome::Unchanged);
         assert_eq!(uploader.uploads.lock().unwrap().len(), 1, "指纹没变不该再传一次");
     }
@@ -319,12 +321,12 @@ mod tests {
         let uploader = FakeUploader::default();
         let trash = FakeTrash::default();
         let store = FakeStore(book());
-        generate_book(&ctx(&store, &uploader, &trash, &state, 1000), "book1").unwrap();
+        generate_book(&store, &ctx(&uploader, &trash, &state, 1000), "book1").unwrap();
 
         let mut edited = book();
         edited.entries[0].text = Some("校对过的新文本".into());
         let store2 = FakeStore(edited);
-        let results = generate_book(&ctx(&store2, &uploader, &trash, &state, 5000), "book1").unwrap();
+        let results = generate_book(&store2, &ctx(&uploader, &trash, &state, 5000), "book1").unwrap();
         match &results[0].outcome {
             ChapterOutcome::Generated { doc_uuid } => assert_eq!(doc_uuid, "claimed-第一章-2", "重新生成沿用记录的名字，不是重新算的（这里两次都一样，是因为 FakeUploader 去重恒等）"),
             other => panic!("文本变了应该重新生成: {other:?}"),
@@ -347,7 +349,7 @@ mod tests {
         let trash = FakeTrash::default();
         let store = FakeStore(book());
 
-        let results = generate_book(&ctx(&store, &uploader, &trash, &state, 1000), "book1").unwrap();
+        let results = generate_book(&store, &ctx(&uploader, &trash, &state, 1000), "book1").unwrap();
         assert_eq!(*uploader.unique_name_calls.lock().unwrap(), 1, "第一次生成该查一次去重");
         assert_eq!(uploader.uploads.lock().unwrap()[0].1, BOOK_FOLDER, "传的是书本自己的文件夹，不是新建的《书名》");
         match &results[0].outcome {
@@ -358,7 +360,7 @@ mod tests {
         let mut edited = book();
         edited.entries[0].text = Some("改过的文本".into());
         let store2 = FakeStore(edited);
-        let results2 = generate_book(&ctx(&store2, &uploader, &trash, &state, 5000), "book1").unwrap();
+        let results2 = generate_book(&store2, &ctx(&uploader, &trash, &state, 5000), "book1").unwrap();
         assert_eq!(*uploader.unique_name_calls.lock().unwrap(), 1, "重新生成不该再查一次去重，得沿用记录的名字");
         match &results2[0].outcome {
             ChapterOutcome::Generated { doc_uuid } => assert_eq!(doc_uuid, "claimed-第一章 (deduped)-2", "沿用第一次去重后定下的名字"),
@@ -375,7 +377,7 @@ mod tests {
         let trash = FakeTrash::default();
         let store = FakeStore(book());
 
-        let results = generate_book(&ctx(&store, &uploader, &trash, &state, 1000), "book1").unwrap();
+        let results = generate_book(&store, &ctx(&uploader, &trash, &state, 1000), "book1").unwrap();
         match &results[0].outcome {
             ChapterOutcome::Failed { error } => assert!(error.contains("模拟上传失败")),
             other => panic!("应失败: {other:?}"),
@@ -383,7 +385,7 @@ mod tests {
         assert!(state.get("book1", 0).is_none(), "失败不留状态，下次还会照常重试");
 
         *uploader.fail_upload.lock().unwrap() = false;
-        let results2 = generate_book(&ctx(&store, &uploader, &trash, &state, 2000), "book1").unwrap();
+        let results2 = generate_book(&store, &ctx(&uploader, &trash, &state, 2000), "book1").unwrap();
         assert!(matches!(results2[0].outcome, ChapterOutcome::Generated { .. }), "重试应该正常成功");
     }
 
@@ -401,7 +403,7 @@ mod tests {
         let trash = FakeTrash::default();
         let store = FakeStore(book());
 
-        let results = generate_book(&ctx(&store, &uploader, &trash, &state, 1000), "book1").unwrap();
+        let results = generate_book(&store, &ctx(&uploader, &trash, &state, 1000), "book1").unwrap();
         match &results[0].outcome {
             ChapterOutcome::Failed { error } => assert!(error.contains("模拟认领失败")),
             other => panic!("应失败: {other:?}"),
@@ -420,14 +422,14 @@ mod tests {
         let uploader = FakeUploader::default();
         let trash = FakeTrash::default();
         let store = FakeStore(book());
-        let results = generate_book(&ctx(&store, &uploader, &trash, &state, 1000), "book1").unwrap();
+        let results = generate_book(&store, &ctx(&uploader, &trash, &state, 1000), "book1").unwrap();
         assert!(matches!(results[0].outcome, ChapterOutcome::Generated { .. }), "先正常生成一次");
         assert!(state.get("book1", 0).is_some(), "生成后应该留下记录");
 
         let mut emptied = book();
         emptied.entries[0].status = Status::Archived; // 这一章唯一的条目被"不要了"，project_chapter 应返回 None
         let store2 = FakeStore(emptied);
-        let results2 = generate_book(&ctx(&store2, &uploader, &trash, &state, 2000), "book1").unwrap();
+        let results2 = generate_book(&store2, &ctx(&uploader, &trash, &state, 2000), "book1").unwrap();
         assert_eq!(results2[0].outcome, ChapterOutcome::Empty, "章空了应该是 Empty 不是 Unchanged");
         assert!(state.get("book1", 0).is_none(), "旧记录应该被清掉，不然会幽灵已导出");
     }
@@ -444,14 +446,14 @@ mod tests {
         let uploader = FakeUploader::default();
         let trash = FakeTrash::default();
         let store = FakeStore(book());
-        let results = generate_book(&ctx(&store, &uploader, &trash, &state, 1000), "book1").unwrap();
+        let results = generate_book(&store, &ctx(&uploader, &trash, &state, 1000), "book1").unwrap();
         assert!(matches!(results[0].outcome, ChapterOutcome::Generated { .. }), "先正常生成一次");
         assert!(state.get("book1", 0).is_some(), "生成后应该留下记录");
 
         let mut switched = book();
         switched.entries[0].destination = Destination::Obsidian; // 条目还活着，只是不再要笔记本了
         let store2 = FakeStore(switched);
-        let results2 = generate_book(&ctx(&store2, &uploader, &trash, &state, 2000), "book1").unwrap();
+        let results2 = generate_book(&store2, &ctx(&uploader, &trash, &state, 2000), "book1").unwrap();
         assert_eq!(results2[0].outcome, ChapterOutcome::Empty, "这次没有条目要笔记本，仍然是 Empty");
         assert!(state.get("book1", 0).is_some(), "但条目没死，历史记录不该被清掉——设备上的文档还在");
     }
@@ -463,7 +465,7 @@ mod tests {
         let uploader = FakeUploader::default();
         let trash = FakeTrash::default();
         let store = FakeStore(book());
-        assert!(generate_book(&ctx(&store, &uploader, &trash, &state, 1000), "no-such-book").is_err());
+        assert!(generate_book(&store, &ctx(&uploader, &trash, &state, 1000), "no-such-book").is_err());
     }
 
     #[test]
@@ -472,9 +474,8 @@ mod tests {
         let state = NotebookState::new(t.path().to_path_buf());
         let uploader = FolderAwareUploader::default();
         let trash = FakeTrash::default();
-        let store = FakeStore(book());
 
-        let (visible_name, uuid) = import_markdown(&ctx(&store, &uploader, &trash, &state, 1000), "book1", "读书笔记", "# 标题\n\n- 要点").unwrap();
+        let (visible_name, uuid) = import_markdown(&ctx(&uploader, &trash, &state, 1000), &book(), "读书笔记", "# 标题\n\n- 要点").unwrap();
         assert_eq!(visible_name, "读书笔记 (deduped)", "标题走跟章节生成同一套去重规则，返回的该是加过后缀的真名");
         assert_eq!(uuid, "claimed-读书笔记 (deduped)-1");
         assert_eq!(uploader.uploads.lock().unwrap()[0].1, BOOK_FOLDER, "落进书本自己的文件夹");
@@ -484,22 +485,12 @@ mod tests {
         assert!(state.get("book1", 0).is_none());
     }
 
-    #[test]
-    fn import_markdown_unknown_book_errors_before_touching_uploader() {
-        let t = tempfile::tempdir().unwrap();
-        let state = NotebookState::new(t.path().to_path_buf());
-        let uploader = FakeUploader::default();
-        let trash = FakeTrash::default();
-        let store = FakeStore(book());
-        assert!(import_markdown(&ctx(&store, &uploader, &trash, &state, 1000), "no-such-book", "标题", "正文").is_err());
-        assert!(uploader.uploads.lock().unwrap().is_empty(), "书都没找到，不该碰网络");
-    }
-
     // `XochitlUploader` 的生产路径：本地起一个假 xochitl（只认 `GET /documents/...` 设文件夹与 `POST /upload`），
     // 收到上传后按需在临时书库里写 `.metadata` 模拟设备建条目——上传目标文件夹与认领一起测，不碰真设备。
 
     /// 收 2 个请求（设文件夹 + 上传），返回 `(方法, 路径, 体里有没有 RMDOC 标记)`；收到上传后调 `on_upload`。
-    fn fake_xochitl(on_upload: impl FnOnce() + Send + 'static) -> (String, std::thread::JoinHandle<Vec<(String, String, bool)>>) {
+    type Seen = std::thread::JoinHandle<Vec<(String, String, bool)>>;
+    fn fake_xochitl(on_upload: impl FnOnce() + Send + 'static) -> (String, Seen) {
         let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
         let host = format!("127.0.0.1:{}", server.server_addr().to_ip().unwrap().port());
         let h = std::thread::spawn(move || {

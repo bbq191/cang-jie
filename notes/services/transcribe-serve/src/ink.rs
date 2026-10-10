@@ -14,11 +14,12 @@ pub trait EntryStore: Send + Sync {
 }
 
 impl EntryStore for InkClient {
+    // 转写只把错误写进一轮报告的 `note`（给人看），不需要状态码。
     fn list_books(&self) -> Result<Vec<BookBrief>, String> {
-        InkClient::list_books(self)
+        InkClient::list_books(self).map_err(|e| e.message)
     }
     fn book(&self, uuid: &str) -> Result<Book, String> {
-        InkClient::book(self, uuid)
+        InkClient::book(self, uuid).map_err(|e| e.message)
     }
     fn crop(&self, uuid: &str, file: &str) -> Result<Vec<u8>, String> {
         InkClient::crop(self, uuid, file)

@@ -144,7 +144,7 @@ fn main() {
         .get("/config", bind(&st, |s, _| Ok(Reply::ok(&s.cfg().public()))))
         .put("/config", bind(&st, |s, r| {
             let j = r.json()?;
-            let next = s.cfg.update(|c| c.apply(&j)).map_err(ApiError::bad)?;
+            let next = s.cfg.update(|c| c.apply(&j))?;
             let has_key = next.key().is_some();
             s.bus.publish("notes", "transcribe");
             if has_key && next.auto {
