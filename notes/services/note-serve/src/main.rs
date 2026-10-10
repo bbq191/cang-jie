@@ -96,7 +96,7 @@ fn results_reply(results: &[ChapterResult]) -> ApiResult {
 
 fn router(st: &Arc<State>) -> Router {
     Router::new()
-        .get("/events", bind(st, |s, _| Ok(s.bus.sse_reply())))
+        .get("/events", bind(st, |s, r| Ok(s.bus.sse_reply_for(r))))
         .get("/status", bind(st, |s, _| Ok(Reply::ok(&serde_json::json!({"ok": true, "vault": s.paths.app_data_dir(APP).join("vault"), "xochitlHost": s.cfg.xochitl_host})))))
         .post("/books/{uuid}/chapters/{idx}/generate", bind(st, |s, r| {
             let uuid = r.param("uuid").to_string();

@@ -132,7 +132,7 @@ fn main() {
         }
     }
     let router = Router::new()
-        .get("/events", bind(&st, |s, _| Ok(s.bus.sse_reply())))
+        .get("/events", bind(&st, |s, r| Ok(s.bus.sse_reply_for(r))))
         .get("/status", bind(&st, |s, _| {
             let (ink, pending) = match s.store.list_books() {
                 Ok(b) => (true, b.iter().map(|x| x.pending).sum::<usize>()),
