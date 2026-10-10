@@ -1,4 +1,4 @@
-//! 壁纸仓库（`AssetStore` 实现）+ 轮换状态。真机结论（2026-09-03 bind 时代 → 2026-09-06 原生键时代）：
+//! 壁纸仓库（上传走 `UploadTarget`，列表/删除是固有方法）+ 轮换状态。真机结论（2026-09-03 bind 时代 → 2026-09-06 原生键时代）：
 //! - 休眠屏由 xochitl.conf `SleepScreenPath` 指向本仓库的 `current.png`（native.rs）；xochitl **每次休眠重读该文件**，
 //!   满屏 PreserveAspectFit、插画卡自动隐藏 → 换图零重启即时生效，不写 `/usr`、不 bind-mount；
 //! - 换图**原地覆盖 current.png**（truncate 写、保 inode，路径与 inode 都不变）；
@@ -8,7 +8,7 @@
 use image::imageops::FilterType;
 use image::{ImageFormat, RgbaImage};
 use serde::{Deserialize, Serialize};
-use rmsvc_core::asset::{AssetItem, AssetStore};
+use rmsvc_core::asset::{AssetItem, UploadTarget};
 use rmsvc_core::formats::{self, IMAGE_EXTS};
 use rmsvc_core::fs::{list_files, plain_name, write_atomic};
 use rmsvc_core::paths::Paths;
@@ -99,6 +99,21 @@ impl WallpaperStore {
     /// 池里的 PNG（只认普通文件、跳过点开头的半成品，按名排序）。
     pub fn names(&self) -> Vec<String> {
         list_files(&self.pool, |n| n.ends_with(".png"))
+    }
+
+    /// 网页清单：池里每张图 + 是否当前。
+    pub fn list(&self) -> Vec<AssetItem> {
+        let current = self.state().current; // 只读一次状态文件（旧实现每张图各读+解析一次）
+        self.names().into_iter().map(|n| AssetItem { name: n.clone(), bytes: std::fs::metadata(self.pool.join(&n)).map(|m| m.len()).unwrap_or(0), extra: serde_json::json!({"current": current.as_deref() == Some(n.as_str())}) }).collect()
+    }
+    /// 从池里删一张（正在用的那张不让删）。
+    pub fn remove(&self, name: &str) -> Result<(), String> {
+        let n = plain_name(name)?;
+        let _g = self.guard();
+        if self.state().current.as_deref() == Some(n) {
+            return Err("正在使用的壁纸不能删，先换一张".into());
+        }
+        std::fs::remove_file(self.pool.join(n)).map_err(|e| format!("删除失败: {e}"))
     }
 
     /// 池里的图按名读字节（预览用）。
@@ -213,7 +228,7 @@ pub fn fit_to_screen(src: &[u8], fit: Fit) -> Result<Vec<u8>, String> {
     Ok(out.into_inner())
 }
 
-impl AssetStore for WallpaperStore {
+impl UploadTarget for WallpaperStore {
     fn kind(&self) -> &'static str {
         "wallpaper"
     }
@@ -242,18 +257,6 @@ impl AssetStore for WallpaperStore {
     }
     fn success_message(&self, _requested: &str, _item: &AssetItem) -> String {
         format!("已入池（缩放到 {W}×{H}）")
-    }
-    fn list(&self) -> Vec<AssetItem> {
-        let current = self.state().current; // 只读一次状态文件（旧实现每张图各读+解析一次）
-        self.names().into_iter().map(|n| AssetItem { name: n.clone(), bytes: std::fs::metadata(self.pool.join(&n)).map(|m| m.len()).unwrap_or(0), extra: serde_json::json!({"current": current.as_deref() == Some(n.as_str())}) }).collect()
-    }
-    fn remove(&self, name: &str) -> Result<(), String> {
-        let n = plain_name(name)?;
-        let _g = self.guard();
-        if self.state().current.as_deref() == Some(n) {
-            return Err("正在使用的壁纸不能删，先换一张".into());
-        }
-        std::fs::remove_file(self.pool.join(n)).map_err(|e| format!("删除失败: {e}"))
     }
 }
 

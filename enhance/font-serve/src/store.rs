@@ -1,4 +1,4 @@
-//! 字体仓库（`AssetStore` 实现）= `$XDG_DATA_HOME/fonts/`（fontconfig 用户字体目录）的管理器。
+//! 字体仓库（上传走 `UploadTarget`，列表/删除是固有方法）= `$XDG_DATA_HOME/fonts/`（fontconfig 用户字体目录）的管理器。
 //! 目录里**所有**字体一视同仁、按 fontconfig 家族名归组（一个家族多字重文件=一项），都可删——没有"内建/系统"之分
 //! （2026-09-03 用户纠正：那是对旧中文化套件 scp 字体的路径耦合）。唯一的提示：家族被
 //! `~/.config/fontconfig/fonts.conf` 引用（界面 CJK 回退）的标 `fontconfigRef`，删前 UI 提醒但不拦。
@@ -9,7 +9,7 @@
 //! xochitl 能按名字用；阅读字体的扫描只看顶层，所以不进阅读器菜单 `fonts.json`、不进中文回退链），清单写
 //! `shelf/ui-fonts.json`，不写 fontconfig。选哪个当界面字体记在 `shelf/ui-font.json`（见 `ui.rs`）。
 use serde::{Deserialize, Serialize};
-use rmsvc_core::asset::{AssetItem, AssetStore};
+use rmsvc_core::asset::{AssetItem, UploadTarget};
 use rmsvc_core::cache::{FileStamp, StampCache};
 use rmsvc_core::formats::{self, FONT_EXTS};
 use rmsvc_core::fs::{list_files, write_atomic, write_atomic_if_changed};
@@ -278,7 +278,7 @@ impl FontStore {
     /// 只重建用户字体目录（`fonts/`，含 `shelf-ui/` 子目录，fc-cache 对目录参数递归）的缓存。此前不带目录参数，
     /// 每装/删一个字体都把系统字体目录也强制重扫一遍，那些目录根本没变（host 实测 CPU 0.7s → 0.006s）。
     /// 界面仓库也从 `fonts/` 起扫：首次建 `shelf-ui/` 时父目录的缓存（记着有哪些子目录）也要跟着更新。
-    /// 上传不在 [`AssetStore::install`] 里逐个文件跑（一次传几个字体就要重建几遍），由路由在整批装完后调一次。
+    /// 上传不在 [`UploadTarget::install`] 里逐个文件跑（一次传几个字体就要重建几遍），由路由在整批装完后调一次。
     pub fn fc_cache(&self) {
         if self.side_effects {
             let root = match self.role {
@@ -338,6 +338,17 @@ impl FontStore {
         Self::cjk_fallback_order(&self.entries()).into_iter().map(|e| e.key.clone()).collect()
     }
 
+    /// 网页清单：每个家族一项（文件合计大小 + 家族信息）。
+    pub fn list(&self) -> Vec<AssetItem> {
+        self.entries()
+            .into_iter()
+            .map(|e| {
+                let bytes: u64 = e.files.iter().map(|f| std::fs::metadata(self.fonts_dir.join(f)).map(|m| m.len()).unwrap_or(0)).sum();
+                AssetItem { name: e.key.clone(), bytes, extra: serde_json::json!({"family": e.key, "files": e.files, "names": e.names, "cjkPct": e.cjk_pct, "fontconfigRef": e.fontconfig_ref}) }
+            })
+            .collect()
+    }
+
     /// 删整个家族（全部文件）。
     pub fn remove_family(&self, key: &str) -> Result<Vec<String>, String> {
         let Some(e) = self.entries().into_iter().find(|e| e.key == key) else { return Err("没有这个字体家族".into()) };
@@ -350,7 +361,7 @@ impl FontStore {
     }
 }
 
-impl AssetStore for FontStore {
+impl UploadTarget for FontStore {
     fn kind(&self) -> &'static str {
         match self.role {
             Role::Reading => "font",
@@ -404,18 +415,6 @@ impl AssetStore for FontStore {
             None => "已安装".into(),
         }
     }
-    fn list(&self) -> Vec<AssetItem> {
-        self.entries()
-            .into_iter()
-            .map(|e| {
-                let bytes: u64 = e.files.iter().map(|f| std::fs::metadata(self.fonts_dir.join(f)).map(|m| m.len()).unwrap_or(0)).sum();
-                AssetItem { name: e.key.clone(), bytes, extra: serde_json::json!({"family": e.key, "files": e.files, "names": e.names, "cjkPct": e.cjk_pct, "fontconfigRef": e.fontconfig_ref}) }
-            })
-            .collect()
-    }
-    fn remove(&self, name: &str) -> Result<(), String> {
-        self.remove_family(name).map(|_| ())
-    }
 }
 
 #[cfg(test)]
@@ -466,7 +465,7 @@ mod tests {
         // 旧字体也可删
         assert_eq!(store.remove_family("Old-Regular").unwrap(), vec!["Old-Regular.ttf"]);
         assert_eq!(store.list().len(), 1);
-        assert!(store.remove("nope").is_err());
+        assert!(store.remove_family("nope").is_err());
     }
 
 

@@ -10,7 +10,7 @@ mod fontconfig;
 mod store;
 mod ui;
 
-use rmsvc_core::asset::{self, AssetStore, AssetUploadFlow};
+use rmsvc_core::asset::{self, AssetUploadFlow};
 use rmsvc_core::http::{bind, ApiError, Reply, Router, ServeOpts};
 use rmsvc_core::paths::Paths;
 use rmsvc_core::service::{self, ServiceSpec};
