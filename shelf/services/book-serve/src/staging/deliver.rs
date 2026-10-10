@@ -35,7 +35,7 @@ impl Staging {
         // 全程不把整本读进内存：上传是流式的（见 rmsvc_core::xochitl 文档）。
         if formats::ext_of(name) != "epub" {
             // PDF：没有渲染自检、不登记页边距，用不着 uuid，只上传。
-            let delivery = self.delivery.upload(&p, name, &folder)?;
+            let delivery = self.delivery.upload_only(&p, name, &folder)?;
             let _ = self.mark_delivered(name);
             return Ok(DeliverOutcome { message: delivered_message(name, &delivery), render: None });
         }

@@ -156,7 +156,7 @@ impl XochitlDelivery {
 
     /// 只上传、不认领（`/upload` 流式，不整本进内存）：PDF 落库用——PDF 没有渲染自检、不登记页边距，用不着 uuid，
     /// 也就不必为它拍书库快照、扫书库认领（第一阶段 PDF 落库也拍快照，结果没人用）。
-    pub fn upload(&self, p: &Path, name: &str, folder: &Folder) -> Result<Delivery, String> {
+    pub fn upload_only(&self, p: &Path, name: &str, folder: &Folder) -> Result<Delivery, String> {
         self.xochitl.upload_to(UploadBody::File(p), name, formats::mime_of(name), folder)
     }
 
