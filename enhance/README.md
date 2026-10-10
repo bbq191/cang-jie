@@ -35,7 +35,7 @@
 - 路由（经网关前缀 `/api/fonts`）：`GET /` 按家族归组的清单 · `POST /` 上传（multipart，多文件）· `DELETE /{family}` · `GET /status` · `PUT /config {emboldenCjkFallback}`（中文回退字体加粗，fontconfig 实时生效）· `GET /events`；界面字体 `GET /ui` · `POST /ui` · `DELETE /ui/{family}` · `PUT /ui/select {sans, serif}`。
 - 落点：阅读字体装进 fontconfig 用户字体目录 `~/.local/share/fonts/`（界面字体在子目录 `shelf-ui/`），字体菜单读 `~/.local/share/shelf/fonts.json`，回退规则写 `~/.config/fontconfig/fonts.conf`，界面字体选择写 `~/.local/share/shelf/ui-font.json`。
 - 一批上传后只跑一次 `fc-cache -f ~/.local/share/fonts`（只扫用户字体目录）；`fc-scan` 30 秒、`fc-cache` 120 秒超时。
-- 代码：`src/main.rs` 路由、`store.rs` 扫描与 fc-cache、`fontconfig.rs` 生成 `fonts.conf`、`ttf.rs` 解析字体家族名与 CJK 覆盖率、`ui.rs` 界面字体选择。原理见白皮书 3.5 节与书架白皮书的字体章节（[`../shelf/docs/reMarkable书架白皮书.md`](../shelf/docs/reMarkable书架白皮书.md) 第 F 章、§03k、§03bd）。
+- 代码：`src/main.rs` 路由、`store.rs` 扫描与 fc-cache、`fontconfig.rs` 生成 `fonts.conf`、`ttf.rs` 解析字体家族名与 CJK 覆盖率、`ui.rs` 界面字体选择。原理见白皮书 3.5 节与书架白皮书的字体章节（[`../shelf/docs/reMarkable书架白皮书.md`](../shelf/docs/reMarkable书架白皮书.md) 4.9 节）。
 - 错误码（2026-10-10 起，未部署）：没有这个字体家族 404、选没装的界面字体 400、删字体文件 / 重写索引 / 存选择失败 500；上传请求体不是合法 multipart 400、暂存目录建不起来 500。
 - host 测试：`cd font-serve && cargo test --locked`（21 项，2026-10-10 实跑）。
 

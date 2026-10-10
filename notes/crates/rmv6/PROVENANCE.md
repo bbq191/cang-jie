@@ -13,7 +13,7 @@ https://github.com/Lyr-7D1h/remarkable-lines ，作者 `Lyr <lyr-7d1h@pm.me>`，
 - 只留 v6：删 `other/`（v3–v5 页/层/线解析），`RmFile` 只认 `reMarkable .lines file, version=6`，其它版本报 Unsupported。
 - 保留 vendored 副本的兼容补丁：`PenColor::Unknown(u32)`、`Tool::Unknown(u32)`、`ParagraphStyle::Unknown(u8)` 兜底未知码；块尾多余字节跳过（新固件加尾部字段）。
 - `ParagraphStyle` 补 **CHECKBOX(6) / CHECKBOX_CHECKED(7) / NUMBERED(10)**（后者 2026-09-07 真机样本坐实，rmscene 0.8.0 尚不认）。
-- 新增高层入口 `page` 模块：一页 = 笔画（Stroke）+ 勾画（Highlight = GlyphRange）+ 打字文本，供 ink-serve 几何配对与 note-serve 读回；
+- 新增高层入口 `page` 模块：一页 = 笔画（Stroke）+ 勾画（Highlight = GlyphRange）+ 打字文本，供 ink-serve 几何配对（note-serve 现在只用 `write` 模块生成笔记本，不再读回页面）；
   墓碑（删除的项）自动剔除。
 - 2026-09-24：清掉全部 clippy 告警（去掉多余的 `return`、`format!` 嵌套之类的机械改写），解析语义不变、测试全过。
 - 2026-09-25：`Bitreader::read_bytes` 先比剩余字节再分配（新增 `remaining()`）：文件里声明的块大小 / 字符串长度超过剩余字节就报 `Io` 错误，不再按声明长度先分配内存（畸形或写到一半的 `.rm` 可声明上 GB）。合法文件的解析结果不变。

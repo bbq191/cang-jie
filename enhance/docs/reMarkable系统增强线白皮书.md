@@ -191,7 +191,7 @@ xochitl 不看 EPUB OPF 的 `page-progression-direction`，所以日漫在 xochi
 
 ### 3.5 font-serve：阅读字体与界面字体
 
-`127.0.0.1:8792`，网关前缀 `/api/fonts`，网页「其他 → xochitl」。原理细节记在书架白皮书的字体章节（[`../../shelf/docs/reMarkable书架白皮书.md`](../../shelf/docs/reMarkable书架白皮书.md) 第 F 章、§03k、§03bd）；2026-09-11 才归入本线，运行时行为不变。
+`127.0.0.1:8792`，网关前缀 `/api/fonts`，网页「其他 → xochitl」。原理细节记在书架白皮书的字体章节（[`../../shelf/docs/reMarkable书架白皮书.md`](../../shelf/docs/reMarkable书架白皮书.md) 4.9 节）；2026-09-11 才归入本线，运行时行为不变。
 
 - **上传** → 字体装进 fontconfig 用户字体目录 `~/.local/share/fonts/` → 一批上传后跑**一次** `fc-cache -f ~/.local/share/fonts`（只扫用户字体目录，递归含 `shelf-ui/`）→ 重写 `~/.local/share/shelf/fonts.json`（字体菜单 qmd `font-menu-dynamic.qmd` 读）。
 - **中文回退链**：`~/.config/fontconfig/fonts.conf` 由它生成，把中文回退动态指向当前已装的中文字体（按 CJK 覆盖率降序），全部 `append` + `binding="weak"`，所以你在阅读器选的字体永远排在最前，只有它缺的字才回退。`PUT /config {emboldenCjkFallback}` 给回退字体加粗。
@@ -422,7 +422,7 @@ cd enhance/ui-font && make aarch64     # 产物 ui-font.so（已提交进仓库�
 | 界面字体 ui-font | 部署后日志 `[ui-font] 安装完成（setFont 导入槽 0x1a60b68）`、`setFont(reMarkable Sans) → Sarasa UI SC`、`SHELF-UI-FONT: sans=Sarasa UI SC serif=Sarasa UI SC`，xochitl `NRestarts=0`；用户目测书库、设置、对话框、标题都是更纱黑体，书里的中文字体不变；真实配置下 `fc-match -s "reMarkable Serif Small:lang=zh-cn"` 第一是 Noto Sans SC | 2026-10-07 |
 | 壁纸 SleepScreenPath 方案 | 满屏显示、插画卡隐藏、每次休眠重读 | 2026-09-05 / 09-06 定稿 |
 | 壁纸"监听休眠读图"轮换 | 休眠那一刻轮换、只轮换一次 | 2026-09-24（充电状态下没试） |
-| 阅读字体 font-serve | 真机通，记录在书架白皮书字体章节（第 F 章、§03k、§03bd） | 见书架白皮书 |
+| 阅读字体 font-serve | 真机通，记录在书架白皮书字体章节（4.9 节） | 见书架白皮书 |
 | lo-alias | 08-31 usb0/usb1 都无 carrier 冷启动 → xochitl 绑 `10.11.99.1:80`；09-25 两次不插 USB 整机重启后核对：地址同时挂在 `lo` 与 `usb1`，:80 已绑定 | 2026-08-31、09-25 |
 | 换入后整机重启的部署流程 | 首次走通有变化的 `.so` | 2026-09-25 |
 | 移除 hw-stroke / battop 的旧设备清理 | `install-all` 自动清掉 battop 单元与目录、`hw-stroke.so`，只整机重启一次；`verify-on-device.sh` 36✓ 1⚠（刚开机）0✗；maps 里已无 hw-stroke | 2026-09-30 15:23 |

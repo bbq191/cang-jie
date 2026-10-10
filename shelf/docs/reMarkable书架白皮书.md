@@ -177,7 +177,7 @@ book-serve 跑在设备上，能直接写 xochitl 书库目录。所以超过体
 - 整段串行：PDF 的占位字节都一样，两本同时投会认到同一个条目，所以从传占位到替换完成在基座里用一把锁串起来。
 - 占位已上传之后才出的错直接报错，书库里可能留下半成品占位（回执提示手动删，不做危险的回滚删除）。
 
-流程图见 [`docs/diagrams/upload-limit-bypass.svg`](../../docs/diagrams/upload-limit-bypass.svg)，认领细节见基座的 [`large-file-claim.svg`](../../rmsvc-core/docs/diagrams/large-file-claim.svg)。
+流程图见 [`docs/diagrams/upload-limit-bypass.svg`](../../docs/diagrams/upload-limit-bypass.svg)，认领细节见基座的 [`large-file-claim.svg`](../../rmsvc-core/docs/diagrams/upload-claim.svg)。
 
 ### 4.4 为什么要 qmd 代理
 
