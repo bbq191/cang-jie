@@ -46,7 +46,6 @@ pub mod service;
 pub mod sync;
 mod sys;
 pub mod tls;
-pub mod ttf;
 pub mod wire;
 pub mod xochitl;
 pub mod xochitl_conf;

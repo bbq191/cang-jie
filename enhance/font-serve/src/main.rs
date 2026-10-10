@@ -8,6 +8,8 @@
 //! 界面字体只给 xochitl 界面用，不进阅读器菜单、不当阅读的中文回退（见 `store.rs` 头注与 `ui.rs`）。
 mod fontconfig;
 mod store;
+// TTF/OTF 字体表最小解析（家族名、CJK 覆盖）：只有本服务用，2026-10-10 从 rmsvc-core 搬来（审计 CORE-3）。
+mod ttf;
 mod ui;
 
 use rmsvc_core::asset::{self, AssetUploadFlow};
