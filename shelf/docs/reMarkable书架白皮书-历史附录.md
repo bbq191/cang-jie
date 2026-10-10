@@ -301,7 +301,7 @@ host 质量门 `check_output.py` 当时移植成 `bookconv::check`；host 门与
 | 建文件夹白等 | 入队时文件夹刚好已经建出来（`mkdir.add` 回 0）也进 `watch_until`，没有新事件就白等满 20 秒 | 已出现就不等 | `staging/deliver.rs` |
 | 批量把结果不明记成成功（网关） | 只认 `failed`；等满 1 小时、book-serve 连续查不到、条目途中消失、仍 `pending` 都记成功 | 只有 `delivered.deliver.status=ok` 算成功，其余记失败并提示"请到 xochitl 书库里核对" | `gateway/src/batch.rs` |
 | 慢网大文件被截断（网关） | 代理设 900 秒整请求时长 | 只设空闲超时（连 3 秒 / 读 900 秒 / 写 120 秒） | `gateway/src/proxy.rs` |
-| 母版库筛选计数加不拢（网页） | 正在处理、加入失败的书既不算「已加入」也不算「未加入」 | 「未加入」＝「已加入」的补集 | `gateway/ui/app.js` |
+| 母版库筛选计数加不拢（网页） | 正在处理、加入失败的书既不算「已加入」也不算「未加入」 | 「未加入」＝「已加入」的补集 | `gateway/ui/transfer.js`（10-10 网页脚本拆分前在 `app.js`） |
 
 **效率**：直接导入认领新文档改成书库目录事件驱动（`fswatch::watch_until`，防抖 500ms；以前每 200ms 扫一遍书库，最长 120 秒）；shelf-conv 新增 `epub::Book`，一本书只解一次 zip，书名、封面、页边距标记都从它取（以前落库开 2 次、大文件通道开 3 次）。
 

@@ -6,6 +6,8 @@
 >
 > **本文按 2026-10-09 的代码写**，设备上跑的也是 10-09 部署的版本（部署自检通过）。文中标"10-09"的是第六轮审计（EPUB 解压上限、回收站代理、建文件夹等待、`lowSpace`、投到已删文件夹落根、大文件通道认领改 inotify 等，书架白皮书 §03bz，**功能未在真机逐项手测**）和原地替换后找回阅读位置（§9，书架白皮书 §03ca，**真机验证过一次**）。
 >
+> **2026-10-10 重构（两个阶段，都未部署、未在真机验证）已写进本文**：第一阶段投递层统一（书架白皮书 §03cb）；第二阶段 2a 把 book-serve 迁到 rmsvc-core 的新接口（书架白皮书 §03cc）——认领交给基座 `Xochitl::upload_and_claim`、落库 EPUB 当场认领（§2.3）、文件夹用 `Folder` 类型、错误按种类给 400/404/409/500（§9）、"设文件夹 → 上传"加跨进程 flock（§7.3）。
+>
 > **书籍相关文档的分工**（涉及别处的内容，本文只写一句并指过去）：
 >
 > | 想知道 | 看哪份 |
@@ -76,7 +78,7 @@
 ### 2.1 入库（内容源 → 母版库）
 
 两条入口，都是**原样入库，不做任何格式转换或内容改写**：
-- **网页上传**：`uploader()`（`gateway/ui/app.js`）逐文件 XHR 真实进度；传 `dedupeApi` 按 `name|bytes` 去重（免落成 `xxx_1.epub`）。服务端 `rmsvc_core::multipart` 流式解析边读边落盘（暂存 `.work/` 下随机名 `.<uuid>.book.part`，rename 入库；只在"挑名 + 改名"那一瞬进落名临界区，§7.3）。
+- **网页上传**：`uploader()`（`gateway/ui/dom.js`）逐文件 XHR 真实进度；传 `dedupeApi` 按 `name|bytes` 去重（免落成 `xxx_1.epub`）。服务端 `rmsvc_core::multipart` 流式解析边读边落盘（暂存 `.work/` 下随机名 `.<uuid>.book.part`，rename 入库；只在"挑名 + 改名"那一瞬进落名临界区，§7.3）。
 - **scp 进设备 `inbox/`**：`fswatch` 监听（8 秒防抖）自动追平（§2.2）。**只收写完的文件**（2026-09-25）：scp 直接往最终文件名里写，追平时修改时间离现在不足 5 秒（`INBOX_SETTLE`）的文件先跳过，写完那次 `CLOSE_WRITE` 事件触发的下一轮再收；此前 WiFi 传大书超过 8 秒，还在写的文件会被改名进母版库，写入方的文件句柄跟着 inode 继续写，母版库里出现一本半截书。启动时先起监听、再扫一遍启动前就在的文件，扫描遇到"暂缓"的隔 5 秒重扫，最多 12 轮（约 1 分钟），之后交给事件。判据只看"还在不在写"，scp 中途断开留下的半截文件静止 5 秒后同样可能被收进。
 
   ![scp 往 inbox 传大书：什么时候才入库](diagrams/sh-inbox-settle.svg)
@@ -130,8 +132,9 @@
 
 ![落库决策树：一本书怎样进 xochitl](diagrams/deliver-decision.svg)
 
-- **加入 xochitl**：`Staging::deliver()`，纯复制字节；投进 xochitl 那一层（建文件夹、上传、大文件通道、认领、登记页边距）在 `delivery.rs` 的 `XochitlDelivery`，与直接导入共用一份（2026-10-10）。`folder` 留空＝书库根；非空＝**书库根下**这个名字的文件夹（`XochitlDelivery::ensure_folder`：根下按名字找，没有经 `MkdirQueue` 让设备端 QML 代理在根下建，§4；按 uuid 上传。2026-10-10 前按名字在全库任意层找，同名子文件夹会被选中）；上传前"设当前文件夹"失败（比如那个文件夹刚在 xochitl 里删了）时落书库根（10-09；此前会落进上一次设过的文件夹）。超体积门（`nativeUploadLimitMb`，默认 90MB）→ 走"占位 + 磁盘替换"大文件通道（§6.1）；超过 1GiB、本机无书库目录或造占位失败就整本拒绝（回执末尾"没有加入"）。≤ 体积门走普通上传，`Xochitl::upload_file_into` 流式发送（§5）。
-- 走普通上传的 EPUB 另起**渲染自检**线程（`render_check::run`，不阻塞；大文件通道直接写渲染记录）：限时 10 分钟（`TIMEOUT`）监听书库目录，等 xochitl 渲染出页数，认出这本书就记下 uuid 和页数（`ok`），等不到记 `timeout`，写 sidecar `render` + 推 SSE。它留着主要是因为 `/upload` 不回 uuid，普通上传只能在这里认书，而登记漫画页边距（§3）要 uuid。认书（2026-10-10 改）：上传前拍书库快照（`delivery::Claim`），认"快照里没有、`<uuid>.epub` 与母版逐字节相同"的那份，与直接导入同一判据；母版在自检期间被删 / 改名才退回按 `dc:title` / 文件名 stem 认；**认不出就不认**（记 `timeout`、不登记页边距）。此前"都不符时取最新一本"，并发投递会认错书。2026-10-07 稍后起**不再估期望页数、不再报 `warn`**：以前上传前按正文字数估期望页数（中文每页 460 字、英文 960 字），实际页数低于期望一半判 `warn`，那主要抓的是设备上优化出错的症状；书改在电脑上用 sheng-ren 优化、有它的质量门把关后删掉，`shelf_conv::stats` 模块一并删除。
+- **加入 xochitl**：`Staging::deliver()`，纯复制字节；投进 xochitl 那一层（建文件夹、上传、大文件通道、认领、登记页边距）在 `delivery.rs` 的 `XochitlDelivery`，与直接导入共用一份（2026-10-10）。`folder` 留空＝书库根；非空＝**书库根下**这个名字的文件夹（`XochitlDelivery::ensure_folder`：根下按名字找，没有经 `MkdirQueue` 让设备端 QML 代理在根下建，§4；按 uuid 上传。2026-10-10 前按名字在全库任意层找，同名子文件夹会被选中）；上传前"设当前文件夹"失败（比如那个文件夹刚在 xochitl 里删了）时落书库根（10-09；此前会落进上一次设过的文件夹）。超体积门（`nativeUploadLimitMb`，默认 90MB）→ 走"占位 + 磁盘替换"大文件通道（§6.1）；超过 1GiB、本机无书库目录或造占位失败就整本拒绝（回执末尾"没有加入"）。≤ 体积门走普通上传，流式发送（§5）：PDF 只上传（`XochitlDelivery::upload_only` → 基座 `Xochitl::upload_to`），EPUB 上传并**当场认领**（`XochitlDelivery::upload_and_claim` → 基座 `Xochitl::upload_and_claim`，2026-10-10 第二阶段，见下一条）。
+- **认书**（`/upload` 不回 uuid，登记漫画页边距 §3 和渲染自检都要 uuid）：2026-10-10 第二阶段起，走普通上传的 EPUB 在作业里**当场认领**——基座 `Xochitl::upload_and_claim(…, ClaimBy::SameBytes, …)`：上传前快照最近两秒内建的文档，上传后等书库目录变化，在快照之外的新文档里找 `<uuid>.epub` 与母版逐字节相同的那份；xochitl 回了 2xx 最多等 20 秒（`CLAIM_WAIT`），`/upload` 读超时 / 408（"很可能已送达"）最多等 30 分钟（`CLAIM_WAIT_SLOW`），与直接导入同一判据、同样的等待。**认不出就不认**：落库照算成功（书已交给 xochitl），渲染记 `timeout`、uuid 留空、不登记页边距。认领期间忙锁占着、母版删不掉也改不了名，第一阶段"母版没了就按书名认"的兜底随之删掉；10-10 第一阶段前"都不符时取最新一本"，并发投递会认错书。代价：落库作业多占队列到认出为止（真机 xochitl 回 2xx 时书多半已经落盘，通常当场就认出；**未真机验证**）。PDF 落库不需要 uuid，只上传、不认领。
+- 认出的 EPUB 另起**渲染自检**线程（`render_check::run`，不阻塞；大文件通道直接写渲染记录）：开头登记漫画页边距，然后限时 10 分钟（`TIMEOUT`）监听书库目录，等 xochitl 写出这个 uuid 的页数（`ok`），等不到记 `timeout`，写 sidecar `render` + 推 SSE。2026-10-07 稍后起**不再估期望页数、不再报 `warn`**：以前上传前按正文字数估期望页数（中文每页 460 字、英文 960 字），实际页数低于期望一半判 `warn`，那主要抓的是设备上优化出错的症状；书改在电脑上用 sheng-ren 优化、有它的质量门把关后删掉，`shelf_conv::stats` 模块一并删除。
 - 漫画符合条件时登记首次打开设页边距（§3）。
 - 书名、封面、页边距标记都从同一个 `shelf_conv::epub::Book` 取，一本书只开一次 zip（2026-10-07 审查修复；此前普通落库开 2 次、大文件通道开 3 次）。
 - （历史）「加入 KOReader」2026-09-29 撤掉。留下的痕迹 `POST /staging/mark`（`target` 只剩 `native`，没有调用方）与边车 `koreader` 字段 2026-10-07 审查修复一并删除；旧边车里的 `koreader` 当未知字段忽略。
@@ -160,7 +163,7 @@ HTTP 层是**异步**的（`spawn_deliver`：加忙锁、边车记 `pending`，�
 | 环节 | 代码 | 行为 |
 |---|---|---|
 | 认标记 | `shelf_conv::epub::Book::reader_margins` → `Option<u32>`（落库在 `Staging::deliver` 里与书名同一次打开 zip 时读，大文件通道在 `XochitlDelivery::upload_large` 里读；标记名常量 `READER_MARGINS_MARKER` 必须与 sheng-ren 的同名常量一致，两边各写一份）：书里有 `META-INF/eink-reader-margins`（sheng-ren 按 `xochitl` 模式优化漫画时写，值是页边距，现为 `1`） | 只认 sheng-ren 的标记；不带标记的书（文字书、PDF、旧漫画）完全不碰。**书架 2026-10-07 前自己优化的漫画不再认**（旧标记的兼容判断随 `shelf_conv::legacy` 删掉），要用 sheng-ren 重新优化后再加入 |
-| 登记 | `XochitlDelivery::register_comic_margins(uuid, 页边距)` 写 `comic-margins.json` | 普通上传在渲染自检按字节认到 uuid 时登记（认不出就不登记，2026-10-10 起不再"取最新一本"）；直接导入认领后立即登记；大文件通道替换后立即登记 |
+| 登记 | `XochitlDelivery::register_comic_margins(uuid, 页边距)` 写 `comic-margins.json` | 落库普通上传：作业里按字节认出 uuid 后，渲染自检线程开头登记（认不出就不登记，2026-10-10 起不再"取最新一本"）；直接导入认领后立即登记；大文件通道替换后立即登记 |
 | 执行 | `shelf/xovi/shelf-comic-margins.qmd`（注入 DocumentView）：开书 1.5 秒后 `GET /margins/<uuid>`（404 不动；200 调 `setMargins(m)`），成功后 `POST /margins/applied` 销账 | **每本只设一次**：想要回缺省页边距 56 的，首次打开后在阅读器「文字设置」里自己调回，之后不再干预；qmd 只在 xochitl 启动时加载，装/改后要**整机重启**（2026-09-25 起不再 `systemctl restart xochitl`，停 xochitl 本身会概率性崩） |
 
 ## 4｜设备端代理队列：为什么不能直接建文件夹/删文档
@@ -219,9 +222,9 @@ xochitl `/upload` 约 100MB 硬限（超了断连）。超过体积门时 `Stagi
 
 ![绕开 xochitl 上传体积上限](../../docs/diagrams/upload-limit-bypass.svg)
 
-`Staging::try_deliver_direct`（→ `rmsvc_core::xochitl::Xochitl::upload_large_file`）：造带真书名和真封面的占位（`shelf_conv::placeholder`；EPUB 几十到几百 KB，显示名一律用书自己的 `dc:title`（2026-10-07 稍后起；此前带卷标记时改用规范名，sheng-ren 已经写好规范书名，这层判断删掉）；PDF 是手写的一页最小 PDF，单测断言 <4000 字节）→ 上传 → 等最多 20 秒（书库目录 inotify，10-09 起；此前 200ms 轮询）、按**占位字节数**在书库认出新文档 → 母版真文件复制为 `<uuid>.<ext>.new`（0600，校验大小）→ EPUB 删渲染缓存（`.pdf`/`.epubindex`，首次打开约 25 秒重渲，146MB 实测）/PDF 改写 `.content`（`pageCount`/`originalPageCount`/`pages`/`redirectionPageMap`/`sizeInBytes`）→ 原子 rename 覆盖占位（无需重启 xochitl）→ `mark_delivered`；渲染记录 PDF 直接 `ok`、EPUB 记 `onopen`（之后读 `.content` 的 `pageCount` 显示真页数）；漫画符合 §3 时登记页边距。真机上 154MB PDF、153MB EPUB（09-20）与 156.5MB EPUB 首次打开约 74 秒渲染出 349 页（09-25）都走通了，数据见书架白皮书 §03bn。
+`Staging::try_deliver_direct`（→ `XochitlDelivery::upload_large` → 基座 `Xochitl::upload_large`，目标文件夹给 `Folder`）：造带真书名和真封面的占位（`shelf_conv::placeholder`；EPUB 几十到几百 KB，显示名一律用书自己的 `dc:title`（2026-10-07 稍后起；此前带卷标记时改用规范名，sheng-ren 已经写好规范书名，这层判断删掉）；PDF 是手写的一页最小 PDF，单测断言 <4000 字节）→ 上传 → 等最多 20 秒（书库目录 inotify，10-09 起；此前 200ms 轮询）、按**占位字节数**在书库认出新文档 → 母版真文件复制为 `<uuid>.<ext>.new`（0600，校验大小）→ EPUB 删渲染缓存（`.pdf`/`.epubindex`，首次打开约 25 秒重渲，146MB 实测）/PDF 改写 `.content`（`pageCount`/`originalPageCount`/`pages`/`redirectionPageMap`/`sizeInBytes`）→ 原子 rename 覆盖占位（无需重启 xochitl）→ `mark_delivered`；渲染记录 PDF 直接 `ok`、EPUB 记 `onopen`（之后读 `.content` 的 `pageCount` 显示真页数）；漫画符合 §3 时登记页边距。真机上 154MB PDF、153MB EPUB（09-20）与 156.5MB EPUB 首次打开约 74 秒渲染出 349 页（09-25）都走通了，数据见书架白皮书 §03bn。
 
-**整段串行**（2026-09-25）：认领只凭"刚进库 + 大小等于占位"，而 PDF 占位是同一份固定字节——两本大 PDF 同时投会认领到同一个 uuid。现在 `upload_large_file` 在进程内用一把锁从"传占位"一直串到"替换完成"；回归测试用"回应后才落盘"的假 xochitl 复现，去掉锁必挂。经网关批量队列走时本来就一本一本来（§7.2），这把锁是 book-serve 进程内的保证，管得到绕过网关直连的调用（如 §9 的直接导入）。真机没有并发投过两本大 PDF。
+**整段串行**（2026-09-25）：认领只凭"刚进库 + 大小等于占位"，而 PDF 占位是同一份固定字节——两本大 PDF 同时投会认领到同一个 uuid。现在基座 `Xochitl::upload_large`（10-10 前叫 `upload_large_file`）在进程内用一把锁从"传占位"一直串到"替换完成"；回归测试用"回应后才落盘"的假 xochitl 复现，去掉锁必挂。经网关批量队列走时本来就一本一本来（§7.2），这把锁是 book-serve 进程内的保证，管得到绕过网关直连的调用（如 §9 的直接导入）。真机没有并发投过两本大 PDF。
 
 **适用条件**：EPUB/PDF、≤ 1GiB（`MAX_DIRECT_BYTES`）、本机有书库目录、造占位成功；否则返回 `None`，调用方整本拒绝。PDF 还要先读出真页数（写进 `.content`）：`shelf_conv::pdfmeta::page_count` 按 PDF 规范从文件尾 `startxref` 沿 `/Prev` 链登记每一节交叉引用（传统表、交叉引用流〔PDF 1.5+〕、混合式 `/XRefStm` 都认），取最新 trailer 的 `/Root` → Catalog 的 `/Pages` → `/Count`；对象在对象流（`/ObjStm`）里就只解压那一个流（FlateDecode + PNG 预测器）。**内存有硬上限**：字典对象窗口 ≤4MB、单个流压缩数据 ≤16MB / 解压后 ≤32MB、`/Prev` ≤64 节、传统表子段 ≤10 万、页数 ≤20 万，最坏峰值约 48MB；格式不认识（加密的对象流、LZW 等别的过滤器、偏移错乱）一律 `Err` → 整本拒绝，不 panic。**占位已上传后才出的错直接报错**（书库里可能留下半成品占位）。**占位必须带真书名和真封面**：xochitl 用占位 `dc:title` 当显示名、导入时生成 `cover.png`，替换后不改名不补封面（真机踩过）。
 ⚠ 已知限制见 §10（占位上传后崩溃会残留占位文档，回执提示手动删，不做危险的回滚删除）。
@@ -232,7 +235,7 @@ xochitl `/upload` 约 100MB 硬限（超了断连）。超过体积门时 `Stagi
 
 `spawn_deliver` 模板：先做零耗时同步校验（格式/文件存在/忙锁），失败立即回 400 + 原因；通过才写初始 `pending`、排进串行作业队列（`jobs.rs`，与直接导入共用；2026-10-10 前是每次新起线程）、返回"已开始"。落库只有整本上传与大文件通道两条路，都**没有分步进度**，网页对处理中的书画不确定态滚动条。
 
-**刷新机制**：`rmsvc_core::events::EventBus`，`book-serve` 在状态变更点 `bus.publish("books", <kind>)`（`kind`：`staging`/`inbox`/`render`/`trash`/`mkdir`/`agent-failed`）；网关 `GET /api/events`（SSE；缺省 20s 心跳，网页带 `?ka=60` 改为 60s，少唤醒设备）汇聚各服务事件并补 `svc` 字段，网关自己的批量队列变化也发 `books`（`batch`）事件（2026-10-07 前闸门还发 `budget`）；浏览器按 `area` 找 tab，非前台记脏、切过去再刷，页面隐藏不刷、可见/重连后补刷。前台的母版库按事件来源决定重取多少：网关自己的 `batch` 事件只取批量状态 1 个；book-serve 的 `staging` 事件（入库、忙态开始/结束、落库结果）与 `render` 事件（渲染自检结果；2026-10-07 审查修复前走全量）再加母版库列表共 2 个；其余事件、切 tab、重连、操作后才全量取 3 个（再加 `GET /api/books/status` 取文件夹列表）。（2026-10-07 稍后前是 2/3/4 个，多一个闸门状态接口。）三档走同一个 `coalesce`，取档位最大值。全站取数时机见网关白皮书 §5.1 的图。**前端没有任何定时轮询**。**事件流断了怎么办**（2026-09-30）：`EventSource` 进 CLOSED（网关重启后会话没了→401、并发满→503）就先查一次 `/api/session`（401 跳登录页），否则 5 秒起、翻倍、封顶 5 分钟退避重开；页面隐藏时不重试。新建 xochitl 文件夹后不轮询，等 `mkdir` 事件。
+**刷新机制**：`rmsvc_core::events::EventBus`，`book-serve` 在状态变更点 `bus.publish(area, kind)`（area 都是 `books`；`kind`：`staging`/`inbox`/`render`/`trash`/`mkdir`/`agent-failed`/`import`；2026-10-10 起收成 `events.rs` 的常量，测试核对网页 `core.js` 的 `EV` 表认得每一个）；网关 `GET /api/events`（SSE；缺省 20s 心跳，网页带 `?ka=60` 改为 60s，少唤醒设备）汇聚各服务事件并补 `svc` 字段，网关自己的批量队列变化也发 `books`（`batch`）事件（2026-10-07 前闸门还发 `budget`）；浏览器按 `area` 找 tab，非前台记脏、切过去再刷，页面隐藏不刷、可见/重连后补刷。前台的母版库按事件来源决定重取多少：网关自己的 `batch` 事件只取批量状态 1 个；book-serve 的 `staging` 事件（入库、忙态开始/结束、落库结果）与 `render` 事件（渲染自检结果；2026-10-07 审查修复前走全量）再加母版库列表共 2 个；其余事件、切 tab、重连、操作后才全量取 3 个（再加 `GET /api/books/status` 取文件夹列表）。（2026-10-07 稍后前是 2/3/4 个，多一个闸门状态接口。）三档走同一个 `coalesce`，取档位最大值。全站取数时机见网关白皮书 §5.1 的图。**前端没有任何定时轮询**。**事件流断了怎么办**（2026-09-30）：`EventSource` 进 CLOSED（网关重启后会话没了→401、并发满→503）就先查一次 `/api/session`（401 跳登录页），否则 5 秒起、翻倍、封顶 5 分钟退避重开；页面隐藏时不重试。新建 xochitl 文件夹后不轮询，等 `mkdir` 事件。
 
 ### 7.1 不能中途停
 
@@ -253,7 +256,7 @@ xochitl `/upload` 约 100MB 硬限（超了断连）。超过体积门时 `Stagi
 
 ![书架服务的并发控制：哪条路径进哪把锁](diagrams/sh-concurrency-locks.svg)
 
-原则：**锁只包住真正会撞的那一小段**。网页发起的加入靠网关批量队列一本一本来（§7.2；2026-10-07 前还有网关闸门），其余都是单个进程内的锁：
+原则：**锁只包住真正会撞的那一小段**。网页发起的加入靠网关批量队列一本一本来（§7.2；2026-10-07 前还有网关闸门），其余都是 book-serve 进程内的锁；只有"设文件夹 → 上传"那一对另用锁文件的 flock 管到别的进程（2026-10-10）：
 
 | 锁 | 代码 | 谁进 | 锁多久 | 防什么 |
 |---|---|---|---|---|
@@ -262,15 +265,15 @@ xochitl `/upload` 约 100MB 硬限（超了断连）。超过体积门时 `Stagi
 | spool 锁 | `Spool::guard` | 只有 `process_inbox` 一轮追平 | 一轮 | 两轮追平抢同一文件 |
 | 边车写锁 | `sidecar::update`（全局 static） | 所有边车读-改-写（落库结果、渲染记录、落库标记） | 一次读改写 | 交错写丢字段 |
 | 投递作业队列 | `jobs.rs::Jobs`（一个工作线程，2026-10-10） | 网页落库（`spawn_deliver`）、直接导入（`POST /import`） | 一件作业（建文件夹、上传、认领；渲染自检另起线程不占） | 落库与直接导入各自一套任务模型、同时往 xochitl 传 |
-| xochitl 上传锁 | `rmsvc_core::xochitl`（进程内 static） | 每次 `GET /documents/<文件夹>` + `POST /upload` | 一次上传 | 并发投递落进别人的文件夹 |
-| 认领锁 | `XochitlDelivery::upload_and_claim`（进程内 static） | 直接导入的普通上传 + 等认领 | 上传 → 认出 uuid | 两次导入同一份字节时后一次认走前一次的文档 |
-| 大文件通道锁 | `Xochitl::upload_large_file`（进程内 static） | 超体积门走"占位 + 磁盘替换"的投递 | 传占位 → 认领 → 换成真文件 | 两本大 PDF 认领到同一个条目（§6.1） |
+| 跨进程上传锁 | `rmsvc_core::xochitl` 的 `UploadLock`（进程内 static + `$XDG_RUNTIME_DIR/shelf/xochitl-upload.lock` 的 `flock`，2026-10-10） | 每次 `GET /documents/<文件夹>` + `POST /upload`，含 note-serve 投笔记本 | 一次上传 | 并发投递（含另一个进程）落进别人的文件夹 |
+| 认领串行 | 基座 `Xochitl::upload_and_claim`（进程内 static；10-10 第二阶段前是 `XochitlDelivery` 自己的一把） | 落库 EPUB、直接导入的普通上传 + 等认领；大文件通道的占位认领 | 快照 → 上传 → 认出 uuid | 两次投同一份字节时后一次认走前一次的文档 |
+| 大文件通道锁 | 基座 `Xochitl::upload_large`（进程内 static） | 超体积门走"占位 + 磁盘替换"的投递 | 传占位 → 认领 → 换成真文件 | 两本大 PDF 认领到同一个条目（§6.1） |
 
-这些锁的来由（09-24 网页上传攥着 spool 锁、xochitl"当前文件夹"是全局状态导致落错文件夹；09-25 删除占忙锁、大文件通道整段串行、跨分区锁外拷贝）都有 host 回归测试（`slow_upload_does_not_block_inbox_processing`、`concurrent_landing_of_same_name_never_clobbers`、`concurrent_uploads_land_in_their_own_folders`、`remove_holds_busy_lock_and_releases_it`、`concurrent_large_pdf_uploads_claim_distinct_entries`、`stage_from_path_across_filesystems_lands_atomically`），已部署，并发场景没在真机专门触发过。note-serve 是另一个进程，和 book-serve 同时投 xochitl 时上传锁管不到。（2026-10-07 前「优化」「恢复原 PDF」「抓网文的同步优化」也进忙锁和落名临界区，随功能删掉。）
+这些锁的来由（09-24 网页上传攥着 spool 锁、xochitl"当前文件夹"是全局状态导致落错文件夹；09-25 删除占忙锁、大文件通道整段串行、跨分区锁外拷贝）都有 host 回归测试（`slow_upload_does_not_block_inbox_processing`、`concurrent_landing_of_same_name_never_clobbers`、`concurrent_uploads_land_in_their_own_folders`、`remove_holds_busy_lock_and_releases_it`、`concurrent_large_pdf_uploads_claim_distinct_entries`、`stage_from_path_across_filesystems_lands_atomically`），已部署，并发场景没在真机专门触发过。note-serve 是另一个进程：10-10 前和 book-serve 同时投 xochitl 时上传锁管不到，10-10 起基座的锁文件 flock 管到它（未部署）；认领等待不跨进程互斥（两边判据是字节 / visibleName，不会撞，跨进程互斥反而会让笔记本同步陪着等大书排版）。（2026-10-07 前「优化」「恢复原 PDF」「抓网文的同步优化」也进忙锁和落名临界区，随功能删掉。）
 
-## 8｜前端 UI 层（`gateway/ui/app.js`）
+## 8｜前端 UI 层（`gateway/ui/transfer.js`）
 
-`renderTransfer` 渲染"传书"页：两个 subpanel——**入库**（上传卡；提示"书请先在电脑上用 sheng-ren 的 xochitl 模式优化好再传"）、**母版库**。
+网页脚本 2026-10-10 拆成多个文件（网关白皮书）：传书页在 `transfer.js`，上传控件 `uploader()`、进度条 `renderBusy` 等通用 DOM 小件在 `dom.js`，事件常量表 `EV` 与取数封装在 `core.js`，`app.js` 只剩装配（建 tab、SSE、页头）。`renderTransfer` 渲染"传书"页：两个 subpanel——**入库**（上传卡；提示"书请先在电脑上用 sheng-ren 的 xochitl 模式优化好再传"）、**母版库**。
 
 **母版库页**（2026-09-20 重做，取舍见书架白皮书 §03bp；2026-10-07 随书架不再优化书精简）：
 - **行内只显示**书名、类型、大小、状态徽章、进度，**没有任何按钮**（2026-10-07 稍后删了只对闸门排队有效的"取消排队"）。徽章：格式 / 大小 / 落库记录（晚于母版 mtime 标"旧"，比如重新上传了 sheng-ren 新优化的版本）/ 渲染自检（只显示页数，旧的 `warn` 记录也按页数显示；10-07 前有"⚠ 只渲染 N 页 / 预期≈M"）/ 处理中、失败或"被重启打断"（卡 `pending` 但 `busy=false`）。进度条只有不确定态滚动条（`renderBusy`）。
@@ -299,9 +302,9 @@ GET  /status                         {ok, xochitlFolders}（xochitl 书库文件
 GET  /staging                        母版库列表 {items, freeBytes, lowSpace}
 POST /staging                        multipart 入库（逐文件）
 GET  /staging/file?name=             下载原件（流式，带 Content-Disposition）
-POST /staging/rename {name, newName} 改名（扩展名不变、边车跟随；冲突或忙时 400）
+POST /staging/rename {name, newName} 改名（扩展名不变、边车跟随；新名已占用或忙时 409、书不在 404、名字不合法 400）
 POST /staging/deliver {name, folder?} 异步加入 xochitl
-POST /staging/delete {name}          删除条目（忙时 400）
+POST /staging/delete {name}          删除条目（忙时 409、书不在 404）
 GET  /margins/{uuid} · POST /margins/applied {uuid}   漫画页边距待办（qmd 用；没登记的 uuid GET 回 404）
 GET  /progress/{uuid}[?pages=N]      原地替换后的阅读位置（shelf-keep-progress.qmd 用，2026-10-09）：没有快照 → 404；新排版（新 .epubindex）还没出来 → 202 {pending:true}；出来了 → 200 {page}（文档页序，0 起）。pages＝阅读器当前总页数，可省（书架白皮书 §03ca）
 POST /progress/applied {uuid, reason?}  删阅读位置快照（跳完 reason=applied；qmd 等约 60 秒新排版还没出来就放弃，reason=timeout）→ {ok, removed}
@@ -316,10 +319,12 @@ GET  /import/{uuid}                  → {uuid, name, folder, deleted, replacing
 POST /import/states {uuids: [...]}   → {docs: {<uuid>: {name, folder, deleted, replacing}}}（一次查一批，口径同上，不存在的不出现；最多 10000 个，2026-10-09）
 ```
 
+**错误状态码**（2026-10-10 第二阶段，审计 CORE-1；**未部署**）：母版库、回收站、建文件夹的领域错误分种类（`error.rs`），不再一律 400——请求不对（文件名非法、格式不收、名字为空、uuid 形状不对、回收站入队名字对不上）400；不在（母版库里没有这本书、书库里没有这份文档）404；冲突（正在处理中、新名字已被占用、已经在回收站）409；设备这边出错（读写盘、后台作业队列停了）500。`POST /margins/applied` 只会因写队列失败而出错，改回 500。网页与 sheng-ren 都只看是否 2xx 和 `message`，状态码变化不影响它们。多文件上传 `POST /staging` 整体失败仍是 400（基座的上传流程只回字符串，分不出请求体坏了与建暂存目录失败）。
+
 **直接导入**（`import.rs`，2026-10-07）：给电脑上的 sheng-ren（`booklib sync`）用——经 SSH 端口转发（`ssh -L` 到设备 `127.0.0.1:8790`）直连 book-serve，不经网关、不带 `/api/books` 前缀，书**不进母版库**。
-- **异步**（2026-10-07 17:27 提交，部署记录里没有这一项；同网页「加入 xochitl」的 `spawn_deliver`）：`POST /import` 只做收体和快速校验（下面两条里"回 202 之前"的部分），校验过了就把剩下的活交给后台作业队列（`jobs.rs`，2026-10-10 前叫 `import_jobs.rs`；网页落库也排这个队列），立即回 `202 {"job": "<任务 id>"}`；客户端轮询 `GET /import/jobs/{id}`：`state` 为 `running`（`stage` 是给人看的当前阶段：「排队」「开始」「建文件夹」「上传给 xochitl」「上传给 xochitl（大文件通道）」「等 xochitl 排版」「登记页边距」「替换文件」）、`done`（带 `uuid`、`name`〔visibleName〕、`folder`〔实际落进的完整路径〕，`stage`「完成」）或 `failed`（带 `message`，`stage`「失败」）。任务**串行**：只有一个工作线程，按提交顺序一次做一个，排队中的是 `running` + 「排队」。任务记录**只在内存里**：做完的至少留 1 小时（`JOB_KEEP`，之后在下一次提交 / 查询时清掉）；book-serve 重启就没了，查询回 404（任务 id 带进程启动时刻，重启后不会撞上旧 id）。任务里 panic 由 `catch_unwind` 转成失败，工作线程照常做下一个。成功时推 `books/import` 事件、让 `/status` 缓存失效；失败记进日志（`journalctl -u book-serve`）。原来同步回 `{uuid, name, folder}` 的行为去掉了。**来由**：此前同步——HTTP 一直挂到加入完成，而 xochitl 收 `/upload` 时当场排版，2026-10-07 真机《阿加莎全集》（30MB）排了 8 分多钟；客户端 10 分钟超时、服务端认领只等 120 秒，结果书加进去了却回了失败，电脑上没有记录、下次同步重复传。现在认领超时（`/upload` 超时判"很可能已送达"时）放宽到 30 分钟，反正在后台线程里等。**未真机验证**。
+- **异步**（2026-10-07 17:27 提交，部署记录里没有这一项；同网页「加入 xochitl」的 `spawn_deliver`）：`POST /import` 只做收体和快速校验（下面两条里"回 202 之前"的部分），校验过了就把剩下的活交给后台作业队列（`jobs.rs`，2026-10-10 前叫 `import_jobs.rs`；网页落库也排这个队列），立即回 `202 {"job": "<任务 id>"}`；客户端轮询 `GET /import/jobs/{id}`：`state` 为 `running`（`stage` 是给人看的当前阶段：「排队」「开始」「建文件夹」「上传给 xochitl、等它排版」「上传给 xochitl（大文件通道）」「登记页边距」「替换文件」（10-10 第二阶段前上传与等排版是「上传给 xochitl」「等 xochitl 排版」两段；认领交给基座后一口气做完，xochitl 本来就在回 2xx 前排版））、`done`（带 `uuid`、`name`〔visibleName〕、`folder`〔实际落进的完整路径〕，`stage`「完成」）或 `failed`（带 `message`，`stage`「失败」）。任务**串行**：只有一个工作线程，按提交顺序一次做一个，排队中的是 `running` + 「排队」。任务记录**只在内存里**：做完的至少留 1 小时（`JOB_KEEP`，之后在下一次提交 / 查询时清掉）；book-serve 重启就没了，查询回 404（任务 id 带进程启动时刻，重启后不会撞上旧 id）。任务里 panic 由 `catch_unwind` 转成失败，工作线程照常做下一个。成功时推 `books/import` 事件、让 `/status` 缓存失效；失败记进日志（`journalctl -u book-serve`）。原来同步回 `{uuid, name, folder}` 的行为去掉了。**来由**：此前同步——HTTP 一直挂到加入完成，而 xochitl 收 `/upload` 时当场排版，2026-10-07 真机《阿加莎全集》（30MB）排了 8 分多钟；客户端 10 分钟超时、服务端认领只等 120 秒，结果书加进去了却回了失败，电脑上没有记录、下次同步重复传。现在认领超时（`/upload` 超时判"很可能已送达"时）放宽到 30 分钟，反正在后台线程里等。**未真机验证**。
 - 新导入：请求体（`Content-Type: application/epub+zip`，带 `Content-Length`）按块写到 `$XDG_STATE_HOME/shelf/books/import-tmp/` 的临时文件（不整本进内存；任务做完/出错都删，启动时清上次的残留），回 202 之前校验扩展名 `.epub`、非空、≤ 1GB（`MAX_DIRECT_BYTES`）、收到的字节数等于 `Content-Length`、开头是 zip 头 `PK\3\4`（不对 → 400）。后台任务里：目标文件夹逐级确保（见下一条）；**幂等**：目标文件夹里已经有一份内容与这次逐字节相同的活文档（先比大小）就直接认它、不再上传（上一次其实成功了、客户端没拿到结果再来一次，不会重复加入）；≤ 体积门走普通 `/upload`，再按"上传前没有、上传后新出现、`<uuid>.epub` 与上传字节逐字节相同"认出 uuid（进程内串行，回执后等 20 秒；`/upload` 超时判"很可能已送达"时等 30 分钟〔10-07 前 120 秒〕；等的是书库目录的 inotify 事件〔防抖 500ms〕，2026-10-07 审查修复前是每 200ms 扫一遍书库），> 体积门走大文件通道（§5，它自己返回 uuid）。漫画带 sheng-ren 页边距标记的照常登记（§3）。
-- **多级文件夹**（2026-10-07 用户要求）：`folder` 是原件在用户书目录里的相对子目录，`/` 分隔（`漫画/死亡筆記(愛藏版)`），按 `/` 拆、去掉各段首尾空白和空段（单段就是原来的行为，空＝书库根）。`XochitlDelivery::ensure_folder_path`（2026-10-10 前挂在 `Staging` 上）从根往下逐级：在上一级正下方按名字找（`rmsvc_core::xochitl::find_child_folder`）→ 没有就 `MkdirQueue::add_in(上一级 uuid, 名字)` 入队 → 等它真建出来（书库目录 inotify，防抖 3 秒，每级最多 20 秒），拿到这一级的 uuid 再往下。最后按 **uuid** 上传进最里层（`Xochitl::upload_file_into` / `upload_large_file_into`，不按名字在全库找——不同上级下可能有同名子文件夹）。某一级等不到就停在已经有的那一级（书落在那里，不会落到别处），回执的 `folder` 照实写实际路径。回执和 `GET /import/{uuid}` 的 `folder` 都是从文档的 parent 往上找到根拼出的完整路径（`rmsvc_core::xochitl::folder_path_of`；名字本身带 `/` 的文件夹拼出来有歧义，只供显示和比对）。此前整串当一个名字，建出叫「漫画/死亡筆記(愛藏版)」的顶层文件夹；设备上已有的两个这种顶层文件夹不自动处理，按（上级, 名字）逐级找也不会误认它们。**未真机验证**（依赖 `createCollection` 传非空 parent，见 §4）。〔10-07 约 16:32 已部署（`deploy.sh --only book` + 整机重启），部署自检 36✓ 1⚠ 0✗；功能仍未真机验证，手测项见书架白皮书附录 §05 #24〕
+- **多级文件夹**（2026-10-07 用户要求）：`folder` 是原件在用户书目录里的相对子目录，`/` 分隔（`漫画/死亡筆記(愛藏版)`），按 `/` 拆、去掉各段首尾空白和空段（单段就是原来的行为，空＝书库根）。`XochitlDelivery::ensure_folder_path`（2026-10-10 前挂在 `Staging` 上）从根往下逐级：在上一级正下方按名字找（基座 `Xochitl::child_folder`，回 `FolderId`）→ 没有就 `MkdirQueue::add_in(上一级 uuid, 名字)` 入队 → 等它真建出来（书库目录 inotify，防抖 3 秒，每级最多 20 秒），拿到这一级的 uuid 再往下。最后按 **uuid** 上传进最里层（目标是 `Folder`〔根 / 校验过形状的 uuid〕，基座 `Xochitl::upload_and_claim` / `upload_large`，10-10 第二阶段前是按 `&str` uuid 的 `upload_file_into` / `upload_large_file_into`；不按名字在全库找——不同上级下可能有同名子文件夹）。某一级等不到就停在已经有的那一级（书落在那里，不会落到别处），回执的 `folder` 照实写实际路径。回执和 `GET /import/{uuid}` 的 `folder` 都是从文档的 parent 往上找到根拼出的完整路径（`rmsvc_core::xochitl::folder_path_of`；名字本身带 `/` 的文件夹拼出来有歧义，只供显示和比对）。此前整串当一个名字，建出叫「漫画/死亡筆記(愛藏版)」的顶层文件夹；设备上已有的两个这种顶层文件夹不自动处理，按（上级, 名字）逐级找也不会误认它们。**未真机验证**（依赖 `createCollection` 传非空 parent，见 §4）。〔10-07 约 16:32 已部署（`deploy.sh --only book` + 整机重启），部署自检 36✓ 1⚠ 0✗；功能仍未真机验证，手测项见书架白皮书附录 §05 #24〕
 - 原地替换：`<uuid>.metadata` 不在、`deleted`、在回收站、没有 `<uuid>.epub` → 404（回 202 之前判，收完体再判一次；客户端据此改成新导入；任务排队期间书被删了，任务开头再判，失败进 `message`）；请求体先写到 `import-tmp/` 的临时文件（0600；与书库同在 /home 分区）→ 删 `<uuid>.pdf`、`<uuid>.epubindex` → rename 成 `<uuid>.epub`；删 `.epubindex` 之前先给阅读位置拍快照（2026-10-09，下次打开时由 qmd 让 xochitl 跳回去，书架白皮书 §03ca；拍不成不影响替换）；`.content`/`.metadata` 不动（保留 `lastOpenedPage`、页边距、所在文件夹），**漫画页边距也不重新登记**（每本只设一次，用户在阅读器里调过的不被 sheng-ren 每次同步覆盖）。2026-10-07 审查修复前体直接写在书库里的 `<uuid>.epub.new`，进程被杀时会在书库留下最大 1GB 的半成品，而启动清理只管 `import-tmp/`。同一 uuid 同时只允许一个替换（第二个回 409，2026-10-09 前是 400；忙锁从收体一直持到后台任务做完）。**真机**：10-09 在《绍宋》上走过一次——一本已经打开过、已排版的书被替换后，xochitl 重开时正确重排（新 `.epubindex` 打开当场写出），找回阅读位置跳回原页（书架白皮书 §03ca）；那次替换前后排版没变，内容改动导致页数变化的情形还没测。缩略图不动。
 - 删除不另设接口：`POST /trash/add {uuid, name}`（`name` 用导入任务结果里的 `name`，即 visibleName）。
 - 超时：rmsvc-core 只有"读请求体时 60 秒收不到一个字节就断"的空闲超时（`READ_IDLE_TIMEOUT`），没有请求体大小上限和总时长上限。改成异步后 `POST /import` 收完体、写完盘就回，客户端读应答不用再按分钟设；等结果靠轮询任务。
