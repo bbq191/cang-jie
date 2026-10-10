@@ -4,15 +4,14 @@ AARCH64_CC ?= aarch64-linux-gnu-gcc
 # 特征码扫描 + ARM64 远跳转 trampoline 三个纯工具文件（跟"装哪个 hook"无关的通用
 # 基础设施）。2026-09-11 起改为**剥离移植**（独立副本，不再路径引用 chinese-ime/
 # langhook/src——那边挪出仓库后不再适合当活跃路径依赖），见 ../shared/PROVENANCE.md。
-LANGHOOK_SRC_DIR = ../shared
-SHARED_SRC = $(LANGHOOK_SRC_DIR)/scan.c $(LANGHOOK_SRC_DIR)/pattern.c $(LANGHOOK_SRC_DIR)/trampoline_aarch64.c $(LANGHOOK_SRC_DIR)/trampoline_patch.c
-CFLAGS_COMMON = -std=gnu17 -Wall -Wextra -g -ffile-prefix-map=$(CURDIR)=. -I$(LANGHOOK_SRC_DIR)
+SHARED_DIR = ../shared
+SHARED_SRC = $(SHARED_DIR)/scan.c $(SHARED_DIR)/pattern.c $(SHARED_DIR)/trampoline_aarch64.c $(SHARED_DIR)/trampoline_patch.c
+CFLAGS_COMMON = -std=gnu17 -Wall -Wextra -g -ffile-prefix-map=$(CURDIR)=. -I$(SHARED_DIR)
 
 .PHONY: aarch64 glue clean
 
-# xovi 扩展胶水：xovigen 从 hl-snap.xovi 生成 xovi section 元数据（同 chinese-ime/
-# langhook 的 xovigen 用法，白皮书 2.4 记过流程）。需要 asivery/xovi 的
-# xovigen.py——构建前 clone 它，XOVI_DIR 指向克隆路径。
+# xovi 扩展胶水：xovigen 从 hl-snap.xovi 生成 xovi section 元数据（白皮书 2.4 记过流程）。胶水已提交进仓库，
+# 平常构建不需要 asivery/xovi；改了 .xovi 才要 clone 它、`make glue XOVI_DIR=<克隆路径>`。
 XOVI_DIR ?= ../../../xovi
 XOVIGEN = $(XOVI_DIR)/util/xovigen.py
 

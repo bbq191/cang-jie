@@ -1,6 +1,6 @@
 # shared —— xovi 扩展的 hook 基础设施（C）
 
-`hl-snap` 靠"找到 xochitl 里的某个函数 → 改写它的开头跳到自己的代码"来工作，这套基础设施放在这里，它的 `Makefile` 用 `LANGHOOK_SRC_DIR` 指向本目录。原先 `handwriting-stroke`（手写优化，`hw-stroke.so`）也用这一份；它 **2026-09-30 已移除**，下面提到它的段落是历史记录。这里的源码仍被 hl-snap 编进 `hl-snap.so`，没有只给 hw-stroke 用的文件，所以一个也没删（源码里提到 `hw_stroke.c` 的注释也保留不改：扩展带 `-g` 编译，动注释会改变行号调试信息，进而改变 `hl-snap.so` 的 md5）。整个流程的图解见白皮书 §02（[`../docs/diagrams/xovi-hook-lifecycle.svg`](../docs/diagrams/xovi-hook-lifecycle.svg)）。
+`hl-snap` 靠"找到 xochitl 里的某个函数 → 改写它的开头跳到自己的代码"来工作，这套基础设施放在这里，它的 `Makefile` 用 `SHARED_DIR` 指向本目录（2026-10-10 前叫 `LANGHOOK_SRC_DIR`，是从 chinese-ime/langhook 搬来时的旧名）。原先 `handwriting-stroke`（手写优化，`hw-stroke.so`）也用这一份；它 **2026-09-30 已移除**，下面提到它的段落是历史记录。这里的源码仍被 hl-snap 编进 `hl-snap.so`，没有只给 hw-stroke 用的文件，所以一个也没删（源码里提到 `hw_stroke.c` 的注释也保留不改：扩展带 `-g` 编译，动注释会改变行号调试信息，进而改变 `hl-snap.so` 的 md5）。整个流程的图解见白皮书 §02（[`../docs/diagrams/xovi-hook-lifecycle.svg`](../docs/diagrams/xovi-hook-lifecycle.svg)）。
 
 | 文件 | 做什么 |
 |---|---|

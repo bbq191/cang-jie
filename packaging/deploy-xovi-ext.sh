@@ -1,14 +1,14 @@
 #!/bin/sh
-# host 侧一键构建+推送+安装一个"独立最小 xovi 扩展"（数据驱动，2026-09-20 起 hl-snap 与
-# handwriting-stroke 共用这一份，原先两份 deploy 脚本 ~29 行差异全是名字）。
+# host 侧一键构建+推送+安装一个"独立最小 xovi 扩展"（数据驱动，2026-09-20 起各扩展共用这一份，原先每个扩展
+# 一份 deploy 脚本、~29 行差异全是名字；现在是 hl-snap 与 ui-font）。
 #   hl-snap  → enhance/hl-snap（荧光笔 CJK 精确吸附，hook FUN_00f05ad0）
 #   ui-font  → enhance/ui-font（界面字体：改 xochitl 导入表里 QGuiApplication::setFont 那一格，2026-10-07）
 #   （hw-stroke → enhance/handwriting-stroke 手写优化 2026-09-30 已移除；旧设备上的残留由 removal.sh 清）
 # 入口是 deploy-hl-snap.sh / deploy-ui-font.sh（install-all 与文档沿用的名字，薄包装）。数据驱动的结构保留，将来再加扩展往下面 case 里加一行。
 #
 # 前置：设备已 vellum add xovi（设备端 install.sh 检查，缺失清楚报错）。
-# 前置（host 侧构建）：需要 asivery/xovi 的 clone 供 xovigen 生成元数据胶水，缺省找 ../../../xovi；
-# 不在默认位置就 `XOVI_DIR=<clone路径> sh deploy-hl-snap.sh <host>`。CJ_SKIP_BUILD=1 跳过构建、直接用仓库里已提交的 .so。
+# 前置（host 侧构建）：aarch64-linux-gnu-gcc。xovi 胶水 xovi_glue.{c,h} 已提交进仓库，平常构建不需要 asivery/xovi 的
+# clone；只有改了 .xovi 才要 `make -C <扩展目录> glue XOVI_DIR=<clone路径>` 重新生成。CJ_SKIP_BUILD=1 跳过构建、直接用仓库里已提交的 .so。
 #
 # 用法：./deploy-xovi-ext.sh hl-snap [host]      host 默认 10.11.99.1
 #   环境 DEFER_XOVI_START=1：只把 .so 落盘（设备端 install.sh --no-restart），不重启 xochitl——install-all 编排多个
@@ -34,14 +34,14 @@ DEST="/home/root/$(step_payload_dir "$STEP")"   # 载荷目录与 uninstall-all 
 
 require_device
 echo "== 构建 $SO =="
-# ⚠️ 不跑 `make clean`——产物已提交进仓库，缺外部 xovi clone 时重编会失败；不清现有 .so/xovi_glue.{c,h}
+# ⚠️ 不跑 `make clean`——产物已提交进仓库，本机缺交叉编译器时重编会失败；不清现有 .so/xovi_glue.{c,h}
 # 才能在那种情况下退回用仓库里已提交的版本（先删了才发现编不出新的，真机实测踩过）。
 if [ "${CJ_SKIP_BUILD:-0}" = "1" ]; then
     echo "-- CJ_SKIP_BUILD=1：不构建，用现有 $DIR/$SO"
     [ -f "$DIR/$SO" ] || { echo "!! 没有 $DIR/$SO"; exit 1; }
 elif ! make -C "$DIR" aarch64; then
     if [ -f "$DIR/$SO" ]; then
-        echo "⚠️  重新构建失败（大概率是本机缺 asivery/xovi clone，见 XOVI_DIR 提示）——"
+        echo "⚠️  重新构建失败（本机缺 aarch64-linux-gnu-gcc，或源码编不过——看上面的编译输出）——"
         echo "    改用仓库里已提交的 $DIR/$SO（可能不是最新源码对应的版本）"
     else
         echo "!! 构建失败，且仓库里也没有已提交的 $DIR/$SO，无法继续"
