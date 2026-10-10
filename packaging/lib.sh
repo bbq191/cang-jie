@@ -15,6 +15,7 @@
 #   device_awake_hold / device_awake_release   顶层编排期间持一把带超时的设备唤醒锁，别让设备在两次 ssh 之间睡过去
 #   push_verified    一批文件 scp 到"暂存路径"→ 逐个 md5 对拍；不对就删暂存并失败，绝不落到最终位置（H3）；
 #                    一次 ssh 建目录并取现有 md5 + 只 scp 有变化的文件 + 有上传才再一次 ssh 复核 md5
+#   push_tar_verified 整包 tar 经 ssh stdin 送上设备 → md5 对拍 + 解包核对 → 才换位（PK-4，deploy.sh 的 shelf 载荷）
 #   步骤表           STEP_ORDER / step_script / STEP_DEFER / STEP_CONFIG_ONLY（install-all 与 uninstall-all 共用，
 #                    保证两边清单对称）
 #   parse_step_args  install-all / uninstall-all 共用的 [host] --force --purge --force-apply --dry-run --skip -h 解析
@@ -223,6 +224,26 @@ push_verified() {
     [ -z "$pv_bad" ] && return 0
     rssh "rm -f$pv_bad" || true
     return 1
+}
+
+# push_tar_verified LOCAL_TAR REMOTE_DIR MUST_FILE：整包载荷（tar）经 ssh 标准输入送到设备，md5 对上、解包后 MUST_FILE
+# （相对 REMOTE_DIR）存在，才把 REMOTE_DIR 换成新的；任一步不对就删掉半成品、返回 1，现成的 REMOTE_DIR 原样不动。
+# 2026-10-10（审计 PK-4）：旧版 deploy.sh 只看解包后有没有 install.sh——传输中途被截断/损坏但 tar 恰好还能解开时，
+# 缺文件、坏二进制会一路装下去；其余步骤都用 push_verified 逐个 md5，这里补上同一道校验。
+# tar 先整个落盘（REMOTE_DIR.tar.new）再算 md5、再解：设备 busybox 没有进程替换，边收边算要 fifo，不值得；代价是
+# /home 上临时多占一份载荷大小（约 20MB）。设备端 md5sum 与 push_verified 同一个命令（busybox 自带）。
+push_tar_verified() {
+    # 远端会对 REMOTE_DIR 与它的 .new/.tar.new 做 rm -rf：只许设备 /home/root 下的具体子目录
+    case "$2" in /home/root/?*) ;; *) echo "!! push_tar_verified：拒绝 /home/root 之外的目标 $2"; return 1 ;; esac
+    case "$2" in *..*) echo "!! push_tar_verified：目标不许含 ..：$2"; return 1 ;; esac
+    pt_sum="$(md5_local "$1")" || return 1
+    pt_d="$(shquote "$2")"; pt_n="$(shquote "$2.new")"; pt_t="$(shquote "$2.tar.new")"; pt_m="$(shquote "$2.new/$3")"
+    rssh_in "rm -rf $pt_n $pt_t && mkdir -p $pt_n || exit 1
+if ! { cat > $pt_t && s=\$(md5sum $pt_t) && [ \"\${s%% *}\" = $pt_sum ] && tar -C $pt_n -xf $pt_t && [ -f $pt_m ]; }; then
+    echo \"!! 载荷校验没过（md5 应为 $pt_sum，设备上收到 \${s%% *}；或解包后缺 $3）：传输可能截断/损坏，已删半成品，$2 未动\"
+    rm -rf $pt_n $pt_t; exit 1
+fi
+rm -f $pt_t && rm -rf $pt_d && mv $pt_n $pt_d" < "$1"
 }
 
 # ── 固件安全门（install-all 用）──────────────────────────────────────────

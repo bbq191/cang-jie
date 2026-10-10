@@ -25,6 +25,8 @@ cmd="$(printf '%s' "$cmd" | subst)"
 [ "$nflag" = 1 ] && exec </dev/null
 echo "ssh $cmd" >> "$CJ_SIM_LOG"
 export HOME="$R/home/root" CJ_SYSD="$R/usr/lib/systemd/system" CJ_PROC="$R/proc"
+# CJ_SIM_STDIN_CORRUPT=1：模拟传输中掺进字节（标准输入末尾多出一行）
+if [ -n "${CJ_SIM_STDIN_CORRUPT:-}" ]; then { cat; echo corrupt; } | sh -c "$cmd"; exit $?; fi
 case "$cmd" in
     "sh -s"*) eval "exec $cmd" ;;
     *) exec sh -c "$cmd" ;;

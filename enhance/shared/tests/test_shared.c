@@ -1,5 +1,5 @@
-/* enhance/shared/ 四个纯工具文件（scan.c/pattern.c/trampoline_aarch64.c/trampoline_patch.c）
- * 的 host 侧单元测试——2026-09-16 补（全项目现状核查 P1 条目：这几个文件此前被
+/* enhance/shared/ 几个纯工具文件（scan.c/pattern.c/trampoline_aarch64.c/trampoline_patch.c，
+ * 2026-10-10 加 minijson.c）的 host 侧单元测试——2026-09-16 补（全项目现状核查 P1 条目：这几个文件此前被
  * hl-snap/handwriting-stroke 两个"涉及 xovi/mprotect 的高危代码路径"共用，却完全零自动化
  * 覆盖，只能靠真机验证）。
  *
@@ -16,6 +16,7 @@
  *
  * 跑法：cd enhance/shared && make test（host gcc，不需要 aarch64 交叉工具链）。
  */
+#include "../minijson.h"
 #include "../pattern.h"
 #include "../scan.h"
 #include "../trampoline_aarch64.h"
@@ -46,6 +47,49 @@ void *__wrap_mmap(void *addr, size_t len, int prot, int flags, int fd, off_t off
         failures++; \
     } \
 } while (0)
+
+/* ── minijson.c（2026-10-10，审计 EN-1：hl-snap/ui-font 各自的 strstr 扫描收进这里）──────────── */
+
+static int jbool(const char *json, int start) { /* 拿到就返回值，拿不到返回 start（扩展的用法：保持原值） */
+    int v = start;
+    cj_json_get_bool(json, "hlSnapCjk", &v);
+    return v;
+}
+
+static void test_minijson_bool(void) {
+    CHECK(jbool("{\"hlSnapCjk\":false}", 1) == 0);
+    CHECK(jbool("{ \"a\": 1,\n  \"hlSnapCjk\" :\ttrue }", 0) == 1);
+    CHECK(jbool("{\"hwStrokeNibMinRatio\":0.6,\"hlSnapCjk\":true}", 0) == 1);  /* 设备上真实的形状 */
+    /* 旧 hl-snap 实现（strstr 找 "hlSnapCjk"）的三个错，scratch 里逐字复制旧函数跑过：分别得 1 / 0 / 0 */
+    CHECK(jbool("{\"lastToggled\":\"hlSnapCjk\",\"hlSnapCjk\":false}", 1) == 0); /* 值恰好等于键名，不能遮住真键 */
+    CHECK(jbool("{\"x\":{\"hlSnapCjk\":false},\"hlSnapCjk\":true}", 1) == 1);   /* 嵌套对象里的同名键不算 */
+    CHECK(jbool("{\"hlSnapCjk\" false}", 1) == 1);                                  /* 键后没冒号：不认 */
+    CHECK(jbool("{\"s\":\"a\\\"hlSnapCjk\\\":false\",\"hlSnapCjk\":true}", 0) == 1); /* 转义引号里的"键" */
+    CHECK(jbool("[{\"hlSnapCjk\":false}]", 1) == 1);   /* 顶层不是对象 */
+    CHECK(jbool("{\"hlSnapCjk\":\"false\"}", 1) == 1); /* 字符串不是布尔 */
+    CHECK(jbool("{\"hlSnapCjk\":truex}", 0) == 0);
+    CHECK(jbool("{\"hlSnapCjk\":", 1) == 1);           /* 截断 */
+    CHECK(jbool("{\"a\":\"unterminated", 1) == 1);
+    CHECK(jbool("", 1) == 1);
+    CHECK(jbool("{}", 0) == 0);
+    CHECK(jbool("{\"a\":[1,{\"b\":2}],\"hlSnapCjk\":false}", 1) == 0); /* 数组/嵌套之后的顶层键照样找得到 */
+}
+
+static void test_minijson_string(void) {
+    char out[64];
+    CHECK(cj_json_get_string("{\"sans\":\"Sarasa UI SC\",\"serif\":\"\"}", "sans", out, sizeof out) && !strcmp(out, "Sarasa UI SC"));
+    CHECK(cj_json_get_string("{ \"serif\": \"X\",\n  \"sans\" :  \"A \\\"B\\\" \\\\C\" }", "sans", out, sizeof out) && !strcmp(out, "A \"B\" \\C"));
+    CHECK(cj_json_get_string("{\"sans\":\"\"}", "sans", out, sizeof out) && out[0] == 0);  /* 空串也算拿到 */
+    CHECK(!cj_json_get_string("{\"serif\":\"X\"}", "sans", out, sizeof out));
+    CHECK(!cj_json_get_string("{\"sans\":\"\\u4e2d\"}", "sans", out, sizeof out));        /* 不认的转义整条放弃 */
+    CHECK(!cj_json_get_string("{\"sans\":\"abc", "sans", out, sizeof out));                 /* 截断 */
+    CHECK(!cj_json_get_string("{\"sans\":\"0123456789\"}", "sans", out, 8));                /* 放不下 */
+    CHECK(!cj_json_get_string("{\"sans\":null}", "sans", out, sizeof out));
+    CHECK(!cj_json_get_string("{\"sans\":\"x\"}", "sans", out, 0));
+    /* 旧 ui-font 实现：值恰好是 "sans" 时 strstr 先撞上它、后面不是冒号就整条放弃，拿不到真正的 sans */
+    CHECK(cj_json_get_string("{\"serif\":\"sans\",\"sans\":\"Foo\"}", "sans", out, sizeof out) && !strcmp(out, "Foo"));
+    CHECK(cj_json_get_string("{\"sans\":\"中文 家族\"}", "sans", out, sizeof out) && !strcmp(out, "中文 家族")); /* UTF-8 原样 */
+}
 
 /* ── pattern.c ─────────────────────────────────────────────────────────── */
 
@@ -437,7 +481,85 @@ static void test_patch_target_stub_alloc_fail_restores_rx(void) {
     munmap(m, (size_t)page);
 }
 
+/* ── cj_insn_pc_relative（2026-10-10，审计 EN-2）────────────────────────────────────
+ * 样例编码来源：GNU as 2.47（aarch64-linux-gnu-as -march=armv9.6-a+cmpbr）汇编后 aarch64-linux-gnu-objdump -d 读出，
+ * 分支/字面量目标都是该段开头（偏移为负），不影响分类。 */
+static const struct { uint32_t insn; const char *asm_; } PC_REL[] = {
+    {0x10000000u, "adr x0, ."},          {0x90000001u, "adrp x1, ."},
+    {0x17fffffeu, "b ."},                {0x97fffffdu, "bl ."},
+    {0x54ffff80u, "b.eq ."},             {0x54ffff61u, "b.ne ."},             {0x54ffff50u, "bc.eq ."},
+    {0x34ffff22u, "cbz w2, ."},          {0xb5ffff03u, "cbnz x3, ."},
+    {0x361ffee4u, "tbz w4, #3, ."},      {0xb747fec5u, "tbnz x5, #40, ."},
+    {0x58fffea6u, "ldr x6, ."},          {0x18fffe87u, "ldr w7, ."},          {0x98fffe68u, "ldrsw x8, ."},
+    {0x9cfffe49u, "ldr q9, ."},          {0x5cfffe2au, "ldr d10, ."},         {0x1cfffe0bu, "ldr s11, ."},
+    {0xd8fffde0u, "prfm pldl1keep, ."},
+    {0xf4010000u, "cbgt x0, x1, ."},     {0x7502bfe0u, "cbgt w0, #5, ."},     {0x74c1bfc0u, "cbbeq w0, w1, ."},
+};
+static const struct { uint32_t insn; const char *asm_; } NOT_PC_REL[] = {
+    {0xd503233fu, "paciasp"},            {0xa9bd7bfdu, "stp x29, x30, [sp, #-48]!"},
+    {0x910003fdu, "mov x29, sp"},        {0xf90013f5u, "str x21, [sp, #32]"}, {0xaa0003f5u, "mov x21, x0"},
+    {0xf9400020u, "ldr x0, [x1]"},       {0xf9400420u, "ldr x0, [x1, #8]"},   {0xa94007e0u, "ldp x0, x1, [sp]"},
+    {0xd61f0200u, "br x16"},             {0xd63f0100u, "blr x8"},             {0xd65f03c0u, "ret"},
+    {0x91001020u, "add x0, x1, #4"},     {0xd2824690u, "movz x16, #0x1234"},  {0xf2aacf10u, "movk x16, #0x5678, lsl #16"},
+    {0xd503245fu, "bti c"},              {0xd503201fu, "nop"},                {0xd10103ffu, "sub sp, sp, #0x40"},
+};
+
+static void test_insn_pc_relative_classification(void) {
+    for (size_t i = 0; i < sizeof PC_REL / sizeof PC_REL[0]; i++) {
+        if (!cj_insn_pc_relative(PC_REL[i].insn)) { fprintf(stderr, "  漏判：%s\n", PC_REL[i].asm_); failures++; }
+    }
+    for (size_t i = 0; i < sizeof NOT_PC_REL / sizeof NOT_PC_REL[0]; i++) {
+        if (cj_insn_pc_relative(NOT_PC_REL[i].insn)) { fprintf(stderr, "  误判：%s\n", NOT_PC_REL[i].asm_); failures++; }
+    }
+    /* 远跳转本身（movz/movk×3/br x16）不是 PC 相对：hook 叠 hook 时被覆盖的可能就是它 */
+    uint32_t fj[5];
+    cj_build_far_jump(fj, (void *)(uintptr_t)0x00005555deadbeefULL);
+    for (int i = 0; i < 5; i++) CHECK(!cj_insn_pc_relative(fj[i]));
+}
+
+/* hl-snap 真实目标（3.28.0.172 FUN_00f05ad0，特征码 PROLOGUE_HL_EXPAND，hl_snap.c）开头被覆盖的 20 字节 =
+ * paciasp / stp x29,x30,[sp,#-48]! / mov x29,sp / str x21,[sp,#32] / mov x21,x0，一条都不是 PC 相对：
+ * 新检查不会让现有 hook 装不上。 */
+static const uint8_t HL_SNAP_HEAD[20] = {
+    0x3f, 0x23, 0x03, 0xd5, 0xfd, 0x7b, 0xbd, 0xa9, 0xfd, 0x03, 0x00, 0x91,
+    0xf5, 0x13, 0x00, 0xf9, 0xf5, 0x03, 0x00, 0xaa,
+};
+
+static void test_patch_target_accepts_hl_snap_head_refuses_pc_relative(void) {
+    long page = sysconf(_SC_PAGESIZE);
+    uint8_t *m = mmap(NULL, (size_t)page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    CHECK(m != MAP_FAILED);
+    if (m == MAP_FAILED) return;
+    memcpy(m + 64, HL_SNAP_HEAD, sizeof HL_SNAP_HEAD);
+    /* 第二处：hl-snap 的开头，但第 4 条换成 bl（PC 相对） */
+    memcpy(m + 256, HL_SNAP_HEAD, sizeof HL_SNAP_HEAD);
+    const uint32_t bl = 0x97fffffdu;
+    memcpy(m + 256 + 12, &bl, 4);
+    uint8_t before[20];
+    memcpy(before, m + 256, 20);
+    CHECK(mprotect(m, (size_t)page, PROT_READ | PROT_EXEC) == 0);
+    void *handler = (void *)(uintptr_t)0x00005555deadbeefULL, *stub = NULL;
+    uint32_t expect[5];
+    cj_build_far_jump(expect, handler);
+
+    CHECK(cj_patch_target(m + 64, handler, CJ_FAR_JUMP_LEN, "test-hl", &stub) == 1);
+    CHECK(memcmp(m + 64, expect, CJ_FAR_JUMP_LEN) == 0);
+    CHECK(stub != NULL && memcmp(stub, HL_SNAP_HEAD, sizeof HL_SNAP_HEAD) == 0);
+
+    void *stub2 = (void *)0x1;
+    CHECK(cj_patch_target(m + 256, handler, CJ_FAR_JUMP_LEN, "test-pcrel", &stub2) == 0);
+    CHECK(memcmp(m + 256, before, 20) == 0);   /* 一个字节都没改 */
+    CHECK(stub2 == (void *)0x1);               /* 没分配调用桩、没写 *out_stub */
+    char p[5];
+    perms_of(m, p);
+    CHECK(strncmp(p, "r-x", 3) == 0);          /* 页恢复原权限，不留 rwx */
+    munmap(m, (size_t)page);
+}
+
 int main(void) {
+    test_minijson_bool();
+    test_minijson_string();
+
     test_pattern_unique_hit();
     test_pattern_zero_hits_fails();
     test_pattern_multi_hits_fails();
@@ -463,6 +585,9 @@ int main(void) {
     test_patch_target_restores_rx();
     test_patch_target_keeps_existing_rwx();
     test_patch_target_stub_alloc_fail_restores_rx();
+
+    test_insn_pc_relative_classification();
+    test_patch_target_accepts_hl_snap_head_refuses_pc_relative();
 
     if (failures == 0) {
         printf("OK: 全部通过\n");

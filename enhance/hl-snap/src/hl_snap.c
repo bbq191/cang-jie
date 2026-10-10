@@ -24,6 +24,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include "minijson.h"
 #include "scan.h"
 #include "pattern.h"
 #include "trampoline_aarch64.h"
@@ -35,7 +36,9 @@
 
 /* Step HL2：荧光笔"吸整行"元凶——命中区间向两边扩张的函数（.169 FUN_00f05ad0，
  * 中文实测走这条：对每个子区间调 FUN_00f052f0 扩 start/end）→ 整行；对无空格
- * 中文就是"划一小段吸整行"的病根。前 20 字节纯栈/寄存器可安全 patch；offset 32
+ * 中文就是"划一小段吸整行"的病根。前 20 字节纯栈/寄存器可安全 patch（paciasp / stp / mov / str / mov，
+ * 2026-10-10 对 3.28.0.172 的 xochitl 用 objdump 反汇编 0xf03670 再核过；cj_patch_target 现在也会自己拒绝
+ * PC 相对指令，见 shared/trampoline_aarch64.h 的 cj_insn_pc_relative）；offset 32
  * 的 CBZ 在 patch 区外、同版本固定，精确匹配。x0=scene，x1=range 向量。
  * 逐字节抄自 chinese-ime/langhook/src/hook_init.c 的 PROLOGUE_HL_EXPAND，
  * 2026-09-09 真机在 3.28.0.172 上复核过这段特征码仍唯一命中（不是固件迁移偏移
@@ -78,8 +81,9 @@ static int cj_hl_glyph_is_cjk(long scene, int idx) {
 
 /* 运行时开关：从 reading-qol.json 读 hlSnapCjk 到 g_hl_expand_neuter（设置页
  * 「笔记增强」/shelf 网页「管理→系统增强」都写这同一个键，两边改哪边都算数）。
- * 划线才调，非热路径，每次读一次即可，无需 mtime。极简字段扫描、不引 JSON 库。
- * fail-safe：文件缺失/字段缺失/读失败 → 不改，保持编译期默认（修复开）。 */
+ * 划线才调，非热路径，每次读一次即可，无需 mtime。解析用 shared/minijson（2026-10-10 起；
+ * 以前是这里的 strstr 扫描，值恰好等于键名、或嵌套对象里有同名键时会认错）。
+ * fail-safe：文件缺失/字段缺失/读失败/不是布尔 → 不改，保持当前值（初始为修复开）。 */
 static void cj_hl_refresh_config(void) {
     FILE *f = fopen(CJ_READING_QOL_PATH, "rb");
     if (!f) return;
@@ -87,12 +91,7 @@ static void cj_hl_refresh_config(void) {
     size_t n = fread(buf, 1, sizeof(buf) - 1, f);
     fclose(f);
     buf[n] = '\0';
-    const char *p = strstr(buf, "\"hlSnapCjk\"");
-    if (!p) return;
-    p += 11;  /* 跳过 "hlSnapCjk" 本身（含两个引号，共 11 字节） */
-    while (*p == ':' || *p == ' ' || *p == '\t') p++;
-    if (strncmp(p, "true", 4) == 0) g_hl_expand_neuter = 1;
-    else if (strncmp(p, "false", 5) == 0) g_hl_expand_neuter = 0;
+    cj_json_get_bool(buf, "hlSnapCjk", &g_hl_expand_neuter);
 }
 
 static void cj_hl_expand_handler(long scene, void *rng_v) {

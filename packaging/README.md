@@ -85,7 +85,7 @@ sh uninstall-all.sh <host> --skip chrony-boot-wakelock,wifi-watch,xovi-persist,h
 
 | 保护 | 做法 | 防的是什么 |
 |---|---|---|
-| 设备端脚本整组传输 | `lib.sh` 的 `dev_pipe` 把整段设备端脚本包成 `{ …; } </dev/null` 再经 `ssh sh -s` 送上去；`dev_script`（拼上 `devlib.sh`）和 `chrony-cn` / `timezone-cn` 都走它 | shell 要读到配对的 `}` 才开始执行：传输断在半截只会是语法错误、**一条都不执行**，不会"前半截已执行"。组内标准输入是 `/dev/null`，读 stdin 的子命令不会再把后面没执行的脚本当输入吃掉 |
+| 设备端脚本整组传输 | `lib.sh` 的 `dev_pipe` 把整段设备端脚本包成 `{ …; } </dev/null` 再经 `ssh sh -s` 送上去；`dev_script`（拼上 `devlib.sh`）走它；`chrony-cn` / `timezone-cn` 10-10 起也经 `dev_script` 送（要用库里的 `cj_etc_lower_edit`），手动跑写成 `cat packaging/devlib.sh packaging/chrony-cn.sh \| ssh root@<host> sh -s` | shell 要读到配对的 `}` 才开始执行：传输断在半截只会是语法错误、**一条都不执行**，不会"前半截已执行"。组内标准输入是 `/dev/null`，读 stdin 的子命令不会再把后面没执行的脚本当输入吃掉 |
 | ssh 保活 | `CJ_SSH_OPTS` 加 `ServerAliveInterval=5`、`ServerAliveCountMax=3` | 连上之后设备休眠、拔线、WiFi 掉了，TCP 收不到断开通知，旧版 ssh/scp 会无限挂着；现在约 15 秒判定断线并报错。设备端命令长时间不输出（装书架、等重启）不受影响 |
 | 部署期唤醒锁 | 顶层编排者（`install-all` / `uninstall-all` / 单独跑的 `deploy.sh`）开始时 `device_awake_hold` 往 `/sys/power/wake_lock` 写一把名为 `cangjie-deploy`、**带超时**的锁（`CJ_AWAKE_SECS`=1200 秒），结束时 `device_awake_release` 放掉；被编排的子脚本见到 `CJ_AWAKE_HELD` 就不再各拿各放 | 设备在两次 ssh 之间自动休眠。到点内核自动释放，电脑被 Ctrl-C、断网、崩掉，设备最多多醒 20 分钟；最后一步整机重启时锁随之消失，脚本不再连回去放。设备没有该接口时什么都不做；`CJ_AWAKE=0` 关掉 |
 
@@ -201,7 +201,7 @@ sh verify-on-device.sh --from d.txt        # 不连设备，离线重判存下�
 | `devlib.sh` | **设备侧**共用库（POSIX sh，兼容 busybox）：rootfs 读写窗口（remount rw 后无论成败、被信号打断都恢复 ro，含 ssh 断连的 SIGPIPE）、`cj_safe_replace` 原子替换（不在运行中进程已映射的 inode 上原地写）、备份与轮转、`cj_backup_if_differs`、`/usr` 单元的安装/删除（先过 dm-verity 门）、待生效标记 `cj_pending_mark`/`_list`/`_clear` 与 `cj_apply_needed`、待换入区 `cj_so_stage`/`_unstage`/`_commit`、`cj_xochitl_apply`/`cj_xochitl_health` |
 | `deploy-usr-unit.sh` | 把一个 systemd 单元装进设备 `/usr` 的统一部署器；`deploy-chrony-boot-wakelock.sh` / `deploy-xovi-persist.sh` / `deploy-wifi-watch.sh` 是它的薄包装 |
 | `deploy-xovi-ext.sh` + `xovi-ext-install.sh` | 装一个独立 xovi 扩展：host 侧构建+推送 / 设备侧安装流程。`deploy-hl-snap.sh`、`deploy-ui-font.sh` 是薄包装（`deploy-xovi-ext.sh hw-stroke` 报"已移除"退出 2）；各扩展的 `deploy/install.sh` 只剩数据（名字、配置键、`EXT_MAPTAG`＝`maps` 里确认已加载用的正则，带 `.so` 免得同名目录或配置文件被误算）并 source `xovi-ext-install.sh` |
-| `deploy.sh` | shelf 整包部署：组载荷 → 本地打 tar → 推到设备 `shelf-pkg.new`，确认有 `install.sh` 才换掉 `shelf-pkg` → 设备端 `install.sh`。`--password` 经标准输入走 0600 临时文件，不上命令行，装完无论成败都清掉；`--only` 的选服务规则与设备端共用 `shelf/manifest.sh` 的 `shelf_select`；载荷只带要装的服务的二进制与单元，推送前核对都在（缺了指路 `sh shelf/build.sh`） |
+| `deploy.sh` | shelf 整包部署：组载荷 → 本地打 tar → 推到设备（`lib.sh` 的 `push_tar_verified`：tar 先落盘 `shelf-pkg.tar.new`，md5 与本地一致、解到 `shelf-pkg.new` 后有 `install.sh` 才换掉 `shelf-pkg`，否则删半成品、旧的不动；10-10 起加 md5，之前只看有没有 `install.sh`）→ 设备端 `install.sh`。`--password` 经标准输入走 0600 临时文件，不上命令行，装完无论成败都清掉；`--only` 的选服务规则与设备端共用 `shelf/manifest.sh` 的 `shelf_select`；载荷只带要装的服务的二进制与单元，推送前核对都在（缺了指路 `sh shelf/build.sh`） |
 | `deploy-xovi-apply.sh` / `deploy-chrony-cn.sh` / `deploy-timezone-cn.sh` | 各自的部署脚本（都支持 `-h`，未知/多余参数退出 2，ssh 不通中文报错退出 1） |
 | `verify-on-device.sh` | 部署后只读核对（见上） |
 | `firmware-allowlist.txt` / `firmware-allowlist.local.txt` | 固件白名单：仓库里被 git 跟踪的一份 + 本机一份（`--force` 追加到后者，已 gitignore） |
@@ -264,6 +264,7 @@ sh verify-on-device.sh --from d.txt        # 不连设备，离线重判存下�
 - 设备上被覆盖的旧文件统一备份进 `/home/root/cangjie-backups/`。**绝不留在 `extensions.d/` 里**——xovi 把该目录下任意文件当扩展加载，同名重复注册是致命错误（2026-08-15 踩过）。单文件备份名 `<basename>.bak.pre-<时间戳>`，目录型（shelf）`shelf-<时间戳>/`。
 - 只保留最近 5 份（`CJ_BACKUP_KEEP`），只轮转脚本自己生成的严格时间戳命名备份；单文件超过 64MB（`CJ_BACKUP_MAXBYTES`）不自动删；手工命名的备份与用户数据一律不碰；全程无 `rm -rf`。
 - **内容没变就不备份、不重启服务**（`cj_backup_if_differs` 用 `cmp` 对拍）。否则重复部署 5 次，就会把真正有价值的旧版本挤出"最近 5 份"。
+- **改 rootfs 一律走 `devlib.sh` 的两个窗口函数**：写 `/usr` 用 `cj_with_rootfs_rw`，改 `/etc` 的下层（rootfs 里的 `/etc`，`chrony-cn` / `timezone-cn`）用 `cj_etc_lower_edit NAME FUNC`（10-10 收进库，此前两脚本各自内联一份）：remount rw → bind `/` 到 `${CJ_TMPDIR:-/tmp}/NAME.rootbind` → 在当前 shell 跑 FUNC → sync → 卸 bind → remount ro（busy 重试 5 次）；FUNC 失败、`exit`、被信号打断（含 ssh 断开的 SIGPIPE）都会卸 bind、恢复 ro；dm-verity 激活返回 3、什么都不动。模拟测试的静态守卫只允许 `remount,rw` 出现在 `devlib.sh`。
 - **写 `/usr` 前先过 dm-verity 门**（`deploy-usr-unit.sh`；09-30 前 `battop` 的设备端 `install.sh` 同一规则，battop 已移除）。verity 激活时：该单元**从没装过** → 什么都不写，汇总记"前置条件不满足"；**以前装过** → `/usr` 里的单元不动，`/home` 下的脚本或二进制照常更新，内容真有变化、且该单元应在运行（`wifi-watch`）或正在运行（`battop`）时 `systemctl restart` 它，让它用上新版。`battop` 这一支 2026-09-25 前直接退出，在跑的服务一直用旧二进制。
 
 ## 开机启动顺序（2026-09-24）

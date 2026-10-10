@@ -6,8 +6,9 @@
 # 直接复用同一套已经真机验证过的 remount+bind 手法，不发明新机制）——两者拆成独立脚本只是
 # 职责单一，install-all.sh 里各自可以单独 --skip。
 #
-# 用法（root，设备上跑）：  ssh root@10.11.99.1 sh -s < packaging/timezone-cn.sh
-#   （host 侧也可以用 packaging/deploy-timezone-cn.sh <host> 跑这条命令）
+# 用法：packaging/deploy-timezone-cn.sh [host]（install-all.sh 也是调它）。手动跑要先拼上设备侧函数库 devlib.sh
+#   （改 rootfs 底层的 rw/bind 窗口在库里，见 cj_etc_lower_edit，2026-10-10 起与 chrony-cn.sh 共用）：
+#     cat packaging/devlib.sh packaging/timezone-cn.sh | ssh root@10.11.99.1 sh -s
 # 幂等：底层已指向 Asia/Shanghai 就不再写。
 #
 # ⚠️ 不直接指望 `timedatectl set-timezone`——即便这条命令存在，它改的也只是 /etc/localtime 这个
@@ -25,8 +26,8 @@ TARGET="${CJ_ZONEINFO:-/usr/share/zoneinfo/Asia/Shanghai}"
 LOCALTIME="${CJ_LOCALTIME:-/etc/localtime}"
 BK_DIR="${CJ_BACKUP_DIR:-/home/root/cangjie-backups}"
 MOUNTS="${CJ_MOUNTS:-/proc/mounts}"
-BIND="${CJ_TMPDIR:-/tmp}/timezone-cn.rootbind"
 
+command -v cj_etc_lower_edit >/dev/null 2>&1 || { echo "!! 缺 devlib.sh：cat packaging/devlib.sh packaging/timezone-cn.sh | ssh root@10.11.99.1 sh -s"; exit 1; }
 [ "$(id -u)" = "0" ] || { echo "!! 需 root"; exit 1; }
 if [ ! -e "$TARGET" ]; then
     echo "⚠ 设备镜像没有 $TARGET（缺 tzdata？），跳过时区设置，不影响其它安装步骤"
@@ -47,36 +48,28 @@ prev_desc() { # $1=路径：人读的"改之前是什么"，写进备份记录
 }
 
 changed=0
-RW_OPEN=0
+# 在 rootfs 底层的 /etc 里改（cj_etc_lower_edit 已 remount rw + bind，CJ_LOWER=绑定点；结束后它负责卸 bind、恢复 ro）
+edit_lower() {
+    LOWER="$CJ_LOWER/etc/localtime"
+    if is_shanghai "$LOWER"; then
+        echo "-- rootfs 底层已是 Asia/Shanghai，跳过"
+        return 0
+    fi
+    mkdir -p "$BK_DIR"
+    echo "$(date +%Y%m%d-%H%M%S) /etc/localtime 改前：$(prev_desc "$LOWER")" >> "$BK_DIR/timezone-cn.log"
+    # 失败要如实报错退出——旧版不看返回值，写失败也打印"已改"（2026-09-25 审计）
+    { ln -sfn "$TARGET" "$LOWER" && sync; } || { echo "!! 改 rootfs 底层 /etc/localtime 失败（底层未动）"; return 1; }
+    echo "-- rootfs 底层已改（记录见 $BK_DIR/timezone-cn.log）"
+    changed=1
+}
 if grep -q " /etc overlay " "$MOUNTS"; then
-    # ── overlay：改 rootfs 底层 ──
-    if dmsetup ls --target verity 2>/dev/null | grep -q .; then
-        echo "✋ dm-verity 激活，rootfs 不可写：只改本次开机的 overlay 视图（重启会丢）"
-    else
-        mount -o remount,rw / || { echo "!! remount rw / 失败"; exit 1; }
-        # 2026-09-20：rw 窗口内被 kill/ssh 断开时也要恢复 ro（先卸 bind，否则 remount ro 会 busy）
-        RW_OPEN=1
-        trap 'if [ "$RW_OPEN" = "1" ]; then umount "$BIND" 2>/dev/null; mount -o remount,ro / 2>/dev/null; fi' EXIT
-        trap 'exit 143' INT TERM HUP PIPE   # PIPE：ssh 断开后写输出会收到它，不接住就不走 EXIT trap、rootfs 留在 rw
-        mkdir -p "$BIND" && mount --bind / "$BIND" || { mount -o remount,ro / 2>/dev/null; echo "!! bind / 失败"; exit 1; }
-        LOWER="$BIND/etc/localtime"
-        if is_shanghai "$LOWER"; then
-            echo "-- rootfs 底层已是 Asia/Shanghai，跳过"
-        else
-            mkdir -p "$BK_DIR"
-            echo "$(date +%Y%m%d-%H%M%S) /etc/localtime 改前：$(prev_desc "$LOWER")" >> "$BK_DIR/timezone-cn.log"
-            # 失败要如实报错退出（EXIT trap 卸 bind、恢复 ro）——旧版不看返回值，写失败也打印"已改"（2026-09-25 审计）
-            ln -sfn "$TARGET" "$LOWER" && sync || { echo "!! 改 rootfs 底层 /etc/localtime 失败（底层未动）"; exit 1; }
-            echo "-- rootfs 底层已改（记录见 $BK_DIR/timezone-cn.log）"
-            changed=1
-        fi
-        umount "$BIND"; rmdir "$BIND" 2>/dev/null
-        i=0
-        while ! mount -o remount,ro / 2>/dev/null; do
-            i=$((i + 1)); [ "$i" -ge 5 ] && { echo "⚠ remount ro / 一直 busy，rootfs 暂留 rw（重启恢复 ro）"; break; }
-            sleep 2
-        done
-        [ "$i" -lt 5 ] && RW_OPEN=0
+    # ── overlay：改 rootfs 底层（dm-verity 激活时返回 3：只改下面的当前视图，重启会丢）──
+    rc=0
+    cj_etc_lower_edit timezone-cn edit_lower || rc=$?
+    if [ "$rc" = 3 ]; then
+        echo "   只改本次开机的 overlay 视图（重启会丢）"
+    elif [ "$rc" != 0 ]; then
+        exit 1
     fi
 fi
 # overlay 当前视图跟底层不一致（overlay 缓存旧值）→ 直接改当前视图让本次开机立即生效

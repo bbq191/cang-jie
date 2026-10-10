@@ -18,3 +18,10 @@
 void cj_build_far_jump(uint32_t out[5], const void *target);
 
 #define CJ_FAR_JUMP_LEN (5 * 4) /* 字节数，5 条指令 */
+
+/* insn 是否是 PC 相对寻址的指令（结果依赖指令自身所在地址）：ADR/ADRP、B/BL、B.cond/BC.cond、CBZ/CBNZ、
+ * TBZ/TBNZ、CB<cc>（FEAT_CMPBR）、LDR/LDRSW/PRFM (literal)。这类指令原样搬进调用桩后，算出来的地址/跳转目标
+ * 是相对调用桩的，全错——cj_patch_target 搬运前用它检查，命中就放弃 hook（2026-10-10，审计 EN-2）。
+ * 宁可误判（放弃一个其实能装的 hook）也不漏判：寄存器间接跳转 BR/BLR/RET 不算（BLR 写进 LR 的返回地址落在调用桩里，
+ * 被调函数返回后接着执行桩里后面的指令，再跳回原函数，结果正确）。 */
+int cj_insn_pc_relative(uint32_t insn);
