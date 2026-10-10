@@ -23,17 +23,20 @@ pub struct Module {
     /// 该服务是否提供 `GET /events`（SSE）。网关只给提供的服务起订阅线程：mind-serve 是纯被动的
     /// 问答服务（没有事件流，见其 main.rs 头注），此前网关对它每 3 秒打一个 404、白白唤醒它。
     pub events: bool,
+    /// 收到该服务的事件时还要叫醒的网关内部等待方（`events::spawn` 的订阅线程调用）。目前只有 book-serve：批量队列等
+    /// "这本书处理完没有"靠它（`batch::poll_until_settled`）。2026-10-10 前是汇聚循环里写死 `seg == "books"`。
+    pub wake: Option<fn() -> &'static crate::events::Wake>,
 }
 
 pub const MODULES: &[Module] = &[
-    Module { seg: "books", service: "book-serve", only: "book", label: "母版库 / 落原生", events: true },
-    Module { seg: "fonts", service: "font-serve", only: "font", label: "xochitl 字体", events: true },
-    Module { seg: "wallpapers", service: "wallpaper-serve", only: "wallpaper", label: "壁纸", events: true },
+    Module { seg: "books", service: "book-serve", only: "book", label: "母版库 / 落原生", events: true, wake: Some(crate::events::books_wake) },
+    Module { seg: "fonts", service: "font-serve", only: "font", label: "xochitl 字体", events: true, wake: None },
+    Module { seg: "wallpapers", service: "wallpaper-serve", only: "wallpaper", label: "壁纸", events: true, wake: None },
     // 笔记线（notes/）：矿 / 转写 / 脑 / 本，挂同一网关；网页只有 note-serve 注册「笔记」tab，前端组合四个 seg。
-    Module { seg: "ink", service: "ink-serve", only: "ink", label: "笔记·矿（条目库）", events: true },
-    Module { seg: "transcribe", service: "transcribe-serve", only: "transcribe", label: "笔记·转写（手写→文字）", events: true },
-    Module { seg: "mind", service: "mind-serve", only: "mind", label: "笔记·脑（问AI）", events: false },
-    Module { seg: "notes", service: "note-serve", only: "note", label: "笔记·本（笔记本/导出）", events: true },
+    Module { seg: "ink", service: "ink-serve", only: "ink", label: "笔记·矿（条目库）", events: true, wake: None },
+    Module { seg: "transcribe", service: "transcribe-serve", only: "transcribe", label: "笔记·转写（手写→文字）", events: true, wake: None },
+    Module { seg: "mind", service: "mind-serve", only: "mind", label: "笔记·脑（问AI）", events: false, wake: None },
+    Module { seg: "notes", service: "note-serve", only: "note", label: "笔记·本（笔记本/导出）", events: true, wake: None },
 ];
 
 pub fn by_seg(seg: &str) -> Option<&'static Module> {
@@ -209,6 +212,13 @@ mod tests {
         // mind-serve 没有 /events 路由；其余都有。表和服务真实情况不一致会让网关白打 404（耗电）或漏掉事件。
         let no: Vec<&str> = MODULES.iter().filter(|m| !m.events).map(|m| m.service).collect();
         assert_eq!(no, ["mind-serve"]);
+    }
+    /// 只有 book-serve 的事件要叫醒批量队列的等待方（批量队列只处理母版库的书）。
+    #[test]
+    fn only_book_serve_wakes_batch_queue() {
+        let w: Vec<&str> = MODULES.iter().filter(|m| m.wake.is_some()).map(|m| m.service).collect();
+        assert_eq!(w, ["book-serve"]);
+        assert!(std::ptr::eq(by_seg("books").unwrap().wake.unwrap()(), crate::events::books_wake()));
     }
     #[test]
     fn status_reports_three_states() {

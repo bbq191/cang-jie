@@ -36,12 +36,12 @@ pub fn books_wake() -> &'static Wake {
 pub fn spawn(paths: Arc<Paths>) -> Arc<EventBus> {
     let bus = Arc::new(EventBus::new());
     for m in crate::manage::MODULES.iter().filter(|m| m.events) {
-        let (bus, paths, seg, svc) = (bus.clone(), paths.clone(), m.seg, m.service);
+        let (bus, paths, seg, svc, wake) = (bus.clone(), paths.clone(), m.seg, m.service, m.wake);
         std::thread::spawn(move || {
             follow(&paths, svc, |json| {
                 bus.publish_raw(&tag_svc(json, seg));
-                if seg == "books" {
-                    books_wake().bump();
+                if let Some(w) = wake {
+                    w().bump();
                 }
             })
         });

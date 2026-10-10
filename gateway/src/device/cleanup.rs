@@ -53,6 +53,9 @@ pub fn list_files(paths: &Paths) -> Vec<LeftoverFile> {
 }
 
 /// 单段文件名：非空、不是 `.`/`..`、不含 `/` `\` NUL。**只看形状**，真正的"在不在允许目录里"由 [`resolve`] 核对。
+/// 有意不用基座的 `rmsvc_core::fs::plain_name`：那个拒绝 `.` 开头的名字（各服务的隐藏名留给半成品/边车，用户不该按名
+/// 操作它们），而这里要清的恰恰包括早期直投留下的边车 `.<书名>.delivered`——它们由 [`list_files`] 列出、用户逐个勾选。
+/// 另外这里多拒一个 NUL。
 fn single_component(name: &str) -> bool {
     !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\\', '\0'])
 }
@@ -111,7 +114,7 @@ pub struct LibraryDoc {
     pub name: String,
     /// 所在文件夹名（根目录为空）。
     pub folder: String,
-    /// `epub` / `pdf`。
+    /// `epub` / `pdf`（`rmsvc_core::formats::NATIVE_EXTS` 之一）。
     pub kind: &'static str,
     pub bytes: u64,
     /// xochitl `createdTime`（毫秒）。
@@ -133,7 +136,7 @@ pub fn list_library(xochitl_dir: &Path) -> Vec<LibraryDoc> {
         if m.is_folder() {
             folders.insert(uuid, m.visible_name);
         } else if m.is_document() {
-            let found = ["epub", "pdf"].into_iter().find_map(|k| std::fs::symlink_metadata(xochitl_dir.join(format!("{uuid}.{k}"))).ok().filter(|m| m.is_file()).map(|m| (k, m.len())));
+            let found = rmsvc_core::formats::NATIVE_EXTS.iter().find_map(|&k| std::fs::symlink_metadata(xochitl_dir.join(format!("{uuid}.{k}"))).ok().filter(|m| m.is_file()).map(|m| (k, m.len())));
             let Some((kind, bytes)) = found else { continue };
             let created_ms = m.created_ms();
             docs.push((LibraryDoc { uuid, name: m.visible_name, folder: String::new(), kind, bytes, created_ms, same_name: 0 }, m.parent));

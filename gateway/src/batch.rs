@@ -98,11 +98,12 @@ fn persist(paths: &Paths) {
     crate::events::notify_books("batch");
 }
 
-/// 这本书该动作是否有意义（跟界面批量按钮同一套资格条件）：加入 xochitl=EPUB/PDF。
+/// 这本书该动作是否有意义（跟界面批量按钮同一套资格条件）：加入 xochitl = xochitl 原生能读的格式
+/// （`rmsvc_core::formats::NATIVE_EXTS`，即 EPUB/PDF；book-serve 列表的 `format` 字段就是这几个扩展名或 `other`）。
 pub fn eligible(action: Action, item: &Value) -> bool {
     let format = item.get("format").and_then(|v| v.as_str()).unwrap_or("");
     match action {
-        Action::Deliver => format == "epub" || format == "pdf",
+        Action::Deliver => rmsvc_core::formats::NATIVE_EXTS.contains(&format),
     }
 }
 
@@ -497,6 +498,7 @@ mod tests {
         assert!(eligible(Action::Deliver, &item("epub")));
         assert!(eligible(Action::Deliver, &item("pdf")));
         assert!(!eligible(Action::Deliver, &item("cbz")), "xochitl 只收 EPUB/PDF");
+        assert!(!eligible(Action::Deliver, &item("other")), "book-serve 把格式收窄前留下的文件报成 other");
     }
 
     #[test]
