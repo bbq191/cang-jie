@@ -200,8 +200,8 @@ impl Xochitl {
         }
         match send_multipart(&self.agent, &self.host, body, body_len, filename, content_type) {
             Ok(resp) => Ok(Delivery::Delivered(resp)),
-            Err(e) if upload_likely_delivered(&e) => Ok(Delivery::LikelyDelivered(e)),
-            Err(e) => Err(e),
+            Err(e) if e.likely_delivered() => Ok(Delivery::LikelyDelivered(e.message())),
+            Err(e) => Err(e.message()),
         }
     }
 }
@@ -226,12 +226,12 @@ fn rewrite_pdf_content(dir: &Path, uuid: &str, pages: usize, size: u64) -> Resul
 /// `ureq` 按已知长度发送而不是退化成 chunked（`ureq::Request::send` 文档：调用方可设
 /// `Content-Length`，设了就不用 chunked）——线上字节序列跟改动前逐字节相同，只是不再囤在一个
 /// `Vec<u8>` 里。
-fn send_multipart(agent: &ureq::Agent, host: &str, body: impl Read, body_len: u64, filename: &str, content_type: &str) -> Result<String, String> {
+fn send_multipart(agent: &ureq::Agent, host: &str, body: impl Read, body_len: u64, filename: &str, content_type: &str) -> Result<String, UploadError> {
     let boundary = format!("----shelf{}", uuid::Uuid::new_v4().simple());
     let mut header = Vec::new();
     let filename = header_safe_filename(filename);
     write!(header, "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\nContent-Type: {content_type}\r\n\r\n")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| UploadError::Other(e.to_string()))?;
     let footer = format!("\r\n--{boundary}--\r\n").into_bytes();
     let total_len = header.len() as u64 + body_len + footer.len() as u64;
     let reader = Cursor::new(header).chain(body).chain(Cursor::new(footer));
@@ -241,9 +241,63 @@ fn send_multipart(agent: &ureq::Agent, host: &str, body: impl Read, body_len: u6
         .set("Content-Length", &total_len.to_string())
         .send(reader);
     match resp {
-        Ok(r) => r.into_string().map_err(|e| e.to_string()),
-        Err(ureq::Error::Status(c, r)) => Err(format!("HTTP {c}: {}", r.into_string().unwrap_or_default())),
-        Err(e) => Err(format!("上传失败: {e}")),
+        // 已经拿到 2xx：书一定进库了，读应答体出错（读超时、连接被断）也只是回执不全，按"很可能已送达"处理，绝不重试。
+        Ok(r) => r.into_string().map_err(|e| UploadError::AfterSuccess(e.to_string())),
+        Err(ureq::Error::Status(c, r)) => Err(UploadError::Status(c, r.into_string().unwrap_or_default())),
+        Err(ureq::Error::Transport(t)) => Err(UploadError::classify_transport(&t)),
+    }
+}
+
+/// `/upload` 失败的分类（按 `ureq::Error` 的种类判，不再把错误拼成字符串后找 `408`/`timeout` 子串——
+/// xochitl 回 5xx 且响应体里带这些字样时会被误判成"已送达"、不重试，2026-10-10 审计 CORE-8）。
+#[derive(Debug, PartialEq)]
+enum UploadError {
+    /// xochitl 回了非 2xx：状态码 + 响应体。408 = 它自己处理超时（大书），文档已建好。
+    Status(u16, String),
+    /// 连接阶段失败（DNS / 连不上 / 连接超时）：请求根本没送到，可安全重试。
+    Connect(String),
+    /// 连上之后读写超时：请求已经送到，xochitl 处理大书慢——很可能已创建文档。
+    Timeout(String),
+    /// 已收到 2xx，读应答体时出错。
+    AfterSuccess(String),
+    /// 其它（连接中途被断、应答格式坏……）：不确定是否送达，按失败处理（与改动前一致）。
+    Other(String),
+}
+
+impl UploadError {
+    fn classify_transport(t: &ureq::Transport) -> UploadError {
+        let msg = format!("上传失败: {t}");
+        match t.kind() {
+            ureq::ErrorKind::Dns | ureq::ErrorKind::ConnectionFailed | ureq::ErrorKind::InvalidUrl | ureq::ErrorKind::UnknownScheme => UploadError::Connect(msg),
+            ureq::ErrorKind::Io if Self::is_timeout(t) => UploadError::Timeout(msg),
+            _ => UploadError::Other(msg),
+        }
+    }
+
+    /// 传输错误的根源是 I/O 超时（ureq 把读超时的 WouldBlock 归一成 TimedOut；写超时同样是 TimedOut/WouldBlock）。
+    fn is_timeout(t: &ureq::Transport) -> bool {
+        let mut cur: Option<&(dyn std::error::Error + 'static)> = std::error::Error::source(t);
+        while let Some(e) = cur {
+            if let Some(io) = e.downcast_ref::<std::io::Error>() {
+                return matches!(io.kind(), std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock);
+            }
+            cur = e.source();
+        }
+        false
+    }
+
+    /// 是否属于"很可能已送达"（防复制风暴：这类错误绝不重试）。
+    fn likely_delivered(&self) -> bool {
+        matches!(self, UploadError::Status(408, _) | UploadError::Timeout(_) | UploadError::AfterSuccess(_))
+    }
+
+    /// 给人看的文案（与改动前的字符串格式一致：`HTTP <码>: <体>` / `上传失败: <原因>`）。
+    fn message(self) -> String {
+        match self {
+            UploadError::Status(c, body) => format!("HTTP {c}: {body}"),
+            UploadError::Connect(m) | UploadError::Timeout(m) | UploadError::Other(m) => m,
+            UploadError::AfterSuccess(m) => format!("已送达，读回执失败: {m}"),
+        }
     }
 }
 
@@ -257,12 +311,6 @@ fn header_safe_filename(name: &str) -> String {
         '\r' | '\n' => ' ',
         c => c,
     }).collect()
-}
-
-/// 错误是否属于"很可能已送达"（408/读超时且非连接阶段）。
-pub fn upload_likely_delivered(err: &str) -> bool {
-    let e = err.to_ascii_lowercase();
-    (e.contains("408") || e.contains("timed out") || e.contains("timeout")) && !e.contains("connect")
 }
 
 #[cfg(test)]
@@ -505,12 +553,56 @@ mod tests {
         assert_eq!(header_safe_filename("镖人 - 01卷.epub"), "镖人 - 01卷.epub", "普通名字原样");
     }
 
+    /// 回归：xochitl 回 5xx、响应体里恰好带 "timeout" 字样时，不能当成"很可能已送达"（那样调用方不会重试，
+    /// 书其实没进库）。此前把错误拼成 `"HTTP 500: …"` 字符串再找 `timeout` 子串，就会误判。
+    #[test]
+    fn server_error_mentioning_timeout_is_not_likely_delivered() {
+        let lib = tempfile::tempdir().unwrap();
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let addr = server.server_addr().to_ip().unwrap().to_string();
+        std::thread::spawn(move || {
+            for mut req in server.incoming_requests() {
+                std::io::Read::read_to_end(req.as_reader(), &mut Vec::new()).unwrap();
+                let (code, body) = if req.method() == &tiny_http::Method::Post { (500, "upstream timeout while importing") } else { (200, "{}") };
+                let _ = req.respond(tiny_http::Response::from_string(body).with_status_code(code));
+            }
+        });
+        let x = Xochitl::new(&addr, lib.path(), 5);
+        let r = x.upload_into(b"PK\x03\x04", "a.epub", "application/epub+zip", "");
+        assert!(matches!(&r, Err(e) if e.contains("HTTP 500") && e.contains("timeout")), "5xx 是明确的失败，应可重试: {r:?}");
+    }
+
     #[test]
     fn classifies_upload_errors() {
-        assert!(upload_likely_delivered("HTTP 408: 408 request timeout"));
-        assert!(upload_likely_delivered("上传失败: timed out reading response"));
-        assert!(!upload_likely_delivered("上传失败: Connection refused (os error 111)"));
-        assert!(!upload_likely_delivered("上传失败: connect timed out"));
+        assert!(UploadError::Status(408, "408 request timeout".into()).likely_delivered());
+        assert!(!UploadError::Status(500, "upstream timeout".into()).likely_delivered(), "5xx 不论体里写什么都是失败");
+        assert!(!UploadError::Status(504, "Gateway Timeout".into()).likely_delivered());
+        assert!(UploadError::Timeout("上传失败: timed out reading response".into()).likely_delivered());
+        assert!(UploadError::AfterSuccess("x".into()).likely_delivered());
+        assert!(!UploadError::Connect("上传失败: connect timed out".into()).likely_delivered());
+        assert!(!UploadError::Other("上传失败: connection reset".into()).likely_delivered());
+        assert_eq!(UploadError::Status(500, "boom".into()).message(), "HTTP 500: boom", "文案格式不变");
+    }
+
+    /// 真实传输错误的分类：连不上 → 失败可重试；连上后 xochitl 迟迟不回（大书处理慢）→ 读超时 → 很可能已送达。
+    #[test]
+    fn transport_errors_classified_by_kind() {
+        let lib = tempfile::tempdir().unwrap();
+        let refused = Xochitl::new("127.0.0.1:1", lib.path(), 2).upload_into(b"x", "a.pdf", "application/pdf", "");
+        assert!(matches!(&refused, Err(e) if e.starts_with("上传失败")), "{refused:?}");
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let addr = server.server_addr().to_ip().unwrap().to_string();
+        std::thread::spawn(move || {
+            for mut req in server.incoming_requests() {
+                std::io::Read::read_to_end(req.as_reader(), &mut Vec::new()).unwrap();
+                if req.method() == &tiny_http::Method::Post {
+                    std::thread::sleep(std::time::Duration::from_millis(2500)); // 比客户端 1 秒超时长
+                }
+                let _ = req.respond(tiny_http::Response::from_string("{}"));
+            }
+        });
+        let slow = Xochitl::new(&addr, lib.path(), 1).upload_into(b"x", "a.pdf", "application/pdf", "");
+        assert!(matches!(&slow, Ok(Delivery::LikelyDelivered(_))), "{slow:?}");
     }
 }
 
