@@ -107,16 +107,44 @@ pub fn missing_units(paths: &Paths, unit_dir: &Path) -> Vec<String> {
     want.into_iter().filter(|u| !unit_dir.join(u).is_file()).collect()
 }
 
+/// 命中的判据代码：网页按代码出中英文案（语言包 `ota.reason.<代码>`，`ui.rs` 的测试遍历 [`Reason::ALL`] 核对键都在）。
+#[derive(Serialize, Debug, PartialEq, Clone, Copy)]
+#[serde(rename_all = "kebab-case")]
+pub enum Reason {
+    UnitsMissing,
+    XoviInactive,
+    FirmwareUnknown,
+}
+
+impl Reason {
+    #[cfg(test)]
+    pub const ALL: &'static [Reason] = &[Reason::UnitsMissing, Reason::XoviInactive, Reason::FirmwareUnknown];
+}
+
+/// 恢复建议：`full`（OTA 恢复全流程）/ `xovi`（只是 xovi 没生效）/ 空串（不需要恢复）。网页按它选 `ota.recovery.<值>` 文案与命令。
+#[derive(Serialize, Debug, PartialEq, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
+pub enum Recovery {
+    Full,
+    Xovi,
+    #[serde(rename = "")]
+    None,
+}
+
+impl Recovery {
+    /// 网页要出文案的那几种（`None` 不显示横幅，没有文案）。
+    #[cfg(test)]
+    pub const SHOWN: &'static [Recovery] = &[Recovery::Full, Recovery::Xovi];
+}
+
 #[derive(Serialize, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Check {
     /// 页头要不要显示"需要重新安装"横幅。
     pub needs_reinstall: bool,
-    /// 命中的判据代码（前端按代码出中英文案）：`units-missing` / `xovi-inactive` / `firmware-unknown`。
-    pub reasons: Vec<&'static str>,
+    pub reasons: Vec<Reason>,
     pub missing_units: Vec<String>,
-    /// 恢复建议：`full`（OTA 恢复全流程）/ `xovi`（只是 xovi 没生效）/ 空。
-    pub recovery: &'static str,
+    pub recovery: Recovery,
     pub firmware: Firmware,
 }
 
@@ -124,16 +152,16 @@ pub struct Check {
 pub fn decide(missing: Vec<String>, xochitl: bool, xovi: bool, fw: Firmware) -> Check {
     let mut reasons = Vec::new();
     if !missing.is_empty() {
-        reasons.push("units-missing");
+        reasons.push(Reason::UnitsMissing);
     }
     if xochitl && !xovi {
-        reasons.push("xovi-inactive");
+        reasons.push(Reason::XoviInactive);
     }
     let needs = !reasons.is_empty();
     if needs && matches!(fw, Firmware::Done { known: false, .. }) {
-        reasons.push("firmware-unknown");
+        reasons.push(Reason::FirmwareUnknown);
     }
-    let recovery = if !missing.is_empty() { "full" } else if needs { "xovi" } else { "" };
+    let recovery = if !missing.is_empty() { Recovery::Full } else if needs { Recovery::Xovi } else { Recovery::None };
     Check { needs_reinstall: needs, reasons, missing_units: missing, recovery, firmware: fw }
 }
 
@@ -195,17 +223,20 @@ mod tests {
         let known = Firmware::Done { sha256: "x".into(), known: true, label: String::new(), millis: 1 };
         let unknown = Firmware::Done { sha256: "y".into(), known: false, label: String::new(), millis: 1 };
         let ok = decide(vec![], true, true, unknown.clone());
-        assert!(!ok.needs_reinstall && ok.reasons.is_empty() && ok.recovery.is_empty(), "只有固件不在白名单：不弹横幅（--force 装过的新固件）");
+        assert!(!ok.needs_reinstall && ok.reasons.is_empty() && ok.recovery == Recovery::None, "只有固件不在白名单：不弹横幅（--force 装过的新固件）");
         let ota = decide(vec!["gateway.service".into()], true, false, unknown.clone());
         assert!(ota.needs_reinstall);
-        assert_eq!(ota.reasons, ["units-missing", "xovi-inactive", "firmware-unknown"]);
-        assert_eq!(ota.recovery, "full");
+        assert_eq!(ota.reasons, [Reason::UnitsMissing, Reason::XoviInactive, Reason::FirmwareUnknown]);
+        assert_eq!(ota.recovery, Recovery::Full);
+        let j = serde_json::to_value(&ota).unwrap();
+        assert_eq!((j["reasons"].clone(), j["recovery"].as_str()), (serde_json::json!(["units-missing", "xovi-inactive", "firmware-unknown"]), Some("full")), "线上代码与改枚举前一致");
         let xovi = decide(vec![], true, false, known.clone());
-        assert_eq!((xovi.reasons.as_slice(), xovi.recovery), (&["xovi-inactive"][..], "xovi"));
+        assert_eq!((xovi.reasons.as_slice(), xovi.recovery), (&[Reason::XoviInactive][..], Recovery::Xovi));
         let no_x = decide(vec![], false, false, Firmware::Pending);
         assert!(!no_x.needs_reinstall, "xochitl 没在跑：看不出 xovi 状态，不下结论");
+        assert_eq!(serde_json::to_value(&no_x).unwrap()["recovery"], "", "不需要恢复时是空串（与改枚举前一致）");
         let pend = decide(vec!["shelf.target".into()], true, true, Firmware::Pending);
-        assert_eq!(pend.reasons, ["units-missing"], "哈希还没算完不附固件原因");
+        assert_eq!(pend.reasons, [Reason::UnitsMissing], "哈希还没算完不附固件原因");
         let j = serde_json::to_value(&pend).unwrap();
         assert_eq!((j["needsReinstall"].as_bool(), j["firmware"]["state"].as_str()), (Some(true), Some("pending")));
         let j = serde_json::to_value(&known).unwrap();

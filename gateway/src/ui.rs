@@ -138,6 +138,41 @@ mod tests {
         assert!(!keys(&zh).is_empty());
     }
 
+    /// 网页里**动态拼接**的 i18n 键（`T('ota.reason.'+r)` 这类）：取值来自后端，后端新增一个取值、语言包忘了加，页面就会
+    /// 显示键名本身，而 node 的语言包测试只查得到字面量键（FE-3，2026-10-10）。这里遍历后端会产生的取值集合，断言两份
+    /// 语言包都有对应键。取值集合尽量直接取 Rust 常量本身；网关里没有源头的（由别的服务/脚本产生），在下面就地列出并注明出处。
+    #[test]
+    fn dynamic_i18n_keys_cover_every_backend_value() {
+        use crate::device::ota::{Reason, Recovery};
+        /// WiFi 横幅只对这两种状态出文案（`health.js` 的 `showWifiBanner`）。取值由 `packaging/wifi-watch/wifi-watch.sh`
+        /// 的 `probe()`（约 101-105 行：`ok`/`none`/`portal`）写进状态文件，网关原样转发，`ok` 与网关兜底的 `unknown` 不出横幅。
+        const WIFI_BANNER_STATES: &[&str] = &["portal", "none"];
+        /// 代理放弃记录的 `kind`：由 book-serve 产生——`shelf/services/book-serve/src/trash.rs:96` 记 `trash`、
+        /// `shelf/services/book-serve/src/mkdir.rs:151` 记 `mkdir`（`agent_failures.rs` 的 `Failure.kind` 是 String）。
+        /// 网关里没有源头，先在这里列一份；book-serve 把它收成枚举后应改为直接引用。
+        const AGENT_FAIL_KINDS: &[&str] = &["trash", "mkdir"];
+        // 按线上格式（serde）把枚举取成字符串。
+        fn ser<T: serde::Serialize>(v: &T) -> String {
+            serde_json::to_value(v).unwrap().as_str().unwrap().to_string()
+        }
+        let mut want: Vec<String> = Vec::new();
+        want.extend(Reason::ALL.iter().map(|r| format!("ota.reason.{}", ser(r))));
+        want.extend(Recovery::SHOWN.iter().map(|r| format!("ota.recovery.{}", ser(r))));
+        want.extend(crate::batch::Action::ALL.iter().map(|a| format!("stg.batch.{}", a.key())));
+        want.extend(WIFI_BANNER_STATES.iter().map(|s| format!("wifi.banner.{s}")));
+        want.extend(AGENT_FAIL_KINDS.iter().map(|k| format!("agentfail.{k}")));
+        want.extend(crate::manage::MODULES.iter().map(|m| format!("manage.modules.label.{}", m.seg)));
+        for (name, text) in [("zh-CN", super::LOCALE_ZH_CN), ("en-US", super::LOCALE_EN_US)] {
+            let v: serde_json::Value = serde_json::from_str(text).unwrap();
+            let missing: Vec<&String> = want.iter().filter(|k| v.get(k.as_str()).is_none()).collect();
+            assert!(missing.is_empty(), "{name} 语言包缺这些动态键：{missing:?}");
+        }
+        // 系统增强开关：网页 manage.js 的 TOGGLE_UI 要给 TOGGLES 里每个键配文案，否则那个开关在网页上不出现。
+        for t in crate::enhance::TOGGLES {
+            assert!(super::APP_JS.contains(&format!("\n  {}:{{panel:", t.key)), "manage.js 的 TOGGLE_UI 缺 {}", t.key);
+        }
+    }
+
     #[test]
     fn locale_json_falls_back_to_chinese_for_unknown_lang() {
         assert_eq!(super::locale_json("fr-FR"), super::LOCALE_ZH_CN);

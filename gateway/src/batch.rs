@@ -28,13 +28,13 @@ pub enum Action {
 }
 
 impl Action {
+    /// 全部动作（网页按 `stg.batch.<key>` 出标题，`ui.rs` 的测试遍历它核对语言包）。
+    pub const ALL: &'static [Action] = &[Action::Deliver];
+
     pub fn parse(s: &str) -> Option<Action> {
-        match s {
-            "deliver" => Some(Action::Deliver),
-            _ => None,
-        }
+        Action::ALL.iter().copied().find(|a| a.key() == s)
     }
-    fn key(self) -> &'static str {
+    pub fn key(self) -> &'static str {
         match self {
             Action::Deliver => "deliver",
         }
