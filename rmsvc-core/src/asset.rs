@@ -40,6 +40,33 @@ impl UploadOutcome {
     }
 }
 
+/// 上传流程（[`AssetUploadFlow`]）真正要的那一半：扩展名门、校验、安装、回执文案。`list`/`remove` 是仓库自己的
+/// 查询/删除，上传流程用不到，不该逼每个上传目标都实现（book-serve 的母版库适配器此前只好写两个死转发，审计 CORE-6）。
+/// 新的上传目标只实现这个 trait，列表/删除写成固有方法。
+pub trait UploadTarget {
+    /// 资产类型（日志/暂存文件名用），如 "font" / "wallpaper" / "book"。
+    fn kind(&self) -> &'static str;
+    /// 允许的扩展名（小写、不带点）；**空＝任意**。
+    fn allowed_ext(&self) -> &'static [&'static str];
+    /// 校验暂存文件（格式/尺寸/与内建冲突…）。缺省不校验。
+    fn validate(&self, _name: &str, _staged: &Path) -> Result<(), String> {
+        Ok(())
+    }
+    /// 安装暂存文件（移动/转换到最终位置），返回条目。暂存文件之后由流程删除（已被 rename 走也无妨）。
+    fn install(&self, name: &str, staged: &Path) -> Result<AssetItem, String>;
+    /// 扩展名不在白名单时的回执文案。
+    fn reject_message(&self) -> String {
+        format!("不支持的扩展名（允许：{}）", self.allowed_ext().join(" / "))
+    }
+    /// 安装成功的回执文案（`requested`=上传时的文件名，`item.name` 可能被仓库改名）。
+    fn success_message(&self, _requested: &str, _item: &AssetItem) -> String {
+        "已安装".into()
+    }
+}
+
+/// 上传 + 列表 + 删除的旧合体 trait。现有实现（字体 / 壁纸 / 母版库）不用改：经下面的 blanket impl 自动就是
+/// [`UploadTarget`]。新代码实现 [`UploadTarget`]；各服务迁完后这个 trait 可以删（第二阶段）。
+/// 注意：同一个类型不能既直接实现 `UploadTarget` 又实现 `AssetStore`（blanket impl 冲突）。
 pub trait AssetStore {
     /// 资产类型（日志/暂存文件名用），如 "font" / "wallpaper" / "book"。
     fn kind(&self) -> &'static str;
@@ -60,6 +87,27 @@ pub trait AssetStore {
     /// 安装成功的回执文案（`requested`=上传时的文件名，`item.name` 可能被仓库改名）。
     fn success_message(&self, _requested: &str, _item: &AssetItem) -> String {
         "已安装".into()
+    }
+}
+
+impl<T: AssetStore + ?Sized> UploadTarget for T {
+    fn kind(&self) -> &'static str {
+        AssetStore::kind(self)
+    }
+    fn allowed_ext(&self) -> &'static [&'static str] {
+        AssetStore::allowed_ext(self)
+    }
+    fn validate(&self, name: &str, staged: &Path) -> Result<(), String> {
+        AssetStore::validate(self, name, staged)
+    }
+    fn install(&self, name: &str, staged: &Path) -> Result<AssetItem, String> {
+        AssetStore::install(self, name, staged)
+    }
+    fn reject_message(&self) -> String {
+        AssetStore::reject_message(self)
+    }
+    fn success_message(&self, requested: &str, item: &AssetItem) -> String {
+        AssetStore::success_message(self, requested, item)
     }
 }
 
@@ -106,7 +154,8 @@ impl AssetUploadFlow {
     }
 
     /// 处理一整个 multipart 请求体。
-    pub fn run<R: Read>(&self, store: &dyn AssetStore, body: R, boundary: &str) -> Result<Vec<UploadOutcome>, String> {
+    /// `store` 是任何 [`UploadTarget`]（含经 blanket impl 的 [`AssetStore`]，`&dyn AssetStore` 也照样能传）。
+    pub fn run<R: Read, S: UploadTarget + ?Sized>(&self, store: &S, body: R, boundary: &str) -> Result<Vec<UploadOutcome>, String> {
         std::fs::create_dir_all(&self.tmp_dir).map_err(|e| e.to_string())?;
         let mut mp = MultipartReader::new(body, boundary);
         let mut out = Vec::new();
@@ -220,5 +269,31 @@ mod tests {
         assert_eq!(r["ok"], false);
         assert_eq!(r["items"].as_array().unwrap().len(), 5);
         assert_eq!(r["note"], "n");
+    }
+
+    /// 只实现 [`UploadTarget`]（不带 list/remove）的新式上传目标也能走流程；旧的 `&dyn AssetStore` 照样能传。
+    #[test]
+    fn flow_accepts_plain_upload_target_and_dyn_asset_store() {
+        struct Plain(PathBuf);
+        impl UploadTarget for Plain {
+            fn kind(&self) -> &'static str {
+                "plain"
+            }
+            fn allowed_ext(&self) -> &'static [&'static str] {
+                &[]
+            }
+            fn install(&self, name: &str, staged: &Path) -> Result<AssetItem, String> {
+                std::fs::copy(staged, self.0.join(name)).map(|n| AssetItem::plain(name, n)).map_err(|e| e.to_string())
+            }
+        }
+        let t = tempfile::tempdir().unwrap();
+        let flow = AssetUploadFlow::in_dir(t.path().join("tmp"));
+        let body = b"--B\r\nContent-Disposition: form-data; name=\"file\"; filename=\"x.any\"\r\n\r\nabc\r\n--B--\r\n";
+        let out = flow.run(&Plain(t.path().to_path_buf()), &body[..], "B").unwrap();
+        assert!(all_ok(&out) && out[0].message == "已安装", "{out:?}");
+        let mem = MemStore { dir: t.path().to_path_buf(), installed: Mutex::new(vec![]) };
+        let dynamic: &dyn AssetStore = &mem;
+        let body = b"--B\r\nContent-Disposition: form-data; name=\"file\"; filename=\"y.txt\"\r\n\r\nabc\r\n--B--\r\n";
+        assert!(all_ok(&flow.run(dynamic, &body[..], "B").unwrap()));
     }
 }
