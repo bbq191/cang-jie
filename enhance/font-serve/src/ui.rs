@@ -5,6 +5,7 @@
 //!     （新版设置页、对话框、标题等）。
 //!
 //! 只能选界面字体仓库（`fonts/shelf-ui/`）里的家族；阅读字体不在可选之列，界面字体也不进阅读器菜单。
+use crate::store::FontError;
 use rmsvc_core::paths::Paths;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -43,13 +44,13 @@ impl UiFont {
     }
 
     /// 改选择。`installed`：界面字体仓库现有的家族名；不在其中且非空的拒绝。
-    pub fn set(&self, sans: &str, serif: &str, installed: &[String]) -> Result<UiSelection, String> {
+    pub fn set(&self, sans: &str, serif: &str, installed: &[String]) -> Result<UiSelection, FontError> {
         for f in [sans, serif] {
             if !f.is_empty() && !installed.iter().any(|k| k == f) {
-                return Err(format!("没有这个界面字体：{f}（先上传）"));
+                return Err(FontError::Bad(format!("没有这个界面字体：{f}（先上传）")));
             }
         }
-        self.save(UiSelection { version: 1, sans: sans.into(), serif: serif.into() })
+        self.save(UiSelection { version: 1, sans: sans.into(), serif: serif.into() }).map_err(FontError::Io)
     }
 
     /// 删了某个界面字体家族：选着它的那一项退回原生。返回是否改了。
@@ -94,7 +95,7 @@ mod tests {
         assert_eq!(u.get(), UiSelection::default(), "没有文件 = 原生");
         assert!(!u.restart_needed());
         let installed = vec!["Sarasa UI SC".to_string()];
-        assert!(u.set("Nope", "", &installed).is_err(), "没装的拒绝");
+        assert!(matches!(u.set("Nope", "", &installed), Err(FontError::Bad(_))), "没装的拒绝");
         assert!(!u.restart_needed(), "拒绝时不改");
         u.set("Sarasa UI SC", "Sarasa UI SC", &installed).unwrap();
         assert!(u.restart_needed());

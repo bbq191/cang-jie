@@ -96,6 +96,19 @@ struct FontsJson {
     fonts: Vec<FontEntry>,
 }
 
+/// 字体仓库 / 界面字体选择的错误：HTTP 层按种类映射成 400 / 404 / 500（领域模块不碰 http 类型，同 book-serve 的
+/// `ImportError`）。2026-10-10 前一律是字符串、路由统一报 400，删字体文件、重写索引、存选择失败这种设备侧故障也成了
+/// "请求不对"（审计 CORE-1）。
+#[derive(Debug, PartialEq)]
+pub enum FontError {
+    /// 请求本身不对（选了没装的界面字体）→ 400。
+    Bad(String),
+    /// 没有这个字体家族 → 404。
+    NotFound(String),
+    /// 读写盘出错 → 500。
+    Io(String),
+}
+
 pub struct FontStore {
     role: Role,
     /// 中文回退加粗（墨水屏补偿）。运行时可切（PUT /config），用 AtomicBool 免锁。
@@ -350,13 +363,13 @@ impl FontStore {
     }
 
     /// 删整个家族（全部文件）。
-    pub fn remove_family(&self, key: &str) -> Result<Vec<String>, String> {
-        let Some(e) = self.entries().into_iter().find(|e| e.key == key) else { return Err("没有这个字体家族".into()) };
+    pub fn remove_family(&self, key: &str) -> Result<Vec<String>, FontError> {
+        let Some(e) = self.entries().into_iter().find(|e| e.key == key) else { return Err(FontError::NotFound("没有这个字体家族".into())) };
         for f in &e.files {
-            std::fs::remove_file(self.fonts_dir.join(f)).map_err(|err| format!("删 {f} 失败: {err}"))?;
+            std::fs::remove_file(self.fonts_dir.join(f)).map_err(|err| FontError::Io(format!("删 {f} 失败: {err}")))?;
         }
         self.fc_cache();
-        self.write_index()?;
+        self.write_index().map_err(FontError::Io)?;
         Ok(e.files)
     }
 }
@@ -465,7 +478,7 @@ mod tests {
         // 旧字体也可删
         assert_eq!(store.remove_family("Old-Regular").unwrap(), vec!["Old-Regular.ttf"]);
         assert_eq!(store.list().len(), 1);
-        assert!(store.remove_family("nope").is_err());
+        assert!(matches!(store.remove_family("nope"), Err(FontError::NotFound(_))));
     }
 
 
