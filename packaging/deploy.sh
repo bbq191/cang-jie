@@ -13,7 +13,7 @@
 #    --password-file 读后即删——含空格/引号/分号的密码不会被远端 shell 解释，host 与设备的 ps 里也看不到；
 #  · 其余参数逐个 shquote 后再传，不再 `$*` 裸拼；
 #  · 载荷先在本地打成 tar 文件（打包失败当场退出），推到 shelf-pkg.new，校验有 install.sh 后才换掉 shelf-pkg——
-#    传输中断不会把设备上现成的 shelf-pkg 清空又留下残缺载荷；
+#    传输中断不会把设备上现成的 shelf-pkg 清空又留下残缺载荷（2026-10-10 起另核对整个 tar 的 md5，见 lib.sh 的 push_tar_verified）；
 #  · HTTPS 探测只测无认证应 401，不再拿默认密码 shelf 试登录（会在网关上制造失败登录记录）。
 # 2026-09-22 审计：
 #  · 第一个参数是 --only 之类选项时不再被当成 host；-h/--help；动手（含耗时的交叉编译）前先确认 ssh 通；
@@ -111,7 +111,7 @@ tar -C "$STAGE/pkg" -cf "$STAGE/shelf-pkg.tar" shelf
 
 REMOTE=/home/root/shelf-pkg
 echo "-- 推送到 root@$HOST:$REMOTE/ 并安装"
-rssh_in "rm -rf $REMOTE.new && mkdir -p $REMOTE.new && tar -C $REMOTE.new -xf - && [ -f $REMOTE.new/shelf/install.sh ] && rm -rf $REMOTE && mv $REMOTE.new $REMOTE" < "$STAGE/shelf-pkg.tar"
+push_tar_verified "$STAGE/shelf-pkg.tar" "$REMOTE" shelf/install.sh
 if [ "$HAVE_PW" = "1" ]; then
     printf '%s' "$PASSWORD" | rssh_in "umask 077; cat > $REMOTE/.pw"
     REMOTE_ARGS="$REMOTE_ARGS --password-file $REMOTE/.pw"

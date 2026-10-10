@@ -25,7 +25,7 @@ REAL_HOME="$HOME"
 guard_paths() {
     echo "$REAL_HOME/.config/shelf $REAL_HOME/.local/share/shelf $REAL_HOME/.local/state/shelf $REAL_HOME/.local/lib/shelf $REAL_HOME/cangjie-backups $REAL_HOME/.local/bin/shelf-uninstall $REAL_HOME/.cangjie-stage $REAL_HOME/.cangjie-pending-apply /run/cangjie-pending-apply"
     # 2026-09-30 补：deploy/uninstall 会在 $HOME 下建/删的其它载荷与数据位置（同名目录在开发机上也可能真实存在）
-    echo "$REAL_HOME/battop $REAL_HOME/hl-snap $REAL_HOME/ui-font $REAL_HOME/hw-stroke $REAL_HOME/shelf-pkg $REAL_HOME/shelf-pkg.new $REAL_HOME/pkg-wifi-watch $REAL_HOME/pkg-xovi-persist $REAL_HOME/pkg-chrony-boot-wakelock $REAL_HOME/xovi $REAL_HOME/.local/share/cangjie-ime $REAL_HOME/.local/bin/wifi-watch.sh $REAL_HOME/.local/bin/gateway $REAL_HOME/.local/bin/lo-alias.sh"
+    echo "$REAL_HOME/battop $REAL_HOME/hl-snap $REAL_HOME/ui-font $REAL_HOME/hw-stroke $REAL_HOME/shelf-pkg $REAL_HOME/shelf-pkg.new $REAL_HOME/shelf-pkg.tar.new $REAL_HOME/pkg-wifi-watch $REAL_HOME/pkg-xovi-persist $REAL_HOME/pkg-chrony-boot-wakelock $REAL_HOME/xovi $REAL_HOME/.local/share/cangjie-ime $REAL_HOME/.local/bin/wifi-watch.sh $REAL_HOME/.local/bin/gateway $REAL_HOME/.local/bin/lo-alias.sh"
 }
 # 签名 = 每个已存在路径 + 它的 mtime（目录里增删条目会改目录 mtime）：不只看"有没有新出现"，也看"原有的被动过/删掉"
 guard_sig() { for g in $(guard_paths); do [ -e "$g" ] || [ -L "$g" ] && echo "$g $(stat -c %Y "$g" 2>/dev/null)"; done; }
@@ -427,11 +427,21 @@ check "deploy.sh：密码原样到达 gateway passwd（没被远端 shell 解释
 check "deploy.sh：密码不出现在任何 ssh 命令行里" test -z "$(grep '^ssh' "$CJ_SIM_LOG" | grep -F 's;s')"
 check "deploy.sh：设备上无 .pw 残留、无 shelf-pkg.new 残留、shelf-pkg 完整" test ! -e "$R/home/root/shelf-pkg/.pw" -a ! -e "$R/home/root/shelf-pkg.new" -a -f "$R/home/root/shelf-pkg/shelf/install.sh" -a -f "$R/home/root/shelf-pkg/shelf/manifest.sh" -a -f "$R/home/root/shelf-pkg/shelf/devlib.sh"
 check "deploy.sh：只装了 gateway/book/font 三个服务（--only 透传）" test -x "$R/home/root/.local/bin/book-serve" -a -x "$R/home/root/.local/bin/font-serve" -a ! -e "$R/home/root/.local/bin/note-serve"
-# 换位保护：载荷里没有 install.sh 时不能把现成 shelf-pkg 清掉（直接测远端换位命令的语义）
+# 换位保护（lib.sh 的 push_tar_verified，PK-4）：载荷缺 install.sh、或传输中被截断/掺了字节（tar 照样解得开）→
+# 现成 shelf-pkg 原样保留、设备上不留 .new/.tar.new 半成品；正常时换位且不留临时 tar
 mkdir -p "$R/home/root/shelf-pkg/shelf"; echo keepme > "$R/home/root/shelf-pkg/shelf/marker"
 empty="$R/empty.tar"; mkdir -p "$R/emptyroot/shelf"; tar -C "$R/emptyroot" -cf "$empty" shelf
-( cd "$R/home/root" && PATH="$STUBS:$PATH" sh -c "ssh -o x=y root@h 'rm -rf /home/root/shelf-pkg.new && mkdir -p /home/root/shelf-pkg.new && tar -C /home/root/shelf-pkg.new -xf - && [ -f /home/root/shelf-pkg.new/shelf/install.sh ] && rm -rf /home/root/shelf-pkg && mv /home/root/shelf-pkg.new /home/root/shelf-pkg' < '$empty'" ) >/dev/null 2>&1
-check "shelf-pkg 换位：新载荷缺 install.sh → 旧 shelf-pkg 原样保留" test -f "$R/home/root/shelf-pkg/shelf/marker"
+good="$R/good.tar"; mkdir -p "$R/goodroot/shelf"; echo i > "$R/goodroot/shelf/install.sh"; tar -C "$R/goodroot" -cf "$good" shelf
+ptv() { ( cd "$PKG" && PATH="$STUBS:$PATH" && . ./lib.sh && HOST=h && push_tar_verified "$1" /home/root/shelf-pkg shelf/install.sh ) >"$R/out.txt" 2>&1; }
+no_residue() { test ! -e "$R/home/root/shelf-pkg.new" -a ! -e "$R/home/root/shelf-pkg.tar.new"; }
+ptv "$empty"; rc=$?
+check "shelf-pkg 换位：新载荷缺 install.sh → 失败、旧 shelf-pkg 原样保留、无半成品" bash -c "test $rc -ne 0 -a -f '$R/home/root/shelf-pkg/shelf/marker'" && no_residue
+CJ_SIM_STDIN_CORRUPT=1 ptv "$good"; rc=$?
+check "shelf-pkg 换位：传输中掺了字节（tar 仍解得开）→ md5 不符、失败并报错、旧 shelf-pkg 保留、无半成品" bash -c "test $rc -ne 0 -a -f '$R/home/root/shelf-pkg/shelf/marker' && grep -q '载荷校验没过' '$R/out.txt'" && no_residue
+ptv "$good"; rc=$?
+check "shelf-pkg 换位：md5 对上 → 换成新载荷、不留临时 tar" bash -c "test $rc -eq 0 -a -f '$R/home/root/shelf-pkg/shelf/install.sh' -a ! -e '$R/home/root/shelf-pkg/shelf/marker'" && no_residue
+( cd "$PKG" && PATH="$STUBS:$PATH" && . ./lib.sh && HOST=h && : > "$CJ_SIM_LOG" && push_tar_verified "$good" /home/root shelf/install.sh ) >/dev/null 2>&1; rc=$?
+check "push_tar_verified：目标不是 /home/root 下的子目录 → 拒绝、不连设备" test "$rc" -ne 0 -a "$(count_log '^ssh')" = 0
 
 section "packaging/deploy-hl-snap.sh：原子落位 / 备份不进 extensions.d / DEFER"
 new_sandbox; EXT="$R/home/root/xovi/extensions.d"
@@ -1283,7 +1293,7 @@ check "每个连设备的 deploy-*.sh 都调用了 require_device" test -z "$vio
 [ -z "$viol" ] || echo "       缺 require_device：$viol"
 # 8) 设备端会 rm 的脚本必须有目标核对：rm -rf 只允许出现在带守卫的位置（白名单式点名）
 viol="$(grep -n 'rm -rf' packaging/*.sh shelf/*.sh 2>/dev/null | grep -v -e ':[0-9]*:[[:space:]]*#' | grep -v -e 'packaging/tests/' -e 'STAGE' -e 'REMOTE' )"
-check "rm -rf 出现处已人工核对：仅 uninstall-all(shelf-pkg 载荷)、removal.sh(已移除的 /home/root/battop，路径/符号链接守卫)、shelf/uninstall(--purge 三个 XDG 目录，路径/符号链接守卫)" test "$(echo "$viol" | grep -v '^$' | grep -v -e 'packaging/uninstall-all.sh' -e 'packaging/removal.sh' -e 'shelf/uninstall.sh' | wc -l)" -eq 0
+check "rm -rf 出现处已人工核对：仅 uninstall-all(shelf-pkg 载荷)、removal.sh(已移除的 /home/root/battop，路径/符号链接守卫)、shelf/uninstall(--purge 三个 XDG 目录，路径/符号链接守卫)、lib.sh 的 push_tar_verified(只许 /home/root 下的载荷目录)" test "$(echo "$viol" | grep -v '^$' | grep -v -e 'packaging/uninstall-all.sh' -e 'packaging/removal.sh' -e 'shelf/uninstall.sh' -e 'packaging/lib.sh:[0-9]*:.*\$pt_[ndt]' | wc -l)" -eq 0
 
 # 9) xovi-reenable.service 不许在 xovi 已生效时重跑 xovi/start（会让运行中的 xochitl SEGV → 整机重启）：
 #    必须有 ExecCondition 检查 xochitl 进程是否已映射 xovi.so，且排在 ExecStart 之前
