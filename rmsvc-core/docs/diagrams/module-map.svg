@@ -1,8 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 930" width="1240" height="930" font-family="Noto Sans SC, Noto Sans CJK SC, sans-serif">
 <defs><marker id="mk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker></defs>
 <rect x="0" y="0" width="1240" height="930" fill="#fbfbfa"/>
-<text x="620" y="30" font-size="18" font-weight="bold" fill="#1a1a1a" text-anchor="middle">rmsvc-core：四个顶层项目共用的“地基”（2026-10-09 现状）</text>
-<text x="620" y="52" font-size="12.5" font-weight="normal" fill="#6a6a6a" text-anchor="middle">纯基础设施，不含“书 / 笔记 / 字体”业务；消费方单向 path 依赖它（没有根 workspace）。橙色 = 10-09 新增或改动（已部署；多数行为没在真机上专门触发过）</text>
+<text x="620" y="30" font-size="18" font-weight="bold" fill="#1a1a1a" text-anchor="middle">rmsvc-core：四个顶层项目共用的“地基”（2026-10-10 现状）</text>
+<text x="620" y="52" font-size="12.5" font-weight="normal" fill="#6a6a6a" text-anchor="middle">纯基础设施，不含“书 / 笔记 / 字体”业务；消费方单向 path 依赖它（没有根 workspace）。橙色 = 10-09 / 10-10 新增或改动（10-09 已部署、多数行为没在真机上专门触发；10-10 未部署）</text>
 <rect x="24" y="76" width="286" height="138" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
 <text x="167" y="98" font-size="13" font-weight="bold" fill="#1a1a1a" text-anchor="middle">shelf/ 书架线</text>
 <text x="167" y="124" font-size="11" font-weight="normal" fill="#3a3a3a" text-anchor="middle">book-serve（母版库 / 加入原生书库）</text>
@@ -20,16 +20,16 @@
 <text x="771" y="98" font-size="13" font-weight="bold" fill="#1a1a1a" text-anchor="middle">enhance/ 系统增强</text>
 <text x="771" y="124" font-size="11" font-weight="normal" fill="#3a3a3a" text-anchor="middle">font-serve · wallpaper-serve</text>
 <text x="771" y="164" font-size="11" font-weight="normal" fill="#3a3a3a" text-anchor="middle">常用：asset · proc · formats</text>
-<text x="771" y="184" font-size="11" font-weight="normal" fill="#3a3a3a" text-anchor="middle">ttf · xochitl_conf · events</text>
+<text x="771" y="184" font-size="11" font-weight="normal" fill="#3a3a3a" text-anchor="middle">fswatch · xochitl_conf · events</text>
 <polyline points="771,214 771,246" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
 <rect x="930" y="76" width="286" height="138" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
 <text x="1073" y="98" font-size="13" font-weight="bold" fill="#1a1a1a" text-anchor="middle">gateway/ 网关</text>
 <text x="1073" y="124" font-size="11" font-weight="normal" fill="#3a3a3a" text-anchor="middle">唯一对外入口 :443</text>
 <text x="1073" y="164" font-size="11" font-weight="normal" fill="#3a3a3a" text-anchor="middle">常用：http（Guard / TLS）· registry</text>
-<text x="1073" y="184" font-size="11" font-weight="normal" fill="#3a3a3a" text-anchor="middle">auth · tls · mdns · proc</text>
+<text x="1073" y="184" font-size="11" font-weight="normal" fill="#3a3a3a" text-anchor="middle">auth · tls · mdns（gateway feature）· proc</text>
 <polyline points="1073,214 1073,246" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
 <rect x="24" y="248" width="1192" height="520" rx="10" fill="#f1f1ef" stroke="#8a8a8a" stroke-width="1.6"/>
-<text x="620" y="272" font-size="14" font-weight="bold" fill="#1a1a1a" text-anchor="middle">rmsvc-core（crate；22 个公开模块 + 内部 sys）</text>
+<text x="620" y="272" font-size="14" font-weight="bold" fill="#1a1a1a" text-anchor="middle">rmsvc-core（crate；21 个公开模块，其中 4 个在 gateway feature 后 + 内部 sys）</text>
 <rect x="44" y="286" width="568" height="250" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
 <text x="328" y="306" font-size="12" font-weight="bold" fill="#1a1a1a" text-anchor="middle">服务骨架</text>
 <text x="56" y="328" font-size="11" font-weight="bold" fill="#1a1a1a" text-anchor="start" font-family="DejaVu Sans Mono, monospace">service</text>
@@ -37,14 +37,14 @@
 <text x="152" y="347" font-size="11" xml:space="preserve"><tspan fill="#b0451f" font-weight="bold">run_or_exit：8 个服务 main 的统一收尾，出错非零退出</tspan></text>
 <text x="56" y="366" font-size="11" font-weight="bold" fill="#1a1a1a" text-anchor="start" font-family="DejaVu Sans Mono, monospace">registry</text>
 <text x="152" y="366" font-size="11" xml:space="preserve"><tspan fill="#3a3a3a">注册表 $XDG_RUNTIME_DIR/shelf/services/&lt;名&gt;.json；pid 死了自动清</tspan></text>
-<text x="152" y="385" font-size="11" xml:space="preserve"><tspan fill="#3a3a3a">SvcClient 调别的服务；</tspan><tspan fill="#b0451f" font-weight="bold">get_typed / get_bytes（带大小上限）</tspan></text>
+<text x="152" y="385" font-size="11" xml:space="preserve"><tspan fill="#3a3a3a">SvcClient 调别的服务；</tspan><tspan fill="#b0451f" font-weight="bold">try_get_typed（带对方状态码）/ get_bytes（带大小上限）</tspan></text>
 <text x="56" y="404" font-size="11" font-weight="bold" fill="#1a1a1a" text-anchor="start" font-family="DejaVu Sans Mono, monospace">http</text>
-<text x="152" y="404" font-size="11" xml:space="preserve"><tspan fill="#3a3a3a">唯一适配层：Router（最具体优先）· Reply · Guard · SSE / 定长流</tspan></text>
+<text x="152" y="404" font-size="11" xml:space="preserve"><tspan fill="#3a3a3a">唯一适配层：Router（最具体优先）· Guard · </tspan><tspan fill="#b0451f" font-weight="bold">Reply 的 Body：整块 / 定长流 / SSE</tspan></text>
 <text x="152" y="423" font-size="11" xml:space="preserve"><tspan fill="#3a3a3a">并发上限 64 · 读空闲 60 秒；</tspan><tspan fill="#b0451f" font-weight="bold">守卫 panic 也回 JSON 500 · 取值小件</tspan></text>
 <text x="152" y="442" font-size="11" xml:space="preserve"><tspan fill="#3a3a3a">JsonBody：opt_str / opt_bool / opt_u64 / str_list · </tspan><tspan fill="#b0451f" font-weight="bold">opt_str_list / opt_f64 / opt_obj</tspan></text>
 <text x="56" y="461" font-size="11" font-weight="bold" fill="#1a1a1a" text-anchor="start" font-family="DejaVu Sans Mono, monospace">events</text>
 <text x="152" y="461" font-size="11" xml:space="preserve"><tspan fill="#3a3a3a">EventBus + SSE · follow() 订阅别的服务 · Wake / registry_wake</tspan></text>
-<text x="152" y="480" font-size="11" xml:space="preserve"><tspan fill="#b0451f" font-weight="bold">publish_with · Event::parse</tspan></text>
+<text x="152" y="480" font-size="11" xml:space="preserve"><tspan fill="#b0451f" font-weight="bold">publish_with · Event::parse · sse_reply_for(&amp;Request)</tspan></text>
 <text x="56" y="499" font-size="11" font-weight="bold" fill="#1a1a1a" text-anchor="start" font-family="DejaVu Sans Mono, monospace">proc</text>
 <text x="152" y="499" font-size="11" xml:space="preserve"><tspan fill="#b0451f" font-weight="bold">新模块：run_timeout · uptime_secs · find_process（不 fork）</tspan></text>
 <rect x="628" y="286" width="568" height="250" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
@@ -55,15 +55,15 @@
 <text x="736" y="347" font-size="11" xml:space="preserve"><tspan fill="#3a3a3a">原子写（可带权限）· plain_name · unique_path · fs_space</tspan></text>
 <text x="736" y="366" font-size="11" xml:space="preserve"><tspan fill="#b0451f" font-weight="bold">move_into 跨分区不露半截 · ScratchFile · list_files / clean_dir</tspan></text>
 <text x="640" y="385" font-size="11" font-weight="bold" fill="#1a1a1a" text-anchor="start" font-family="DejaVu Sans Mono, monospace">config</text>
-<text x="736" y="385" font-size="11" xml:space="preserve"><tspan fill="#3a3a3a">JSON 配置模板 · is_corrupt · </tspan><tspan fill="#b0451f" font-weight="bold">backup_corrupt（只留第一份）</tspan></text>
+<text x="736" y="385" font-size="11" xml:space="preserve"><tspan fill="#3a3a3a">JSON 配置模板 · </tspan><tspan fill="#b0451f" font-weight="bold">load_or_seed 遇损坏打日志 + 留 .corrupt（只留第一份）</tspan></text>
 <text x="640" y="404" font-size="11" font-weight="bold" fill="#1a1a1a" text-anchor="start" font-family="DejaVu Sans Mono, monospace">multipart</text>
 <text x="736" y="404" font-size="11" xml:space="preserve"><tspan fill="#3a3a3a">流式解析，边读边落盘；文件名引号内的 ; 不切</tspan></text>
 <text x="640" y="423" font-size="11" font-weight="bold" fill="#1a1a1a" text-anchor="start" font-family="DejaVu Sans Mono, monospace">asset</text>
-<text x="736" y="423" font-size="11" xml:space="preserve"><tspan fill="#3a3a3a">上传 → 校验 → 安装模板（字体 / 壁纸 / 母版库）· </tspan><tspan fill="#b0451f" font-weight="bold">any_ok</tspan></text>
+<text x="736" y="423" font-size="11" xml:space="preserve"><tspan fill="#b0451f" font-weight="bold">UploadTarget</tspan><tspan fill="#3a3a3a"> + 上传模板（字体 / 壁纸 / 母版库）· </tspan><tspan fill="#b0451f" font-weight="bold">FlowError 400 / 500</tspan></text>
 <text x="640" y="442" font-size="11" font-weight="bold" fill="#1a1a1a" text-anchor="start" font-family="DejaVu Sans Mono, monospace">formats</text>
 <text x="736" y="442" font-size="11" xml:space="preserve"><tspan fill="#3a3a3a">格式白名单唯一事实源（书只收 EPUB/PDF）· </tspan><tspan fill="#b0451f" font-weight="bold">mime_of · sniff · stem_of</tspan></text>
-<text x="640" y="461" font-size="11" font-weight="bold" fill="#1a1a1a" text-anchor="start" font-family="DejaVu Sans Mono, monospace">ttf</text>
-<text x="736" y="461" font-size="11" xml:space="preserve"><tspan fill="#3a3a3a">字体家族名 · CJK 覆盖率 · </tspan><tspan fill="#b0451f" font-weight="bold">format-4 逐码位总数设上限</tspan></text>
+<text x="640" y="461" font-size="11" font-weight="bold" fill="#1a1a1a" text-anchor="start" font-family="DejaVu Sans Mono, monospace">wire</text>
+<text x="736" y="461" font-size="11" xml:space="preserve"><tspan fill="#b0451f" font-weight="bold">跨服务线上枚举：落库 / 渲染状态 · FailureKind（JSON 不变）</tspan></text>
 <text x="640" y="480" font-size="11" font-weight="bold" fill="#1a1a1a" text-anchor="start" font-family="DejaVu Sans Mono, monospace">cache</text>
 <text x="736" y="480" font-size="11" xml:space="preserve"><tspan fill="#3a3a3a">TtlCache · StampCache（长度 + mtime + inode 失效）· </tspan><tspan fill="#b0451f" font-weight="bold">FileStamp::len</tspan></text>
 <text x="640" y="499" font-size="11" font-weight="bold" fill="#1a1a1a" text-anchor="start" font-family="DejaVu Sans Mono, monospace">clock/sync</text>
@@ -72,16 +72,16 @@
 <text x="328" y="570" font-size="12" font-weight="bold" fill="#1a1a1a" text-anchor="middle">和设备上的 xochitl 打交道</text>
 <text x="56" y="592" font-size="11" font-weight="bold" fill="#1a1a1a" text-anchor="start" font-family="DejaVu Sans Mono, monospace">xochitl</text>
 <text x="160" y="592" font-size="11" xml:space="preserve"><tspan fill="#3a3a3a">“设文件夹 → /upload”串成一对；</tspan><tspan fill="#b0451f" font-weight="bold">设失败退回书库根</tspan></text>
-<text x="160" y="611" font-size="11" xml:space="preserve"><tspan fill="#3a3a3a">按名字 upload* / 按 uuid </tspan><tspan fill="#b0451f" font-weight="bold">upload*_into（upload_into 新）</tspan></text>
+<text x="160" y="611" font-size="11" xml:space="preserve"><tspan fill="#b0451f" font-weight="bold">只收 Folder（根 / uuid）：upload_to · upload_and_claim · upload_large</tspan></text>
 <text x="160" y="630" font-size="11" xml:space="preserve"><tspan fill="#3a3a3a">&gt;100MB 占位 + 磁盘替换；</tspan><tspan fill="#b0451f" font-weight="bold">认领改等 inotify（原 200ms 轮询）</tspan></text>
 <text x="160" y="649" font-size="11" xml:space="preserve"><tspan fill="#3a3a3a">只读查询：</tspan><tspan fill="#b0451f" font-weight="bold">Metadata · read_meta（没有 ≠ 读不了）</tspan><tspan fill="#3a3a3a"> · live_entries</tspan></text>
 <text x="56" y="668" font-size="11" font-weight="bold" fill="#1a1a1a" text-anchor="start" font-family="DejaVu Sans Mono, monospace">xochitl_conf</text>
-<text x="160" y="668" font-size="11" xml:space="preserve"><tspan fill="#3a3a3a">改 xochitl.conf 单键 SleepScreenPath（不打印、保留权限）</tspan></text>
+<text x="160" y="668" font-size="11" xml:space="preserve"><tspan fill="#3a3a3a">改 xochitl.conf [General] 单键（不打印、保留权限；键名在 wallpaper-serve）</tspan></text>
 <text x="56" y="687" font-size="11" font-weight="bold" fill="#1a1a1a" text-anchor="start" font-family="DejaVu Sans Mono, monospace">fswatch</text>
 <text x="160" y="687" font-size="11" xml:space="preserve"><tspan fill="#b0451f" font-weight="bold">单线程 poll；常驻监听的目录被删后退避重挂</tspan></text>
 <text x="160" y="706" font-size="11" xml:space="preserve"><tspan fill="#3a3a3a">watch_debounced · watch_until · </tspan><tspan fill="#b0451f" font-weight="bold">wait_for（先挂监听再查）</tspan></text>
 <rect x="628" y="550" width="568" height="124" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
-<text x="912" y="570" font-size="12" font-weight="bold" fill="#1a1a1a" text-anchor="middle">对外与安全（只有网关用）</text>
+<text x="912" y="570" font-size="12" font-weight="bold" fill="#1a1a1a" text-anchor="middle">对外与安全（只有网关用：gateway feature，默认不编）</text>
 <text x="640" y="592" font-size="11" font-weight="bold" fill="#1a1a1a" text-anchor="start" font-family="DejaVu Sans Mono, monospace">auth</text>
 <text x="736" y="592" font-size="11" xml:space="preserve"><tspan fill="#3a3a3a">PBKDF2 · Basic/Cookie · 会话表 · IpFailLimiter · VerifyCache</tspan></text>
 <text x="640" y="611" font-size="11" font-weight="bold" fill="#1a1a1a" text-anchor="start" font-family="DejaVu Sans Mono, monospace">tls</text>
