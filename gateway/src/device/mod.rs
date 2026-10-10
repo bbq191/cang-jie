@@ -91,18 +91,14 @@ pub fn cleanup_list(paths: &Paths, _req: &mut Request<'_>) -> ApiResult {
     }))
 }
 
-/// `POST /api/device/cleanup/delete` 应答。
+/// `POST /api/device/cleanup/delete` 应答：逐项结果。请求本身合法就是 200——`partial:true` 表示至少一项没删成
+/// （含全部没删成），原因在 `failed`（与批量队列同形 `{name,message}`）。2026-10-10 前这里用 `ok:false` 表示部分失败，
+/// 与基座错误信封 `{ok:false,message}` 撞名，网页得先看 `failed` 再看 `ok` 才分得清（FE-4）。
 #[derive(Serialize)]
 struct CleanupDeleted {
-    ok: bool,
     deleted: Vec<String>,
-    failed: Vec<DeleteFailed>,
-}
-
-#[derive(Serialize)]
-struct DeleteFailed {
-    name: String,
-    error: String,
+    failed: Vec<crate::wire::Failed>,
+    partial: bool,
 }
 
 pub fn cleanup_delete(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
@@ -114,7 +110,7 @@ pub fn cleanup_delete(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
     }
     let o = cleanup::delete(paths, &area, &names);
     health_cache().invalidate();
-    Ok(Reply::ok(&CleanupDeleted { ok: o.failed.is_empty(), failed: o.failed.into_iter().map(|(name, error)| DeleteFailed { name, error }).collect(), deleted: o.deleted }))
+    Ok(Reply::ok(&CleanupDeleted { partial: !o.failed.is_empty(), failed: o.failed.iter().map(|(n, e)| crate::wire::Failed::new(n, e)).collect(), deleted: o.deleted }))
 }
 
 #[cfg(test)]
@@ -153,9 +149,14 @@ mod tests {
         assert!(post(&paths, br#"{"area":"books-done"}"#).is_err());
         let v: serde_json::Value = serde_json::from_slice(&post(&paths, br#"{"area":"books-done","names":["a.epub","../x"]}"#).unwrap().body).unwrap();
         assert_eq!(v["deleted"], serde_json::json!(["a.epub"]));
-        assert_eq!(v["failed"][0]["name"], "../x");
-        assert_eq!(v["ok"], false);
+        // 失败项与批量队列同形 `{name,message}`；部分失败标 `partial:true`，不在 200 应答里用错误信封的 `ok:false`（FE-4）
+        assert_eq!(v["failed"], serde_json::json!([{"name": "../x", "message": "文件名不合法：../x"}]));
+        assert_eq!(v["partial"], true);
+        assert!(v.get("ok").is_none(), "200 应答不带 ok，免得跟错误信封 {{ok:false,message}} 撞名");
         assert!(!done.join("a.epub").exists());
+        std::fs::write(done.join("b.epub"), b"x").unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&post(&paths, br#"{"area":"books-done","names":["b.epub"]}"#).unwrap().body).unwrap();
+        assert_eq!(v, serde_json::json!({"deleted": ["b.epub"], "failed": [], "partial": false}));
     }
 
     /// 线上格式快照（2026-10-10，GW-1）：`GET /api/device/cleanup` 的字段（「设备健康 → 清理」读它）。

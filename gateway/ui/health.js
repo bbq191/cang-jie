@@ -112,8 +112,9 @@ function mountCleanup(box){
   busyClick(q('[data-delfiles]'),async()=>{const names=[...pickF];
     if(!names.length||!await confirmDialog(T('cleanup.confirmFiles',{n:names.length,list:listOf(names)})))return;
     const r=await jsend('/api/device/cleanup/delete','POST',{area:'books-done',names});
-    if(r.failed&&r.failed.length)toast(T('cleanup.partial',{ok:(r.deleted||[]).length,bad:r.failed.length,msg:r.failed.map(f=>T('common.labelValue',{label:f.name,value:f.error})).join(T('common.listSep'))}));
-    else if(r.ok===false)toast(r.message||T('common.failed'));
+    // ok:false 只来自错误信封（请求本身被拒）；逐项结果里有没删成的标 partial，失败项与批量队列同形 {name,message}。
+    if(r.ok===false)toast(r.message||T('common.failed'));
+    else if(r.partial)toast(T('cleanup.partial',{ok:(r.deleted||[]).length,bad:r.failed.length,msg:r.failed.map(f=>T('common.labelValue',{label:f.name,value:f.message})).join(T('common.listSep'))}));
     else toast(T('cleanup.deleted',{n:(r.deleted||[]).length}),'ok');
     pickF.clear();await load()});
   busyClick(q('[data-trash]'),async()=>{const picks=[...pickL];

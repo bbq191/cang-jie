@@ -48,6 +48,9 @@ const routes = {
   '/api/foundation': () => ({}), '/api/enhance/status': () => ({}),
   '/api/books/agent-failures': () => ({items: window.__fails}),
   '/api/device/wifi': () => ({ssid: evil, state:'portal', code:'302', at:1}),
+  '/api/device/cleanup': () => ({files:[{area:'books-done', name:'旧.epub', bytes:1, mtime:1}], library:[], trashAgent:true, xochitl:true}),
+  '/api/device/cleanup/delete': () => ({deleted:[], failed:[{name:'旧.epub', message:'拒绝原因'}], partial:true}),
+  '/api/manage': () => ({modules:[], gateway:{running:true}}),
   '/api/books/agent-failures/clear': () => { const n = window.__fails.length; window.__fails = []; return {ok:true, cleared:n}; },
 };
 window.__fails = [{kind:'trash', name: evil, uuid:'11111111-1111-1111-1111-111111111111', at:1}, {kind:'mkdir', name:'新文件夹', at:2}];
@@ -207,6 +210,21 @@ await page.evaluate(() => window.__es[window.__es.length - 1].onmessage({data: J
 await new Promise(r => setTimeout(r, 400));
 out.otherFonts = (await hits('/api/fonts')) - f0;
 out.otherWalls = (await hits('/api/wallpapers')) - w0;
+// 「管理 → 设备健康 → 清理」：部分失败（partial:true）按 {name,message} 列出原因（FE-4）
+await page.evaluate(() => document.querySelectorAll('#tabs button')[3].click());
+await new Promise(r => setTimeout(r, 400));
+out.cleanupPartial = await page.evaluate(async () => {
+  document.querySelector('[data-sub="health"]').click();
+  await new Promise(r => setTimeout(r, 300));
+  document.querySelectorAll('#healthBox > .subnav button')[4].click();
+  await new Promise(r => setTimeout(r, 300));
+  const cb = document.querySelector('[data-files] input[type=checkbox]'); if (!cb) return 'no-row';
+  cb.click(); document.querySelector('[data-delfiles]').click();
+  await new Promise(r => setTimeout(r, 50));
+  document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter'}));
+  await new Promise(r => setTimeout(r, 300));
+  return document.querySelector('#toasthost').textContent;
+});
 // 无轮询：等 4 秒无新请求
 const h1 = await hits();
 await new Promise(r => setTimeout(r, 4000));
@@ -258,6 +276,7 @@ assert.equal(out.reopenSvc, 1, '重连成功应补查一次服务集合（断线
 assert.deepEqual(out.svcCheck, [0, 1], '隐藏时 manage 事件不取 /api/services，可见后补查一次');
 assert.deepEqual(out.closedRecovery, [1, 1, true], 'EventSource 进 CLOSED：关掉旧的、查一次会话、退避后新开一条');
 assert.equal(out.connectingUntouched, 1, '浏览器自己在重连（CONNECTING）时不另开连接');
+assert.ok(out.cleanupPartial.includes('旧.epub') && out.cleanupPartial.includes('拒绝原因'), `清理部分失败应列出 {name,message}：${out.cleanupPartial}`);
 assert.equal(out.idleHits, 0, '空闲时不该有轮询');
 assert.deepEqual(errs, [], '不该有 JS 报错');
 console.log('smoke OK');
