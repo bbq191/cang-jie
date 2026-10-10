@@ -54,6 +54,11 @@ impl Drop for KeepaliveScope {
     }
 }
 
+/// 请求 `?ka=` 定的心跳（缺省/非法 → [`KEEPALIVE`]）。
+fn keepalive_of(req: &crate::http::Request<'_>) -> Duration {
+    parse_keepalive_param(req.q("ka")).unwrap_or(KEEPALIVE)
+}
+
 /// 当前请求指定的心跳（没有则 `None`）。
 pub fn request_keepalive() -> Option<Duration> {
     REQUEST_KEEPALIVE.with(|c| c.get())
@@ -114,9 +119,21 @@ impl EventBus {
         crate::sync::lock(&self.subs).len()
     }
 
-    /// `GET /events` 的回执：`text/event-stream` 流式响应。
+    /// `GET /events` 的回执：`text/event-stream` 流式响应。心跳取当前请求的 `?ka=`（路由分发时经线程局部隐式传入，
+    /// 见 [`request_keepalive`]）；要显式传请求的用 [`Self::sse_reply_for`]。
     pub fn sse_reply(&self) -> Reply {
-        Reply::stream("text/event-stream; charset=utf-8", Box::new(self.subscribe())).with_header("Cache-Control", "no-cache").with_header("X-Accel-Buffering", "no")
+        Self::stream_reply(self.subscribe())
+    }
+
+    /// 同 [`Self::sse_reply`]，但心跳直接读 `req` 的 `?ka=`（缺省/非法 → 20 秒，合法值夹到 [5, 600] 秒），不靠线程局部。
+    /// 各服务 `/events` 路由迁到这个之后，`Router::dispatch` 里的 `enter_request` 钩子与 http ↔ events 的循环依赖就能删掉
+    /// （审计 CORE-5）。
+    pub fn sse_reply_for(&self, req: &crate::http::Request<'_>) -> Reply {
+        Self::stream_reply(self.subscribe_with(keepalive_of(req)))
+    }
+
+    fn stream_reply(s: SseStream) -> Reply {
+        Reply::stream("text/event-stream; charset=utf-8", Box::new(s)).with_header("Cache-Control", "no-cache").with_header("X-Accel-Buffering", "no")
     }
 }
 
@@ -371,7 +388,7 @@ mod tests {
 
     #[test]
     fn sse_reply_uses_request_ka_only_inside_dispatch_and_defaults_to_20s() {
-        use crate::http::{Method, Request, Router};
+        use crate::http::{Method, Router, TestRequest};
         let bus = Arc::new(EventBus::new());
         let seen: Arc<Mutex<Vec<Duration>>> = Arc::new(Mutex::new(vec![]));
         let (b2, s2) = (bus.clone(), seen.clone());
@@ -380,15 +397,32 @@ mod tests {
             Ok(Reply::ok(&serde_json::json!({})))
         });
         let call = |q: &[(&str, &str)]| {
-            let mut empty: &[u8] = b"";
-            let mut r = Request { method: Method::Get, path: "/events".into(), query: q.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(), params: HashMap::new(), content_type: String::new(), content_length: None, headers: vec![], body: &mut empty };
-            router.dispatch(&mut r);
+            let t = q.iter().fold(TestRequest::new(Method::Get, "/events"), |t, (k, v)| t.query(k, v));
+            t.dispatch(&router);
         };
         call(&[]);
         call(&[("ka", "120")]);
         call(&[]);
         assert_eq!(*seen.lock().unwrap(), vec![KEEPALIVE, Duration::from_secs(120), KEEPALIVE], "带 ka 的请求用 ka，其余（含随后的请求）仍是缺省 20 秒");
         assert_eq!(request_keepalive(), None, "分发结束后线程局部已清除");
+    }
+
+    /// 显式版：心跳只看传进来的请求，不看线程局部（在路由外直接调用也对）。
+    #[test]
+    fn sse_reply_for_reads_ka_from_given_request() {
+        use crate::http::{Method, TestRequest};
+        let _scope = enter_request(Some(Duration::from_secs(7))); // 线程局部给了别的值，显式版不理它
+        let ka = |q: Option<&str>| {
+            let t = TestRequest::new(Method::Get, "/events");
+            let mut t = if let Some(v) = q { t.query("ka", v) } else { t };
+            t.with(|r| keepalive_of(r))
+        };
+        assert_eq!((ka(None), ka(Some("120")), ka(Some("1")), ka(Some("x"))), (KEEPALIVE, Duration::from_secs(120), Duration::from_secs(5), KEEPALIVE));
+        let bus = EventBus::new();
+        let rep = TestRequest::new(Method::Get, "/events").query("ka", "120").with(|r| bus.sse_reply_for(r));
+        assert_eq!(rep.content_type, "text/event-stream; charset=utf-8");
+        assert!(rep.stream.is_some() && rep.headers.iter().any(|(k, v)| k == "Cache-Control" && v == "no-cache"));
+        assert_eq!(bus.subscribers(), 1);
     }
 
     /// 起一个假服务（`/events` 可选）并注册进临时注册表，返回其命中计数。
