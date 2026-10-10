@@ -47,7 +47,7 @@ pub fn parse_show(text: &str) -> HashMap<String, HashMap<String, String>> {
     out
 }
 
-#[derive(Serialize, Debug, PartialEq, Default)]
+#[derive(Serialize, Debug, PartialEq, Default, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct UnitHealth {
     pub unit: String,
@@ -101,7 +101,7 @@ pub fn unit_health(proc_root: &Path, unit: &str, kv: Option<&HashMap<String, Str
 }
 
 /// xochitl 主进程 maps 里看到的东西。
-#[derive(Serialize, Debug, PartialEq, Default)]
+#[derive(Serialize, Debug, PartialEq, Default, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct XochitlMaps {
     /// 读到了 maps（进程在、有权限）。
@@ -162,8 +162,35 @@ pub fn so_pending_dir(paths: &Paths) -> std::path::PathBuf {
     paths.home().join(".cangjie-stage/so-pending")
 }
 
+/// `GET /api/device/health` 应答（「管理 → 设备健康」卡片）。
+#[derive(Serialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Health {
+    /// 开机秒数（前端只显示整秒）；读不到 `/proc/uptime` 为 null。
+    uptime_secs: Option<u64>,
+    /// `systemctl show` 失败的原因（此时 `units` 每项只有名字）。
+    systemctl_error: Option<String>,
+    units: Vec<UnitHealth>,
+    xochitl: XochitlMaps,
+    /// 待换入区里的文件名（跳过 devlib 换入时的 `.<名>.new.<pid>` 半成品）。
+    so_pending: Vec<String>,
+    /// 上次开机最后几行 journal；journal 没持久化时为 null，前端不显示。
+    prev_boot: Option<Vec<String>>,
+    home: Space,
+    firmware: super::ota::Firmware,
+    at: u64,
+}
+
+/// `/home` 分区剩余/总容量（字节），查不到为 null。
+#[derive(Serialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Space {
+    free_bytes: Option<u64>,
+    total_bytes: Option<u64>,
+}
+
 /// 采集一次。`show` 是 `systemctl show` 的原始输出（失败时传 `Err`，其余照常采集）；`prev_boot` 是上次开机的 journal 尾部。
-pub fn collect(paths: &Paths, proc_root: &Path, show: Result<String, String>, prev_boot: Option<Vec<String>>) -> serde_json::Value {
+pub fn collect(paths: &Paths, proc_root: &Path, show: Result<String, String>, prev_boot: Option<Vec<String>>) -> Health {
     let units = units();
     let (table, show_err) = match show {
         Ok(t) => (parse_show(&t), None),
@@ -173,17 +200,17 @@ pub fn collect(paths: &Paths, proc_root: &Path, show: Result<String, String>, pr
     let xochitl_pid = list.iter().find(|u| u.unit == "xochitl.service").and_then(|u| u.pid);
     let maps = xochitl_maps(proc_root, xochitl_pid);
     let space = rmsvc_core::fs::fs_space(paths.home());
-    serde_json::json!({
-        "uptimeSecs": rmsvc_core::proc::uptime_secs(proc_root).map(|s| s as u64), // 前端只显示整秒
-        "systemctlError": show_err,
-        "units": list,
-        "xochitl": maps,
-        "soPending": rmsvc_core::fs::list_files(&so_pending_dir(paths), |_| true), // 跳过 devlib 换入时的 `.<名>.new.<pid>` 半成品
-        "prevBoot": prev_boot,
-        "home": {"freeBytes": space.map(|s| s.0), "totalBytes": space.map(|s| s.1)},
-        "firmware": super::ota::firmware_json(),
-        "at": rmsvc_core::clock::now_secs(),
-    })
+    Health {
+        uptime_secs: rmsvc_core::proc::uptime_secs(proc_root).map(|s| s as u64),
+        systemctl_error: show_err,
+        units: list,
+        xochitl: maps,
+        so_pending: rmsvc_core::fs::list_files(&so_pending_dir(paths), |_| true),
+        prev_boot,
+        home: Space { free_bytes: space.map(|s| s.0), total_bytes: space.map(|s| s.1) },
+        firmware: super::ota::firmware(),
+        at: rmsvc_core::clock::now_secs(),
+    }
 }
 
 #[cfg(test)]
@@ -243,13 +270,35 @@ Id=book-serve.service\nLoadState=not-found\nActiveState=inactive\nSubState=dead\
         std::fs::create_dir_all(so_pending_dir(&paths)).unwrap();
         std::fs::write(so_pending_dir(&paths).join("hl-snap.so"), b"x").unwrap();
         std::fs::write(so_pending_dir(&paths).join(".hl-snap.so.new.123"), b"x").unwrap(); // 换入途中的半成品不算
-        let v = collect(&paths, &t.path().join("proc"), Err("no systemd".into()), Some(vec!["a".into(), "b".into()]));
+        let v = serde_json::to_value(collect(&paths, &t.path().join("proc"), Err("no systemd".into()), Some(vec!["a".into(), "b".into()]))).unwrap();
         assert_eq!(v["systemctlError"], "no systemd");
         assert_eq!(v["units"].as_array().unwrap().len(), units().len());
         assert_eq!(v["soPending"], serde_json::json!(["hl-snap.so"]));
         assert_eq!(v["prevBoot"], serde_json::json!(["a", "b"]));
-        assert!(collect(&paths, &t.path().join("proc"), Err(String::new()), None)["prevBoot"].is_null(), "journal 没持久化：不显示");
+        assert!(collect(&paths, &t.path().join("proc"), Err(String::new()), None).prev_boot.is_none(), "journal 没持久化：不显示");
         assert!(v["home"]["freeBytes"].as_u64().is_some(), "临时目录所在分区应可查");
         assert!(v["uptimeSecs"].is_null() && v["xochitl"]["readable"] == false);
+    }
+
+    /// 线上格式快照（2026-10-10，GW-1）：`GET /api/device/health` 的字段（随时间变的 `at` 与分区容量单独核对类型后抹掉）。
+    #[test]
+    fn wire_snapshot_collect() {
+        let t = tempfile::tempdir().unwrap();
+        let paths = Paths::sandbox(t.path());
+        let mut v = serde_json::to_value(collect(&paths, &t.path().join("proc"), Err("x".into()), None)).unwrap();
+        assert!(v["at"].as_u64().is_some() && v["home"]["freeBytes"].as_u64().is_some() && v["home"]["totalBytes"].as_u64().is_some());
+        v["at"] = 0.into();
+        v["home"] = serde_json::json!({"freeBytes": 0, "totalBytes": 0});
+        v["units"] = v["units"][0].clone();
+        assert_eq!(
+            v,
+            serde_json::json!({
+                "uptimeSecs": null, "systemctlError": "x",
+                "units": {"unit": "xochitl.service", "load": "", "active": "", "sub": "", "nRestarts": null, "pid": null, "rssKb": null, "hwmKb": null, "startedAtMs": null, "startMs": null},
+                "xochitl": {"readable": false, "xovi": false, "extensions": [], "deleted": []},
+                "soPending": [], "prevBoot": null, "home": {"freeBytes": 0, "totalBytes": 0},
+                "firmware": {"state": "pending"}, "at": 0,
+            })
+        );
     }
 }

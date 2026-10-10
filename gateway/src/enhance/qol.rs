@@ -38,28 +38,15 @@ impl Qol {
         Qol(load(paths))
     }
 
-    fn flag(&self, key: &str, default: bool) -> bool {
-        self.0.get(key).and_then(Value::as_bool).unwrap_or(default)
+    /// 开关 `t` 现在开着没有：文件里有这个布尔键就照它，没有（或不是布尔）按 [`super::Toggle::default`]。
+    pub fn on(&self, t: &super::Toggle) -> bool {
+        self.0.get(t.key).and_then(Value::as_bool).unwrap_or(t.default)
     }
 
-    /// CJK 荧光笔精确吸附开关（`hlSnapCjk`，由 `enhance/hl-snap` 读取）。缺省视为开——
-    /// 跟 hl-snap 的规则一致：键缺失时保持修复开启。
-    pub fn hl_snap_cjk(&self) -> bool {
-        self.flag("hlSnapCjk", true)
-    }
-
-    /// 「导入 md 文档」开关（`notesImportMdEnabled`），控制笔记 tab「导入」子标签是否显示。跟
-    /// `hl_snap_cjk` 缺省开不同，这个缺省关——新功能第一次上线，不想让用户点开笔记 tab 就撞见一个
-    /// 半成品，得手动去「管理→实验室」打开才看得到。
-    pub fn notes_import_md_enabled(&self) -> bool {
-        self.flag("notesImportMdEnabled", false)
-    }
-
-    /// 「单击翻页」开关（`tapPageTurn`，2026-09-24）：xochitl 阅读器里的 `reader-page-turn.qmd` 每次打开书时读它（不轮询），
-    /// 切换后下次打开书生效。缺省关 = xochitl 原生行为。「日漫翻页规则」`rtlPageTurn` 2026-10-07 删除（书架只管入库，
-    /// 翻页方向交给书本身）；旧文件里的这个键原样保留、不再有人读。
-    pub fn tap_page_turn(&self) -> bool {
-        self.flag("tapPageTurn", false)
+    /// 按键名取开关（键必须在 [`super::TOGGLES`] 里；测试用）。
+    #[cfg(test)]
+    pub fn on_key(&self, key: &str) -> bool {
+        self.on(super::toggle(key).unwrap_or_else(|| panic!("{key} 不在 TOGGLES 里")))
     }
 }
 
@@ -76,7 +63,7 @@ mod tests {
     #[test]
     fn hl_snap_cjk_defaults_true_when_missing() {
         let (_t, paths) = tmp_paths();
-        assert!(Qol::load(&paths).hl_snap_cjk(), "文件不存在时缺省视为开，跟 QML 侧一致");
+        assert!(Qol::load(&paths).on_key("hlSnapCjk"), "文件不存在时缺省视为开，跟 QML 侧一致");
     }
 
     #[test]
@@ -93,7 +80,7 @@ mod tests {
         change.insert("hlSnapCjk".into(), Value::Bool(false));
         patch(&paths, change).unwrap();
 
-        assert!(!Qol::load(&paths).hl_snap_cjk(), "patch 的键要生效");
+        assert!(!Qol::load(&paths).on_key("hlSnapCjk"), "patch 的键要生效");
         let full = load(&paths);
         assert_eq!(full["starTodoEnabled"], Value::Bool(true), "没碰过的键不能被冲掉");
         assert_eq!(full["cardhwEnabled"], Value::Bool(true), "没碰过的键不能被冲掉");
@@ -115,6 +102,6 @@ mod tests {
     #[test]
     fn notes_import_md_enabled_defaults_false() {
         let (_t, paths) = tmp_paths();
-        assert!(!Qol::load(&paths).notes_import_md_enabled(), "新功能第一次上线，缺省关，不是缺省开");
+        assert!(!Qol::load(&paths).on_key("notesImportMdEnabled"), "新功能第一次上线，缺省关，不是缺省开");
     }
 }

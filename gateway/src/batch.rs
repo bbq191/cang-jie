@@ -28,13 +28,13 @@ pub enum Action {
 }
 
 impl Action {
+    /// 全部动作（网页按 `stg.batch.<key>` 出标题，`ui.rs` 的测试遍历它核对语言包）。
+    pub const ALL: &'static [Action] = &[Action::Deliver];
+
     pub fn parse(s: &str) -> Option<Action> {
-        match s {
-            "deliver" => Some(Action::Deliver),
-            _ => None,
-        }
+        Action::ALL.iter().copied().find(|a| a.key() == s)
     }
-    fn key(self) -> &'static str {
+    pub fn key(self) -> &'static str {
         match self {
             Action::Deliver => "deliver",
         }
@@ -95,20 +95,29 @@ fn persist(paths: &Paths) {
         let _ = rmsvc_core::fs::write_atomic(&file_of(paths), &b); // 父目录由 write_atomic 自己建
     }
     // 状态每变一次就落一次盘，正好是"该通知网页刷新"的时机（前端不再批量运行时每 3 秒轮询）。
-    crate::events::notify_books("batch");
+    crate::events::notify_books(crate::events::KIND_BATCH);
 }
 
-/// 这本书该动作是否有意义（跟界面批量按钮同一套资格条件）：加入 xochitl=EPUB/PDF。
+/// 这本书该动作是否有意义（跟界面批量按钮同一套资格条件）：加入 xochitl = xochitl 原生能读的格式
+/// （`rmsvc_core::formats::NATIVE_EXTS`，即 EPUB/PDF；book-serve 列表的 `format` 字段就是这几个扩展名或 `other`）。
 pub fn eligible(action: Action, item: &Value) -> bool {
     let format = item.get("format").and_then(|v| v.as_str()).unwrap_or("");
     match action {
-        Action::Deliver => format == "epub" || format == "pdf",
+        Action::Deliver => rmsvc_core::formats::NATIVE_EXTS.contains(&format),
     }
 }
 
+/// `POST /api/batch` 应答：这次排进队列几本、跳过几本（已在队列里的同名书、点名了但不适用的）。
+#[derive(Serialize, Debug, PartialEq)]
 pub struct Enqueued {
     pub queued: usize,
     pub skipped: usize,
+}
+
+/// `POST /api/batch/stop` 应答：清掉了几本还没开始的。
+#[derive(Serialize)]
+struct Stopped {
+    cleared: usize,
 }
 
 /// 到 book-serve 的客户端。每次调用（入队、恢复、处理一本书）现建一个、这一次里共用：每次请求按注册表现查地址，
@@ -186,12 +195,12 @@ pub fn submit(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
         return Err(ApiError::bad("要么给 names，要么 all:true"));
     }
     let e = enqueue(paths, action, names, j.str_or("folder", "")).map_err(ApiError::bad)?;
-    Ok(Reply::ok(&json!({"queued": e.queued, "skipped": e.skipped})))
+    Ok(Reply::ok(&e))
 }
 
 /// `POST /api/batch/stop`：全部中止，见 [`stop`]。
 pub fn stop_route(paths: &Paths, _req: &mut Request<'_>) -> ApiResult {
-    Ok(Reply::ok(&json!({"cleared": stop(paths)})))
+    Ok(Reply::ok(&Stopped { cleared: stop(paths) }))
 }
 
 /// 记入这次新入队的 `queued` 本。一轮批量从空闲开始才重置计数（已经在跑的时候追加，累加进同一轮）；重置时**队列里
@@ -206,22 +215,37 @@ fn start_round(st: &mut State, queued: usize) {
     st.total += queued as u32;
 }
 
-/// 当前批量状态（任何会话都能看）。`action`：正在处理/排队那本的动作；都没有但有上一轮结果时是 `deliver`
-/// （动作只剩这一种，原来另存一份"最近动作"，跟当前任务里的重复，2026-10-07 删掉）；从没跑过是 `null`。
-/// `waitingService`：网关刚重启、恢复出来的队列在等 book-serve 起来。
-pub fn status() -> Value {
+/// `GET /api/batch/status` 应答（任何会话都能看）。
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Status {
+    /// 有 worker 在处理（或 [`resume`] 恢复出来的队列在等 book-serve）。
+    running: bool,
+    /// 网关刚重启、恢复出来的队列在等 book-serve 起来。
+    waiting_service: bool,
+    /// 正在处理/排队那本的动作；都没有但有上一轮结果时是 `deliver`（动作只剩这一种，原来另存一份"最近动作"，跟当前任务里的
+    /// 重复，2026-10-07 删掉）；从没跑过是 `null`。
+    action: Option<Action>,
+    total: u32,
+    done: u32,
+    current: Option<String>,
+    /// 排队中的书名（至多 200 个，网页只拿来标"排队中"）。
+    queued: Vec<String>,
+    failed: Vec<crate::wire::Failed>,
+}
+
+pub fn status() -> Status {
     let st = lock();
-    let action = st.current.as_ref().or(st.queue.front()).map(|j| j.action).or((st.total > 0).then_some(Action::Deliver));
-    json!({
-        "running": st.worker_alive,
-        "waitingService": st.waiting_service,
-        "action": action.map(Action::key),
-        "total": st.total,
-        "done": st.done,
-        "current": st.current.as_ref().map(|j| j.name.clone()),
-        "queued": st.queue.iter().take(200).map(|j| j.name.clone()).collect::<Vec<_>>(),
-        "failed": st.failed.iter().map(|(n, m)| json!({"name": n, "message": m})).collect::<Vec<_>>(),
-    })
+    Status {
+        running: st.worker_alive,
+        waiting_service: st.waiting_service,
+        action: st.current.as_ref().or(st.queue.front()).map(|j| j.action).or((st.total > 0).then_some(Action::Deliver)),
+        total: st.total,
+        done: st.done,
+        current: st.current.as_ref().map(|j| j.name.clone()),
+        queued: st.queue.iter().take(200).map(|j| j.name.clone()).collect(),
+        failed: st.failed.iter().map(|(n, m)| crate::wire::Failed::new(n, m)).collect(),
+    }
 }
 
 /// **全部中止**：清空还没开始的；正在处理的那一本如果还没交给 `book-serve` 就不再提交，已经交出去的会自然跑完
@@ -474,6 +498,7 @@ mod tests {
         assert!(eligible(Action::Deliver, &item("epub")));
         assert!(eligible(Action::Deliver, &item("pdf")));
         assert!(!eligible(Action::Deliver, &item("cbz")), "xochitl 只收 EPUB/PDF");
+        assert!(!eligible(Action::Deliver, &item("other")), "book-serve 把格式收窄前留下的文件报成 other");
     }
 
     #[test]
@@ -582,7 +607,7 @@ mod tests {
             st.total = 3; // 1 本已在做 + 2 本排队
         }
         assert_eq!(stop(&paths), 2);
-        assert_eq!(status()["total"], 1, "停止后总数应只剩正在做的那 1 本");
+        assert_eq!(serde_json::to_value(status()).unwrap()["total"], 1, "停止后总数应只剩正在做的那 1 本");
         assert!(abort_requested(), "正在处理的那一本也要标记中止");
         let saved: State = serde_json::from_str(&std::fs::read_to_string(file_of(&paths)).unwrap()).unwrap();
         assert!(saved.queue.is_empty(), "停止后落盘的队列也必须是空的，否则重启会把被中止的又跑起来");
@@ -667,12 +692,41 @@ mod tests {
     fn status_action_is_derived_and_waiting_flag_reported() {
         let _g = rmsvc_core::sync::lock(&GLOBAL_STATE);
         let saved = std::mem::take(&mut *lock());
+        let status = || serde_json::to_value(status()).unwrap();
         assert!(status()["action"].is_null() && status()["waitingService"] == json!(false));
         lock().total = 2;
         assert_eq!(status()["action"], "deliver");
         lock().waiting_service = true;
         assert_eq!(status()["waitingService"], true);
         assert!(status().get("queuedCount").is_none());
+        *lock() = saved;
+    }
+
+    /// 线上格式快照（2026-10-10，GW-1）：`GET /api/batch/status`、`POST /api/batch/stop` 的字段，网页母版库底栏读它们。
+    #[test]
+    fn wire_snapshot_status_and_stop() {
+        let _g = rmsvc_core::sync::lock(&GLOBAL_STATE);
+        let saved = std::mem::take(&mut *lock());
+        {
+            let mut st = lock();
+            st.current = Some(Job { action: Action::Deliver, name: "b.epub".into(), folder: String::new() });
+            st.queue.push_back(Job { action: Action::Deliver, name: "c.epub".into(), folder: "漫画".into() });
+            st.total = 3;
+            st.done = 1;
+            st.failed.push(("a.epub".into(), "boom".into()));
+            st.worker_alive = true;
+        }
+        assert_eq!(
+            serde_json::to_value(status()).unwrap(),
+            json!({"running": true, "waitingService": false, "action": "deliver", "total": 3, "done": 1, "current": "b.epub", "queued": ["c.epub"], "failed": [{"name": "a.epub", "message": "boom"}]})
+        );
+        let t = tempfile::tempdir().unwrap();
+        let paths = Paths::sandbox(t.path());
+        let mut b: &[u8] = b"";
+        let mut r = Request { method: rmsvc_core::http::Method::Post, path: "/api/batch/stop".into(), query: Default::default(), params: Default::default(), content_type: String::new(), content_length: None, headers: vec![], body: &mut b };
+        let rep = stop_route(&paths, &mut r).unwrap();
+        assert_eq!(serde_json::from_slice::<Value>(&rep.body).unwrap(), json!({"cleared": 1}));
+        assert_eq!(serde_json::to_value(Enqueued { queued: 2, skipped: 1 }).unwrap(), json!({"queued": 2, "skipped": 1}), "POST /api/batch 应答");
         *lock() = saved;
     }
 }

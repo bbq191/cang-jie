@@ -2,14 +2,9 @@
 // 退回前端按 300MB 判，保证新前端配旧后端不坏。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { load } from './load.mjs';
 
-const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'app.js'), 'utf8');
-const m = src.match(/^const stagingLowSpace=.*;$/m);
-assert.ok(m, 'app.js 里找不到 `const stagingLowSpace=…;`');
-const low = new Function(`${m[0]}; return stagingLowSpace;`)();
+const low = load(['core.js'])('stagingLowSpace');
 const MB = 1048576;
 
 test('后端给了 lowSpace：以它为准，不管 freeBytes', () => {

@@ -15,6 +15,7 @@ pub mod ota;
 use rmsvc_core::cache::TtlCache;
 use rmsvc_core::http::{ApiError, ApiResult, Reply, Request};
 use rmsvc_core::paths::Paths;
+use serde::Serialize;
 use std::path::Path;
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -22,8 +23,8 @@ use std::time::Duration;
 /// 健康卡片缓存：切 tab、SSE 触发的重复刷新在这段时间内不重复 fork `systemctl`；刷新按钮带 `fresh=1` 必然现采。
 const HEALTH_TTL: Duration = Duration::from_secs(15);
 
-fn health_cache() -> &'static TtlCache<serde_json::Value> {
-    static C: OnceLock<TtlCache<serde_json::Value>> = OnceLock::new();
+fn health_cache() -> &'static TtlCache<health::Health> {
+    static C: OnceLock<TtlCache<health::Health>> = OnceLock::new();
     C.get_or_init(|| TtlCache::new(HEALTH_TTL))
 }
 
@@ -62,21 +63,42 @@ pub fn wifi(paths: &Paths, _req: &mut Request<'_>) -> ApiResult {
 
 const WIFI_STATE_FILE: &str = "wifi-connectivity.json";
 
+/// 原样转发 wifi-watch 写的文件（字段由那个 shell 脚本定，网关不解释、多出来的字段照传），所以这里不套 DTO。
 fn wifi_status(file: &Path) -> serde_json::Value {
     Some(rmsvc_core::config::load_or_default::<serde_json::Value>(file))
         .filter(|v| v.get("state").and_then(|s| s.as_str()).is_some())
         .unwrap_or_else(|| serde_json::json!({"state": "unknown"}))
 }
 
+/// `GET /api/device/cleanup` 应答。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CleanupList {
+    files: Vec<cleanup::LeftoverFile>,
+    library: Vec<cleanup::LibraryDoc>,
+    /// 回收站代理（qmd）是否已载入 xochitl：没载入时进了队列也不会被执行，前端据此提示。
+    trash_agent: bool,
+    xochitl: bool,
+}
+
 pub fn cleanup_list(paths: &Paths, _req: &mut Request<'_>) -> ApiResult {
     let loaded = crate::enhance::xochitl_loaded(paths);
-    Ok(Reply::ok(&serde_json::json!({
-        "files": cleanup::list_files(paths),
-        "library": cleanup::list_library(&paths.xochitl_dir()),
-        // 回收站代理（qmd）是否已载入 xochitl：没载入时进了队列也不会被执行，前端据此提示。
-        "trashAgent": loaded.qmds.iter().any(|q| q == "shelf-trash-agent.qmd"),
-        "xochitl": loaded.xochitl,
-    })))
+    Ok(Reply::ok(&CleanupList {
+        files: cleanup::list_files(paths),
+        library: cleanup::list_library(&paths.xochitl_dir()),
+        trash_agent: loaded.qmds.iter().any(|q| q == "shelf-trash-agent.qmd"),
+        xochitl: loaded.xochitl,
+    }))
+}
+
+/// `POST /api/device/cleanup/delete` 应答：逐项结果。请求本身合法就是 200——`partial:true` 表示至少一项没删成
+/// （含全部没删成），原因在 `failed`（与批量队列同形 `{name,message}`）。2026-10-10 前这里用 `ok:false` 表示部分失败，
+/// 与基座错误信封 `{ok:false,message}` 撞名，网页得先看 `failed` 再看 `ok` 才分得清（FE-4）。
+#[derive(Serialize)]
+struct CleanupDeleted {
+    deleted: Vec<String>,
+    failed: Vec<crate::wire::Failed>,
+    partial: bool,
 }
 
 pub fn cleanup_delete(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
@@ -88,11 +110,7 @@ pub fn cleanup_delete(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
     }
     let o = cleanup::delete(paths, &area, &names);
     health_cache().invalidate();
-    Ok(Reply::ok(&serde_json::json!({
-        "ok": o.failed.is_empty(),
-        "deleted": o.deleted,
-        "failed": o.failed.iter().map(|(n, e)| serde_json::json!({"name": n, "error": e})).collect::<Vec<_>>(),
-    })))
+    Ok(Reply::ok(&CleanupDeleted { partial: !o.failed.is_empty(), failed: o.failed.iter().map(|(n, e)| crate::wire::Failed::new(n, e)).collect(), deleted: o.deleted }))
 }
 
 #[cfg(test)]
@@ -131,8 +149,41 @@ mod tests {
         assert!(post(&paths, br#"{"area":"books-done"}"#).is_err());
         let v: serde_json::Value = serde_json::from_slice(&post(&paths, br#"{"area":"books-done","names":["a.epub","../x"]}"#).unwrap().body).unwrap();
         assert_eq!(v["deleted"], serde_json::json!(["a.epub"]));
-        assert_eq!(v["failed"][0]["name"], "../x");
-        assert_eq!(v["ok"], false);
+        // 失败项与批量队列同形 `{name,message}`；部分失败标 `partial:true`，不在 200 应答里用错误信封的 `ok:false`（FE-4）
+        assert_eq!(v["failed"], serde_json::json!([{"name": "../x", "message": "文件名不合法：../x"}]));
+        assert_eq!(v["partial"], true);
+        assert!(v.get("ok").is_none(), "200 应答不带 ok，免得跟错误信封 {{ok:false,message}} 撞名");
         assert!(!done.join("a.epub").exists());
+        std::fs::write(done.join("b.epub"), b"x").unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&post(&paths, br#"{"area":"books-done","names":["b.epub"]}"#).unwrap().body).unwrap();
+        assert_eq!(v, serde_json::json!({"deleted": ["b.epub"], "failed": [], "partial": false}));
+    }
+
+    /// 线上格式快照（2026-10-10，GW-1）：`GET /api/device/cleanup` 的字段（「设备健康 → 清理」读它）。
+    #[test]
+    fn wire_snapshot_cleanup_list() {
+        let t = tempfile::tempdir().unwrap();
+        let paths = Paths::sandbox(t.path());
+        let done = cleanup::areas(&paths)[0].1.clone();
+        std::fs::create_dir_all(&done).unwrap();
+        std::fs::write(done.join("a.epub"), b"xy").unwrap();
+        std::fs::File::options().write(true).open(done.join("a.epub")).unwrap().set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1000)).unwrap();
+        let x = paths.xochitl_dir();
+        std::fs::create_dir_all(&x).unwrap();
+        let u = "00000002-1111-1111-1111-111111111111";
+        std::fs::write(x.join(format!("{u}.metadata")), r#"{"type":"DocumentType","visibleName":"书","parent":"","createdTime":"5"}"#).unwrap();
+        std::fs::write(x.join(format!("{u}.pdf")), b"pdf").unwrap();
+        let mut b: &[u8] = b"";
+        let mut r = Request { method: Method::Get, path: "/api/device/cleanup".into(), query: HashMap::new(), params: HashMap::new(), content_type: String::new(), content_length: None, headers: vec![], body: &mut b };
+        let v: serde_json::Value = serde_json::from_slice(&cleanup_list(&paths, &mut r).unwrap().body).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({
+                "files": [{"area": "books-done", "name": "a.epub", "bytes": 2, "mtime": 1000}],
+                "library": [{"uuid": u, "name": "书", "folder": "", "kind": "pdf", "bytes": 3, "createdMs": 5, "sameName": 1}],
+                "trashAgent": false,
+                "xochitl": false,
+            })
+        );
     }
 }

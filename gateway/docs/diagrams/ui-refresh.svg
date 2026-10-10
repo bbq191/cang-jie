@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 630" font-family="Noto Sans CJK SC, sans-serif">
 <defs><marker id="mk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker></defs>
 <rect x="0" y="0" width="1240" height="630" fill="#fbfbfa"/>
-<text x="620.0" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">网页什么时候向网关要数据（gateway/ui/app.js）</text>
+<text x="620.0" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">网页什么时候向网关要数据（gateway/ui/*.js）</text>
 <text x="620.0" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">原则：不轮询；只在“第一次看到”“切回来”“收到事件”三种时刻取数，而且只取受影响的那一块</text>
 <rect x="40" y="80" width="360" height="125" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
 <text x="52" y="100" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">① 打开页面</text>

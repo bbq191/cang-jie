@@ -33,8 +33,8 @@
 | 页面 | `GET /` · `GET /ui/locales/{lang}` · `GET/POST /password` · `GET /api/session` |
 | 服务发现 / 管理 | `GET /api/services`（每项带 `seg`）· `GET /api/manage` · `GET /api/foundation` · `POST /api/manage/{seg}/{start\|stop\|uninstall}` |
 | 事件 | `GET /api/events`（SSE） |
-| 系统增强 | `GET /api/enhance/status` · `PUT /api/enhance/qol`（`hlSnapCjk` / `notesImportMdEnabled` / `tapPageTurn`）（已移除的 `hwStrokeEnabled`、`comicMinMargin`、`rtlPageTurn` 单独传回 400；`/api/enhance/battop/*` 2026-09-30 删） |
-| 设备健康 | `GET /api/device/health[?fresh=1]` · `GET /api/device/ota` · `GET /api/device/wifi` · `GET /api/device/cleanup` · `POST /api/device/cleanup/delete {area, names}` |
+| 系统增强 | `GET /api/enhance/status`（`toggles:[{key,on,kind,loaded}]` 等，2026-10-10 起开关登记在 `enhance/mod.rs` 的 `TOGGLES` 表） · `PUT /api/enhance/qol`（`hlSnapCjk` / `notesImportMdEnabled` / `tapPageTurn`）（已移除的 `hwStrokeEnabled`、`comicMinMargin`、`rtlPageTurn` 单独传回 400；`/api/enhance/battop/*` 2026-09-30 删） |
+| 设备健康 | `GET /api/device/health[?fresh=1]` · `GET /api/device/ota` · `GET /api/device/wifi` · `GET /api/device/cleanup` · `POST /api/device/cleanup/delete {area, names}` → `{deleted, failed:[{name,message}], partial}` |
 | 批量队列 | `POST /api/batch {action: deliver, names? \| all:true, folder?}`（`optimize` 等旧动作回 400） → `{queued, skipped}` · `GET /api/batch/status`（`running` `waitingService` `action` `total` `done` `current` `queued` `failed`） · `POST /api/batch/stop` |
 | 反向代理 | `GET/POST/PUT/DELETE /api/<seg>/*`，`<seg>` ∈ `books` `fonts` `wallpapers` `ink` `transcribe` `mind` `notes` |
 
@@ -58,7 +58,7 @@
 
 - **依赖**：只依赖 [`../rmsvc-core`](../rmsvc-core/README.md)（HTTP 服务器与路由、注册表、事件、TLS、鉴权原语，以及 2026-10-09 起的 `proc`/`config`/`http` 小工具和测试沙箱 `Paths::sandbox`）；独立 Cargo 项目，不在任何 workspace 里。
 - **构建/部署**：没有自己的脚本，由 `shelf/build.sh`（顺手编译本目录）和 `packaging/deploy.sh`（打包二进制 + `systemd/gateway.service`）代管。单独交叉编译：`cargo build --release --target aarch64-unknown-linux-musl`（用本目录 `.cargo/config.toml` 的 CC/AR 覆盖）。
-- **测试**（在仓库根目录跑；2026-10-09 实跑）：`cargo test --manifest-path gateway/Cargo.toml`（62 个）；前端 `node --check gateway/ui/app.js` 与 `node --test gateway/ui/test/*.test.mjs`（4 个文件共 13 项：断网兜底与 401/403 去向、XSS 转义、语言包一致、低空间判据）；浏览器冒烟手动跑 `PUPPETEER_NODE_MODULES=<含 puppeteer 的 node_modules 目录> node gateway/ui/test/smoke.puppeteer.mjs`；可视走查见 [`tools/screenshot-walkthrough/`](tools/screenshot-walkthrough/README.md)。
+- **测试**（在仓库根目录跑；2026-10-10 实跑）：`cargo test --manifest-path gateway/Cargo.toml`（73 个，含各接口线上格式快照、动态 i18n 键覆盖）；前端 `node --check gateway/ui/app.js` 与 `node --test gateway/ui/test/*.test.mjs`（6 个文件共 19 项：core 纯函数与笔记刷新闸门、拼接产物可解析与无加载期副作用、断网兜底与 401/403 去向、XSS 转义、语言包一致、低空间判据）；浏览器冒烟手动跑 `PUPPETEER_NODE_MODULES=<含 puppeteer 的 node_modules 目录> node gateway/ui/test/smoke.puppeteer.mjs`；可视走查见 [`tools/screenshot-walkthrough/`](tools/screenshot-walkthrough/README.md)。
 - **设备上的文件**：二进制 `~/.local/bin/gateway`；配置 `~/.config/shelf/gateway.json`；证书 `~/.config/shelf/tls/`；批量队列 `~/.local/state/shelf/batch.json`。
 
 ## 目录
@@ -70,12 +70,13 @@ src/
   config.rs    gateway.json：HTTPS 开关、密码哈希、mDNS 名、额外证书名、会话天数（读写走 rmsvc-core 的 config 模板）
   proxy.rs     /api/<seg>/* 反向代理
   manage.rs    MODULES 服务表（唯一事实源）、管理台、基石探测
-  events.rs    事件汇聚（spawn 返回总线；Hub 结构 2026-10-07 删除）
+  events.rs    事件汇聚（spawn 返回总线；网关自发事件的 area/kind 常量）
   batch.rs     批量队列（含全部中止、等一本处理完的轮询）
   ui.rs        拼装单页 UI、登录页、改密页
-  enhance/     系统增强开关（qol / loaded）
+  wire.rs      几个接口共用的应答片段（失败项 {name,message}）
+  enhance/     系统增强开关（TOGGLES 开关表 / qol / loaded）
   device/      设备健康（health）、OTA 横幅（ota）、遗留清理（cleanup）
-ui/            index.html、style.css、app.js、auth.css、locales/、test/（前端取数时机与界面规则见白皮书 §05）
+ui/            index.html、style.css、auth.css、locales/、test/，脚本 core/dom/transfer/notes/assets/manage/health/app.js（编译期按 ui.rs 的顺序拼回一个 <script>，见白皮书 §5.1）
 systemd/gateway.service
 tools/screenshot-walkthrough/   前端截图走查工具
 ```

@@ -8,6 +8,7 @@
 use rmsvc_core::http::{ApiError, ApiResult, Reply, Request};
 use rmsvc_core::paths::Paths;
 use rmsvc_core::registry;
+use serde::Serialize;
 use std::time::Duration;
 
 /// 一个可管理的领域模块（网关自身不在此列）。
@@ -22,17 +23,20 @@ pub struct Module {
     /// 该服务是否提供 `GET /events`（SSE）。网关只给提供的服务起订阅线程：mind-serve 是纯被动的
     /// 问答服务（没有事件流，见其 main.rs 头注），此前网关对它每 3 秒打一个 404、白白唤醒它。
     pub events: bool,
+    /// 收到该服务的事件时还要叫醒的网关内部等待方（`events::spawn` 的订阅线程调用）。目前只有 book-serve：批量队列等
+    /// "这本书处理完没有"靠它（`batch::poll_until_settled`）。2026-10-10 前是汇聚循环里写死 `seg == "books"`。
+    pub wake: Option<fn() -> &'static crate::events::Wake>,
 }
 
 pub const MODULES: &[Module] = &[
-    Module { seg: "books", service: "book-serve", only: "book", label: "母版库 / 落原生", events: true },
-    Module { seg: "fonts", service: "font-serve", only: "font", label: "xochitl 字体", events: true },
-    Module { seg: "wallpapers", service: "wallpaper-serve", only: "wallpaper", label: "壁纸", events: true },
+    Module { seg: "books", service: "book-serve", only: "book", label: "母版库 / 落原生", events: true, wake: Some(crate::events::books_wake) },
+    Module { seg: "fonts", service: "font-serve", only: "font", label: "xochitl 字体", events: true, wake: None },
+    Module { seg: "wallpapers", service: "wallpaper-serve", only: "wallpaper", label: "壁纸", events: true, wake: None },
     // 笔记线（notes/）：矿 / 转写 / 脑 / 本，挂同一网关；网页只有 note-serve 注册「笔记」tab，前端组合四个 seg。
-    Module { seg: "ink", service: "ink-serve", only: "ink", label: "笔记·矿（条目库）", events: true },
-    Module { seg: "transcribe", service: "transcribe-serve", only: "transcribe", label: "笔记·转写（手写→文字）", events: true },
-    Module { seg: "mind", service: "mind-serve", only: "mind", label: "笔记·脑（问AI）", events: false },
-    Module { seg: "notes", service: "note-serve", only: "note", label: "笔记·本（笔记本/导出）", events: true },
+    Module { seg: "ink", service: "ink-serve", only: "ink", label: "笔记·矿（条目库）", events: true, wake: None },
+    Module { seg: "transcribe", service: "transcribe-serve", only: "transcribe", label: "笔记·转写（手写→文字）", events: true, wake: None },
+    Module { seg: "mind", service: "mind-serve", only: "mind", label: "笔记·脑（问AI）", events: false, wake: None },
+    Module { seg: "notes", service: "note-serve", only: "note", label: "笔记·本（笔记本/导出）", events: true, wake: None },
 ];
 
 pub fn by_seg(seg: &str) -> Option<&'static Module> {
@@ -48,18 +52,25 @@ pub fn service_of(seg: &str) -> Option<&'static str> {
 /// 网页拿它建 tab 并把 SSE 事件的 `svc`/`area` 对到 tab 上：此前网页启动时为这张映射另取一次 `/api/manage`，
 /// 两边各自从 MODULES 派生；现在映射随服务列表一起给，网页少一个请求、也只认这一处事实源。
 pub fn services(paths: &Paths) -> Reply {
-    let list: Vec<serde_json::Value> = registry::list(paths)
+    let services = registry::list(paths)
         .into_iter()
-        .map(|s| {
-            let seg = MODULES.iter().find(|m| m.service == s.name).map(|m| m.seg);
-            let mut v = serde_json::to_value(&s).unwrap_or_default();
-            if let Some(o) = v.as_object_mut() {
-                o.insert("seg".into(), seg.into());
-            }
-            v
-        })
+        .map(|info| ServiceEntry { seg: MODULES.iter().find(|m| m.service == info.name).map(|m| m.seg), info })
         .collect();
-    Reply::ok(&serde_json::json!({ "services": list }))
+    Reply::ok(&Services { services })
+}
+
+/// `GET /api/services` 应答。
+#[derive(Serialize)]
+struct Services {
+    services: Vec<ServiceEntry>,
+}
+
+/// 注册表里的一项（字段原样）+ 目录表里的 URL 段。
+#[derive(Serialize)]
+struct ServiceEntry {
+    #[serde(flatten)]
+    info: registry::ServiceInfo,
+    seg: Option<&'static str>,
 }
 
 /// 外部命令默认超时。`systemctl start/stop` 正常几十毫秒到几秒；给 30 秒是为了容纳慢启动服务，
@@ -83,22 +94,38 @@ fn running(reg: &[registry::ServiceInfo], m: &Module) -> bool {
     reg.iter().any(|s| s.name == m.service)
 }
 
+/// `GET /api/manage` 应答：每模块三态 + 网关自己（恒在跑）。
+#[derive(Serialize)]
+struct ManageStatus {
+    modules: Vec<ModuleState>,
+    gateway: GatewayState,
+}
+
+#[derive(Serialize)]
+struct GatewayState {
+    running: bool,
+}
+
+/// 一个模块的三态（未装 / 已装未开 / 已开）。原来还有恒为 true 的 `installable` 与跟 `installed` 恒等的 `hasWeb`：
+/// 网页、脚本都不读，2026-10-09 删掉。
+#[derive(Serialize)]
+struct ModuleState {
+    seg: &'static str,
+    service: &'static str,
+    only: &'static str,
+    label: &'static str,
+    installed: bool,
+    running: bool,
+}
+
 /// `GET /api/manage`：每模块三态。
 pub fn status(paths: &Paths) -> Reply {
     let reg = registry::list(paths);
-    let modules: Vec<serde_json::Value> = MODULES
+    let modules = MODULES
         .iter()
-        .map(|m| {
-            let inst = installed(paths, m);
-            serde_json::json!({
-                "seg": m.seg, "service": m.service, "only": m.only, "label": m.label,
-                // 原来还有恒为 true 的 `installable` 与跟 `installed` 恒等的 `hasWeb`：网页、脚本都不读，2026-10-09 删掉。
-                "installed": inst,
-                "running": running(&reg, m),
-            })
-        })
+        .map(|m| ModuleState { seg: m.seg, service: m.service, only: m.only, label: m.label, installed: installed(paths, m), running: running(&reg, m) })
         .collect();
-    Reply::ok(&serde_json::json!({ "modules": modules, "gateway": {"running": true} }))
+    Reply::ok(&ManageStatus { modules, gateway: GatewayState { running: true } })
 }
 
 /// `GET /api/foundation`：基石（xovi + qt-resource-rebuilder）只读探测——引导页据此显示红绿 + 官方链接。
@@ -106,10 +133,26 @@ pub fn status(paths: &Paths) -> Reply {
 /// 这三项探测随之撤掉：再列出来只会是三枚永远"未安装"的红徽章。
 pub fn foundation(paths: &Paths) -> Reply {
     let xovi = paths.home().join("xovi");
-    Reply::ok(&serde_json::json!({
-        "xovi": xovi.join("xovi.so").exists() || xovi.join("start").exists(),
-        "qrr": qrr_dir(paths).exists(),
-    }))
+    Reply::ok(&Foundation { xovi: xovi.join("xovi.so").exists() || xovi.join("start").exists(), qrr: qrr_dir(paths).exists() })
+}
+
+/// `GET /api/foundation` 应答。
+#[derive(Serialize)]
+struct Foundation {
+    xovi: bool,
+    qrr: bool,
+}
+
+/// `POST /api/manage/{seg}/{start|stop|uninstall}` 的成功应答（失败走基座错误信封 `{ok:false,message}`）：
+/// 开关带 `action`，卸载带脚本输出 `log`。
+#[derive(Serialize)]
+struct ActionDone<'a> {
+    ok: bool,
+    service: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    action: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    log: Option<String>,
 }
 
 /// qt-resource-rebuilder 的 exthome（qmd 补丁所在目录）：基石探测与扩展加载扫描共用。
@@ -136,7 +179,7 @@ pub fn toggle(seg: &str, action: &str) -> ApiResult {
         "stop" => run("systemctl", &["stop", &unit]).map_err(ApiError::internal)?,
         _ => return Err(ApiError::bad("action 只能 start|stop")),
     };
-    Ok(Reply::ok(&serde_json::json!({"ok": true, "service": m.service, "action": action})))
+    Ok(Reply::ok(&ActionDone { ok: true, service: m.service, action: Some(action), log: None }))
 }
 
 /// `POST /api/manage/{seg}/uninstall`：调已装的 `shelf-uninstall --only <令牌>`（对称删单元/二进制/qmd）。
@@ -149,7 +192,7 @@ pub fn uninstall(paths: &Paths, seg: &str, req: &mut Request<'_>) -> ApiResult {
         return Err(ApiError::bad("设备上没有 shelf-uninstall（重装一次 shelf 会装上它），网页卸载不可用；可 SSH 跑 uninstall.sh --only"));
     }
     let out = rmsvc_core::proc::run_timeout("sh", &[&script.to_string_lossy(), "--only", m.only], UNINSTALL_TIMEOUT).map_err(ApiError::internal)?;
-    Ok(Reply::ok(&serde_json::json!({"ok": true, "service": m.service, "log": out})))
+    Ok(Reply::ok(&ActionDone { ok: true, service: m.service, action: None, log: Some(out) }))
 }
 
 #[cfg(test)]
@@ -169,6 +212,13 @@ mod tests {
         // mind-serve 没有 /events 路由；其余都有。表和服务真实情况不一致会让网关白打 404（耗电）或漏掉事件。
         let no: Vec<&str> = MODULES.iter().filter(|m| !m.events).map(|m| m.service).collect();
         assert_eq!(no, ["mind-serve"]);
+    }
+    /// 只有 book-serve 的事件要叫醒批量队列的等待方（批量队列只处理母版库的书）。
+    #[test]
+    fn only_book_serve_wakes_batch_queue() {
+        let w: Vec<&str> = MODULES.iter().filter(|m| m.wake.is_some()).map(|m| m.service).collect();
+        assert_eq!(w, ["book-serve"]);
+        assert!(std::ptr::eq(by_seg("books").unwrap().wake.unwrap()(), crate::events::books_wake()));
     }
     #[test]
     fn status_reports_three_states() {
@@ -213,5 +263,30 @@ mod tests {
         for k in ["koreader", "weread", "appload"] {
             assert!(v.get(k).is_none(), "{k} 不该再出现在基石探测里");
         }
+    }
+
+    /// 线上格式快照（2026-10-10，GW-1）：`GET /api/manage` / `/api/foundation` / `/api/services` 的字段。
+    #[test]
+    fn wire_snapshot_manage_foundation_services() {
+        let t = tempfile::tempdir().unwrap();
+        let paths = Paths::sandbox(t.path());
+        std::fs::create_dir_all(paths.bin_dir()).unwrap();
+        std::fs::write(paths.bin_dir().join("book-serve"), b"x").unwrap();
+        let body = |r: Reply| serde_json::from_slice::<serde_json::Value>(&r.body).unwrap();
+        let v = body(status(&paths));
+        assert_eq!(v["gateway"], serde_json::json!({"running": true}));
+        assert_eq!(v["modules"].as_array().unwrap().len(), MODULES.len());
+        assert_eq!(v["modules"][0], serde_json::json!({"seg": "books", "service": "book-serve", "only": "book", "label": "母版库 / 落原生", "installed": true, "running": false}));
+        assert_eq!(v.as_object().unwrap().len(), 2);
+        assert_eq!(body(foundation(&paths)), serde_json::json!({"xovi": false, "qrr": false}));
+        let reg = registry::ServiceInfo { name: "font-serve".into(), port: 7, label: "字体".into(), version: "1".into(), pid: std::process::id(), ui: None };
+        let _r = registry::register(&paths, &reg).unwrap();
+        let v = body(services(&paths));
+        let mut want = serde_json::to_value(&reg).unwrap();
+        want["seg"] = "fonts".into();
+        assert_eq!(v, serde_json::json!({"services": [want]}));
+        let done = |a: ActionDone| serde_json::to_value(a).unwrap();
+        assert_eq!(done(ActionDone { ok: true, service: "book-serve", action: Some("stop"), log: None }), serde_json::json!({"ok": true, "service": "book-serve", "action": "stop"}));
+        assert_eq!(done(ActionDone { ok: true, service: "book-serve", action: None, log: Some("x".into()) }), serde_json::json!({"ok": true, "service": "book-serve", "log": "x"}));
     }
 }

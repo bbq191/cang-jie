@@ -478,5 +478,8 @@
   "notes.push.openMd": "打开导出的 md",
   "stg.batch.waiting": "批量队列还有 {n} 本，等 book-serve 就绪后继续",
   "stg.bar.allBusy": "选中的书都在处理中，稍后再删",
-  "stg.dest.createFirst": "先点「创建」建好新文件夹，或选一个已有的加入位置"
+  "stg.dest.createFirst": "先点「创建」建好新文件夹，或选一个已有的加入位置",
+  "stg.fmt.other": "其他格式",
+  "stg.bar.deliverVerb": "加入",
+  "stg.bar.deliverObject": "xochitl"
 }

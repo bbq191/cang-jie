@@ -13,12 +13,13 @@ import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { concatenated } from './load.mjs';
 const PW = process.env.PLAYWRIGHT_NODE_MODULES;
 const require = createRequire((PW || process.env.PUPPETEER_NODE_MODULES || process.cwd() + '/node_modules') + '/');
 const UI = join(dirname(fileURLToPath(import.meta.url)), '..') + '/';
 let html = fs.readFileSync(UI + 'index.html', 'utf8');
-const exts = JSON.stringify({book:['epub','pdf'],font:['ttf'],image:['png']});
-html = html.replace('__STYLE__', fs.readFileSync(UI + 'style.css','utf8')).replace('__SCRIPT__', fs.readFileSync(UI + 'app.js','utf8').replace('__EXTS__', exts));
+// 脚本 = src/ui.rs 按顺序拼接的几个源文件（与网关页面同一份，见 load.mjs）。
+html = html.replace('__STYLE__', fs.readFileSync(UI + 'style.css','utf8')).replace('__SCRIPT__', () => concatenated());
 const zh = fs.readFileSync(UI + 'locales/zh-CN.json','utf8');
 const mock = `
 window.__hits = {}; window.__es = []; window.__hidden = false; window.__xss = 0;
@@ -36,17 +37,22 @@ const routes = {
   '/api/fonts/ui': () => ({ok:true, items:[{name:'Sarasa UI SC', bytes:135000000, extra:{names:{cn:'更纱黑体 UI SC'}, cjkPct:100, files:['a.ttf','b.ttf','c.ttf']}}, {name:evil, bytes:1, extra:{cjkPct:0}}], sans:'Sarasa UI SC', serif:'', restartNeeded:true}),
   '/api/wallpapers': () => ({items:[]}), '/api/wallpapers/status': () => ({ok:true, mode:'sequential'}),
   '/api/ink/books': () => ({items:[{uuid:'u1', title:'书', entries:1}]}),
-  '/api/ink/books/u1': () => ({uuid:'u1', entries:[{id:'e1', status:'pending', chapter:0, page_index:0, destination:'both', style:'body', text:'hi', updated:1, ask_ai:true, question:'q'}]}),
+  '/api/ink/books/u1': () => ({uuid:'u1', entries:[{id:'e1', status:'pending', live:true, chapter:0, page_index:0, destination:'both', style:'body', text:'hi', updated:1, ask_ai:true, question:'q'}]}),
   '/api/mind/books/u1/entries/e1/ask': () => ({ok:false, message:'模型没配 key'}),
   '/api/notes/books/u1/sync': () => ({chapters:[]}),
   '/api/transcribe/status': () => ({failures:[]}),
-  '/api/books/staging': () => ({ok:true, items:[{name: evil, format:'epub', bytes:1000, mtime:1, delivered:{deliver:{status:'failed', message:'"><img src=x onerror=window.__xss=1>'}}}], freeBytes: 9e9}),
+  '/api/books/staging': () => ({ok:true, items:[{name: evil, title: evil.replace(/\.epub$/, ''), series: evil.replace(/\.epub$/, ''), done:false, format:'epub', bytes:1000, mtime:1, delivered:{deliver:{status:'failed', message:'"><img src=x onerror=window.__xss=1>'}}}, {name:'旧漫画.cbz', title:'旧漫画.cbz', series:'旧漫画.cbz', done:false, format:'other', bytes:10, mtime:1}, {name:'已加入 -- 某作者.epub', title:'已加入', series:'已加入', done:true, format:'epub', bytes:10, mtime:1, delivered:{native:1}}], freeBytes: 9e9}),
   '/api/books/status': () => ({ok:true, xochitlFolders:[]}),
   '/api/session': () => ({ok:true, mustChange:false}),
   '/api/batch/status': () => ({running:false,total:0,done:0,queued:[],failed:[]}),
-  '/api/foundation': () => ({}), '/api/enhance/status': () => ({}),
+  '/api/foundation': () => ({}),
+  '/api/enhance/status': () => ({hlSnapCjk:true, notesImportMdEnabled:false, tapPageTurn:false, loaded:{xochitl:true, xovi:true, extensions:[], qmds:[], qmdsPending:[]},
+    toggles:[{key:'hlSnapCjk', on:true, kind:'extension', loaded:'on'}, {key:'tapPageTurn', on:false, kind:'patch', loaded:'pending'}, {key:'notesImportMdEnabled', on:false, kind:'web', loaded:null}]}),
   '/api/books/agent-failures': () => ({items: window.__fails}),
   '/api/device/wifi': () => ({ssid: evil, state:'portal', code:'302', at:1}),
+  '/api/device/cleanup': () => ({files:[{area:'books-done', name:'旧.epub', bytes:1, mtime:1}], library:[], trashAgent:true, xochitl:true}),
+  '/api/device/cleanup/delete': () => ({deleted:[], failed:[{name:'旧.epub', message:'拒绝原因'}], partial:true}),
+  '/api/manage': () => ({modules:[], gateway:{running:true}}),
   '/api/books/agent-failures/clear': () => { const n = window.__fails.length; window.__fails = []; return {ok:true, cleared:n}; },
 };
 window.__fails = [{kind:'trash', name: evil, uuid:'11111111-1111-1111-1111-111111111111', at:1}, {kind:'mkdir', name:'新文件夹', at:2}];
@@ -81,6 +87,16 @@ out.initialHits = await hits();
 out.xss = await page.evaluate(() => window.__xss);
 out.listText = await page.evaluate(() => (document.querySelector('#stglist')||{}).textContent || '');
 out.imgInjected = await page.evaluate(() => document.querySelectorAll('#stglist img').length);
+// 母版库里残留的非 EPUB/PDF 文件（book-serve 报 format:"other"）：徽章显示真实扩展名，不能冒充 EPUB；格式筛选项来自注入的 EXT.book
+out.fmtBadges = await page.evaluate(() => [...document.querySelectorAll('#stglist .badge.fmt')].map(b => b.textContent));
+// 显示名 / 搜索建议 / 「已加入」筛选直接用 book-serve 给的 title / series / done（不再前端镜像规则）
+out.stgNames = await page.evaluate(() => [...document.querySelectorAll('#stglist .stg-name')].map(n => n.textContent));
+out.stgChips = await page.evaluate(() => [...document.querySelectorAll('#stgchips .chip')].map(c => c.textContent));
+out.stgSeries = await page.evaluate(() => [...document.querySelectorAll('#stgnames option')].map(o => o.value));
+out.fmtOptions = await page.evaluate(() => [...document.querySelectorAll('#stgfmt option')].map(o => o.value));
+// 底栏「加入 xochitl」按钮：动词（窄屏可省）与宾语是两个语言包键，不再用正则切整句译文（FE-10）
+out.deliverBtn = await page.evaluate(() => { const cb = document.querySelector('#stglist input[type=checkbox]'); cb.click();
+  const b = document.querySelector('#stgbar .stgbar-btns .btn.pri'); const r = [b.querySelector('.lbl-long').textContent, b.textContent]; cb.click(); return r; });
 // 代理放弃横幅：页面打开即显示，名字按文本显示；agent-failed 事件只重取这一个接口；「知道了」清空并移除横幅
 out.failBanner = await page.evaluate(() => { const b = document.querySelector('#agentfail'); return b ? {li: b.querySelectorAll('li').length, img: b.querySelectorAll('img').length, text: b.textContent} : null; });
 // WiFi 上不了外网横幅：打开即显示，SSID 按文本显示；× 关掉
@@ -199,6 +215,23 @@ await page.evaluate(() => window.__es[window.__es.length - 1].onmessage({data: J
 await new Promise(r => setTimeout(r, 400));
 out.otherFonts = (await hits('/api/fonts')) - f0;
 out.otherWalls = (await hits('/api/wallpapers')) - w0;
+// 「管理 → 设备健康 → 清理」：部分失败（partial:true）按 {name,message} 列出原因（FE-4）
+await page.evaluate(() => document.querySelectorAll('#tabs button')[3].click());
+await new Promise(r => setTimeout(r, 400));
+// 「管理 → 系统增强/实验室」：卡片按开关表循环出来，勾选状态与加载徽章来自 toggles（网页不认识 .so/.qmd 文件名，GW-2）
+out.toggles = await page.evaluate(() => ['enhance', 'lab'].map(p => [...document.querySelectorAll(`[data-toggles="${p}"] .card`)].map(c => [c.querySelector('input').checked, c.querySelector('.badge').textContent])));
+out.cleanupPartial = await page.evaluate(async () => {
+  document.querySelector('[data-sub="health"]').click();
+  await new Promise(r => setTimeout(r, 300));
+  document.querySelectorAll('#healthBox > .subnav button')[4].click();
+  await new Promise(r => setTimeout(r, 300));
+  const cb = document.querySelector('[data-files] input[type=checkbox]'); if (!cb) return 'no-row';
+  cb.click(); document.querySelector('[data-delfiles]').click();
+  await new Promise(r => setTimeout(r, 50));
+  document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter'}));
+  await new Promise(r => setTimeout(r, 300));
+  return document.querySelector('#toasthost').textContent;
+});
 // 无轮询：等 4 秒无新请求
 const h1 = await hits();
 await new Promise(r => setTimeout(r, 4000));
@@ -207,6 +240,12 @@ await browser.close();
 console.log(JSON.stringify({ ...out, errs }, null, 1));
 assert.equal(out.xss, 0, '含 HTML 的文件名/错误文案不能执行脚本');
 assert.equal(out.imgInjected, 0, '不能注入 <img>');
+assert.deepEqual(out.fmtBadges, ['EPUB', 'CBZ'], 'format:"other" 不能显示成 EPUB');
+assert.deepEqual(out.stgNames, ['<img src=x onerror=window.__xss=1>', '旧漫画.cbz'], '列表显示 title，默认「未加入」不列 done 的书');
+assert.deepEqual(out.stgChips, ['全部 3', '未加入 2', '已加入 1'], '筛选计数按 done');
+assert.deepEqual(out.stgSeries, ['<img src=x onerror=window.__xss=1>', '旧漫画.cbz', '已加入'], '搜索建议用 series');
+assert.deepEqual(out.deliverBtn, ['加入 ', '加入 xochitl1'], '底栏按钮 = 动词 + 宾语 + 数量');
+assert.deepEqual(out.fmtOptions, ['', 'epub', 'pdf'], '格式筛选项来自 EXT.book');
 assert.ok(out.failBanner && out.failBanner.li === 2 && out.failBanner.img === 0 && out.failBanner.text.includes('<img src=x'), '代理放弃横幅：两条、名字按文本显示');
 assert.deepEqual(out.failEventHits, [1, 0], 'agent-failed 事件只重取放弃记录，不刷母版库');
 assert.deepEqual(out.failAck, [1, false], '「知道了」清空服务端记录并移除横幅');
@@ -234,7 +273,7 @@ assert.equal(out.queueEventStagingHits, 0, '网关排队/进度事件不该全�
 assert.ok(out.queueEventBatchHits >= 1 && out.queueEventBatchHits <= 2, `排队事件应重取批量状态且合并，实际 ${out.queueEventBatchHits} 次`);
 assert.equal(out.hiddenHits, 0, '页面隐藏时不该刷新');
 assert.equal(out.afterVisible, 1, '可见后应补刷一次');
-assert.equal(out.searchImmediate, 1, '敲字后同一时刻不该立即重画（防抖）');
+assert.equal(out.searchImmediate, 2, '敲字后同一时刻不该立即重画（防抖，两本都还在）');
 assert.equal(out.searchAfter, 0, '防抖到点后过滤应生效');
 assert.ok(out.esUrl.includes('ka=60'), 'SSE 应带 ?ka=60 拉长心跳');
 assert.equal(out.esClosedWhileHidden, true, '页面隐藏超时后应断开 SSE');
@@ -245,6 +284,8 @@ assert.equal(out.reopenSvc, 1, '重连成功应补查一次服务集合（断线
 assert.deepEqual(out.svcCheck, [0, 1], '隐藏时 manage 事件不取 /api/services，可见后补查一次');
 assert.deepEqual(out.closedRecovery, [1, 1, true], 'EventSource 进 CLOSED：关掉旧的、查一次会话、退避后新开一条');
 assert.equal(out.connectingUntouched, 1, '浏览器自己在重连（CONNECTING）时不另开连接');
+assert.deepEqual(out.toggles, [[[true, '已加载'], [false, '待重启']], [[false, '网页功能']]], '系统增强/实验室开关按 toggles 渲染');
+assert.ok(out.cleanupPartial.includes('旧.epub') && out.cleanupPartial.includes('拒绝原因'), `清理部分失败应列出 {name,message}：${out.cleanupPartial}`);
 assert.equal(out.idleHits, 0, '空闲时不该有轮询');
 assert.deepEqual(errs, [], '不该有 JS 报错');
 console.log('smoke OK');
