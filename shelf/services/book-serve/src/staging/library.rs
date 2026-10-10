@@ -184,11 +184,8 @@ impl Staging {
             if name.starts_with('.') || !md.is_file() {
                 continue;
             }
-            let format = match formats::ext_of(&name).as_str() {
-                "epub" => "epub",
-                "pdf" => "pdf",
-                _ => "other",
-            };
+            let ext = formats::ext_of(&name);
+            let format = formats::NATIVE_EXTS.iter().copied().find(|e| *e == ext).unwrap_or("other");
             seen.insert(name.clone());
             let mtime = md.modified().ok().map(rmsvc_core::clock::secs_of).unwrap_or(0);
             let busy = self.is_busy(&name);

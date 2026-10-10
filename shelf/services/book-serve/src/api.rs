@@ -27,6 +27,7 @@
 use crate::service_state::State;
 use crate::staging::StagingStore;
 use rmsvc_core::asset::{self, AssetUploadFlow};
+use rmsvc_core::formats;
 use rmsvc_core::http::{bind, ApiError, ApiResult, Reply, Request, Router};
 use std::sync::Arc;
 
@@ -48,7 +49,8 @@ pub fn router(st: Arc<State>) -> Router {
         .get("/staging/file", bind(&st, |s, r| {
             let name = r.q_required("name")?.to_string();
             let (f, len) = s.staging.open_for_download(&name).map_err(ApiError::bad)?;
-            let ctype = shelf_conv::direct_content_type(&name).map(|c| c.mime()).unwrap_or("application/octet-stream");
+            // 母版库只收 EPUB/PDF；更早留下的别的格式按二进制下载
+            let ctype = if formats::has_ext(&name, formats::NATIVE_EXTS) { formats::mime_of(&name) } else { "application/octet-stream" };
             Ok(Reply::sized_stream(ctype, Box::new(std::io::BufReader::new(f)), len).with_header("Content-Disposition", &rmsvc_core::multipart::content_disposition(&name)))
         }))
         .post("/staging/rename", bind(&st, |s, r| {
