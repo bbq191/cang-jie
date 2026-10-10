@@ -15,6 +15,7 @@ pub mod ota;
 use rmsvc_core::cache::TtlCache;
 use rmsvc_core::http::{ApiError, ApiResult, Reply, Request};
 use rmsvc_core::paths::Paths;
+use serde::Serialize;
 use std::path::Path;
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -22,8 +23,8 @@ use std::time::Duration;
 /// 健康卡片缓存：切 tab、SSE 触发的重复刷新在这段时间内不重复 fork `systemctl`；刷新按钮带 `fresh=1` 必然现采。
 const HEALTH_TTL: Duration = Duration::from_secs(15);
 
-fn health_cache() -> &'static TtlCache<serde_json::Value> {
-    static C: OnceLock<TtlCache<serde_json::Value>> = OnceLock::new();
+fn health_cache() -> &'static TtlCache<health::Health> {
+    static C: OnceLock<TtlCache<health::Health>> = OnceLock::new();
     C.get_or_init(|| TtlCache::new(HEALTH_TTL))
 }
 
@@ -62,21 +63,46 @@ pub fn wifi(paths: &Paths, _req: &mut Request<'_>) -> ApiResult {
 
 const WIFI_STATE_FILE: &str = "wifi-connectivity.json";
 
+/// 原样转发 wifi-watch 写的文件（字段由那个 shell 脚本定，网关不解释、多出来的字段照传），所以这里不套 DTO。
 fn wifi_status(file: &Path) -> serde_json::Value {
     Some(rmsvc_core::config::load_or_default::<serde_json::Value>(file))
         .filter(|v| v.get("state").and_then(|s| s.as_str()).is_some())
         .unwrap_or_else(|| serde_json::json!({"state": "unknown"}))
 }
 
+/// `GET /api/device/cleanup` 应答。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CleanupList {
+    files: Vec<cleanup::LeftoverFile>,
+    library: Vec<cleanup::LibraryDoc>,
+    /// 回收站代理（qmd）是否已载入 xochitl：没载入时进了队列也不会被执行，前端据此提示。
+    trash_agent: bool,
+    xochitl: bool,
+}
+
 pub fn cleanup_list(paths: &Paths, _req: &mut Request<'_>) -> ApiResult {
     let loaded = crate::enhance::xochitl_loaded(paths);
-    Ok(Reply::ok(&serde_json::json!({
-        "files": cleanup::list_files(paths),
-        "library": cleanup::list_library(&paths.xochitl_dir()),
-        // 回收站代理（qmd）是否已载入 xochitl：没载入时进了队列也不会被执行，前端据此提示。
-        "trashAgent": loaded.qmds.iter().any(|q| q == "shelf-trash-agent.qmd"),
-        "xochitl": loaded.xochitl,
-    })))
+    Ok(Reply::ok(&CleanupList {
+        files: cleanup::list_files(paths),
+        library: cleanup::list_library(&paths.xochitl_dir()),
+        trash_agent: loaded.qmds.iter().any(|q| q == "shelf-trash-agent.qmd"),
+        xochitl: loaded.xochitl,
+    }))
+}
+
+/// `POST /api/device/cleanup/delete` 应答。
+#[derive(Serialize)]
+struct CleanupDeleted {
+    ok: bool,
+    deleted: Vec<String>,
+    failed: Vec<DeleteFailed>,
+}
+
+#[derive(Serialize)]
+struct DeleteFailed {
+    name: String,
+    error: String,
 }
 
 pub fn cleanup_delete(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
@@ -88,11 +114,7 @@ pub fn cleanup_delete(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
     }
     let o = cleanup::delete(paths, &area, &names);
     health_cache().invalidate();
-    Ok(Reply::ok(&serde_json::json!({
-        "ok": o.failed.is_empty(),
-        "deleted": o.deleted,
-        "failed": o.failed.iter().map(|(n, e)| serde_json::json!({"name": n, "error": e})).collect::<Vec<_>>(),
-    })))
+    Ok(Reply::ok(&CleanupDeleted { ok: o.failed.is_empty(), failed: o.failed.into_iter().map(|(name, error)| DeleteFailed { name, error }).collect(), deleted: o.deleted }))
 }
 
 #[cfg(test)]

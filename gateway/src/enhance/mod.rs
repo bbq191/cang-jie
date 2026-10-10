@@ -12,6 +12,7 @@ mod qol;
 
 use rmsvc_core::http::{ApiError, ApiResult, Reply, Request};
 use rmsvc_core::paths::Paths;
+use serde::Serialize;
 
 /// xochitl 扩展加载状态的扫描器（进程级缓存，见 [`loaded::Scanner`]）。
 static LOADED: loaded::Scanner = loaded::Scanner::new();
@@ -22,14 +23,19 @@ pub fn xochitl_loaded(paths: &Paths) -> loaded::Loaded {
     LOADED.scan(std::path::Path::new("/proc"), &crate::manage::qrr_dir(paths))
 }
 
+/// `GET /api/enhance/status` 应答（`PUT /api/enhance/qol` 改完也回这一份）。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Status {
+    hl_snap_cjk: bool,
+    notes_import_md_enabled: bool,
+    tap_page_turn: bool,
+    loaded: loaded::Loaded,
+}
+
 pub fn status(paths: &Paths) -> Reply {
     let q = qol::Qol::load(paths);
-    Reply::ok(&serde_json::json!({
-        "hlSnapCjk": q.hl_snap_cjk(),
-        "notesImportMdEnabled": q.notes_import_md_enabled(),
-        "tapPageTurn": q.tap_page_turn(),
-        "loaded": xochitl_loaded(paths),
-    }))
+    Reply::ok(&Status { hl_snap_cjk: q.hl_snap_cjk(), notes_import_md_enabled: q.notes_import_md_enabled(), tap_page_turn: q.tap_page_turn(), loaded: xochitl_loaded(paths) })
 }
 
 /// `PUT /api/enhance/qol`：接 `{hlSnapCjk}`/`{notesImportMdEnabled}`/`{tapPageTurn}`，body 里出现

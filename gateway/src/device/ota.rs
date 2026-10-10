@@ -77,10 +77,6 @@ pub fn firmware() -> Firmware {
     FIRMWARE.get().cloned().unwrap_or(Firmware::Pending)
 }
 
-pub fn firmware_json() -> serde_json::Value {
-    serde_json::to_value(firmware()).unwrap_or_default()
-}
-
 /// 流式算 sha256（64KB 缓冲，不把几十 MB 读进内存），再查白名单。
 pub fn hash_firmware(bin: &Path, allow: &[(String, String)]) -> Firmware {
     use sha2::Digest;

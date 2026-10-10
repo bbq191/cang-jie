@@ -15,6 +15,7 @@ mod events;
 mod manage;
 mod proxy;
 mod ui;
+mod wire;
 
 use rmsvc_core::http::{bind, ApiError, Method, Reply, Router, ServeOpts};
 use rmsvc_core::paths::Paths;
@@ -133,7 +134,7 @@ fn main() {
             .post("/password", bind(st, |s, r| s.change_password(r)))
             .get("/api/session", bind(st, |s, _| Ok(s.session_info())));
     } else {
-        router = router.get("/api/session", |_| Ok(Reply::ok(&serde_json::json!({"ok": true, "mustChange": false, "auth": false}))));
+        router = router.get("/api/session", |_| Ok(Reply::ok(&auth::Session { ok: true, must_change: false, auth: Some(false) })));
     }
     // 管理台/引导等网关自身路由。路由器按"最具体优先"分发（字面段多者胜，见 rmsvc_core::http::router），
     // 与注册先后无关——/api/manage 这类不会被 /api/{svc}/* 代理通配抢走；旧注释"必须先注册"已不成立（09-20 起）。

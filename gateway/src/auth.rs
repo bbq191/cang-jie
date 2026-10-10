@@ -10,6 +10,7 @@ use rmsvc_core::auth::{parse_basic, parse_cookie, IpFailLimiter, SessionStore, V
 use rmsvc_core::http::{ApiError, ApiResult, Guard, GuardRequest, Method, Reply, Request};
 use rmsvc_core::paths::Paths;
 use rmsvc_core::sync::lock;
+use serde::Serialize;
 use std::sync::{Arc, Mutex};
 
 pub const COOKIE: &str = "shelf_session";
@@ -156,7 +157,7 @@ impl AuthState {
         let tok = self.sessions.issue();
         let dest = if self.must_change() { "/password".to_string() } else if is_local_path(&next) { next } else { "/".into() };
         let cookie = self.cookie_header(&tok, self.sessions.ttl().as_secs());
-        Ok(if json { Reply::ok(&serde_json::json!({"ok": true, "mustChange": self.must_change(), "next": dest})) } else { Reply::redirect(&dest) }.with_header("Set-Cookie", &cookie))
+        Ok(if json { Reply::ok(&LoggedIn { ok: true, must_change: self.must_change(), next: dest }) } else { Reply::redirect(&dest) }.with_header("Set-Cookie", &cookie))
     }
 
     /// `POST /logout`。
@@ -206,13 +207,40 @@ impl AuthState {
         // 改密后踢掉其它设备的会话，本会话保留。
         let keep = req.header("Cookie").and_then(|c| parse_cookie(c, COOKIE)).unwrap_or_default();
         self.sessions.revoke_others(&keep);
-        Ok(if json { Reply::ok(&serde_json::json!({"ok": true, "message": "密码已更新"})) } else { Reply::redirect("/") })
+        Ok(if json { Reply::ok(&PasswordChanged { ok: true, message: "密码已更新" }) } else { Reply::redirect("/") })
     }
 
     /// `GET /api/session`。
     pub fn session_info(&self) -> Reply {
-        Reply::ok(&serde_json::json!({"ok": true, "mustChange": self.must_change()}))
+        Reply::ok(&Session { ok: true, must_change: self.must_change(), auth: None })
     }
+}
+
+/// `GET /api/session` 应答。没开认证时（`auth=false` 配置）网关不建 [`AuthState`]，由 main.rs 直接回
+/// `{ok:true, mustChange:false, auth:false}`——`auth` 字段只在那时出现。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Session {
+    pub ok: bool,
+    pub must_change: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth: Option<bool>,
+}
+
+/// `POST /login`（JSON）成功应答：`next` 是登录后该去的本站路径（首登必改时是 `/password`）。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LoggedIn {
+    ok: bool,
+    must_change: bool,
+    next: String,
+}
+
+/// `POST /password`（JSON）成功应答。
+#[derive(Serialize)]
+struct PasswordChanged {
+    ok: bool,
+    message: &'static str,
 }
 
 fn read_password_body(req: &mut Request<'_>) -> Result<(String, String, bool), ApiError> {
@@ -474,5 +502,7 @@ mod tests {
         let mut b: &[u8] = br#"{"new":"longer1"}"#;
         let rep = st.change_password(&mut req(Method::Post, "/password", "application/json", &[("Authorization", &basic)], &mut b)).unwrap();
         assert_eq!(body(&rep), serde_json::json!({"ok": true, "message": "密码已更新"}));
+        let no_auth = serde_json::to_value(Session { ok: true, must_change: false, auth: Some(false) }).unwrap();
+        assert_eq!(no_auth, serde_json::json!({"ok": true, "mustChange": false, "auth": false}), "没开认证时 main.rs 回的那一份");
     }
 }

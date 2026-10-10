@@ -8,6 +8,7 @@
 use rmsvc_core::http::{ApiError, ApiResult, Reply, Request};
 use rmsvc_core::paths::Paths;
 use rmsvc_core::registry;
+use serde::Serialize;
 use std::time::Duration;
 
 /// 一个可管理的领域模块（网关自身不在此列）。
@@ -48,18 +49,25 @@ pub fn service_of(seg: &str) -> Option<&'static str> {
 /// 网页拿它建 tab 并把 SSE 事件的 `svc`/`area` 对到 tab 上：此前网页启动时为这张映射另取一次 `/api/manage`，
 /// 两边各自从 MODULES 派生；现在映射随服务列表一起给，网页少一个请求、也只认这一处事实源。
 pub fn services(paths: &Paths) -> Reply {
-    let list: Vec<serde_json::Value> = registry::list(paths)
+    let services = registry::list(paths)
         .into_iter()
-        .map(|s| {
-            let seg = MODULES.iter().find(|m| m.service == s.name).map(|m| m.seg);
-            let mut v = serde_json::to_value(&s).unwrap_or_default();
-            if let Some(o) = v.as_object_mut() {
-                o.insert("seg".into(), seg.into());
-            }
-            v
-        })
+        .map(|info| ServiceEntry { seg: MODULES.iter().find(|m| m.service == info.name).map(|m| m.seg), info })
         .collect();
-    Reply::ok(&serde_json::json!({ "services": list }))
+    Reply::ok(&Services { services })
+}
+
+/// `GET /api/services` 应答。
+#[derive(Serialize)]
+struct Services {
+    services: Vec<ServiceEntry>,
+}
+
+/// 注册表里的一项（字段原样）+ 目录表里的 URL 段。
+#[derive(Serialize)]
+struct ServiceEntry {
+    #[serde(flatten)]
+    info: registry::ServiceInfo,
+    seg: Option<&'static str>,
 }
 
 /// 外部命令默认超时。`systemctl start/stop` 正常几十毫秒到几秒；给 30 秒是为了容纳慢启动服务，
@@ -83,22 +91,38 @@ fn running(reg: &[registry::ServiceInfo], m: &Module) -> bool {
     reg.iter().any(|s| s.name == m.service)
 }
 
+/// `GET /api/manage` 应答：每模块三态 + 网关自己（恒在跑）。
+#[derive(Serialize)]
+struct ManageStatus {
+    modules: Vec<ModuleState>,
+    gateway: GatewayState,
+}
+
+#[derive(Serialize)]
+struct GatewayState {
+    running: bool,
+}
+
+/// 一个模块的三态（未装 / 已装未开 / 已开）。原来还有恒为 true 的 `installable` 与跟 `installed` 恒等的 `hasWeb`：
+/// 网页、脚本都不读，2026-10-09 删掉。
+#[derive(Serialize)]
+struct ModuleState {
+    seg: &'static str,
+    service: &'static str,
+    only: &'static str,
+    label: &'static str,
+    installed: bool,
+    running: bool,
+}
+
 /// `GET /api/manage`：每模块三态。
 pub fn status(paths: &Paths) -> Reply {
     let reg = registry::list(paths);
-    let modules: Vec<serde_json::Value> = MODULES
+    let modules = MODULES
         .iter()
-        .map(|m| {
-            let inst = installed(paths, m);
-            serde_json::json!({
-                "seg": m.seg, "service": m.service, "only": m.only, "label": m.label,
-                // 原来还有恒为 true 的 `installable` 与跟 `installed` 恒等的 `hasWeb`：网页、脚本都不读，2026-10-09 删掉。
-                "installed": inst,
-                "running": running(&reg, m),
-            })
-        })
+        .map(|m| ModuleState { seg: m.seg, service: m.service, only: m.only, label: m.label, installed: installed(paths, m), running: running(&reg, m) })
         .collect();
-    Reply::ok(&serde_json::json!({ "modules": modules, "gateway": {"running": true} }))
+    Reply::ok(&ManageStatus { modules, gateway: GatewayState { running: true } })
 }
 
 /// `GET /api/foundation`：基石（xovi + qt-resource-rebuilder）只读探测——引导页据此显示红绿 + 官方链接。
@@ -106,10 +130,26 @@ pub fn status(paths: &Paths) -> Reply {
 /// 这三项探测随之撤掉：再列出来只会是三枚永远"未安装"的红徽章。
 pub fn foundation(paths: &Paths) -> Reply {
     let xovi = paths.home().join("xovi");
-    Reply::ok(&serde_json::json!({
-        "xovi": xovi.join("xovi.so").exists() || xovi.join("start").exists(),
-        "qrr": qrr_dir(paths).exists(),
-    }))
+    Reply::ok(&Foundation { xovi: xovi.join("xovi.so").exists() || xovi.join("start").exists(), qrr: qrr_dir(paths).exists() })
+}
+
+/// `GET /api/foundation` 应答。
+#[derive(Serialize)]
+struct Foundation {
+    xovi: bool,
+    qrr: bool,
+}
+
+/// `POST /api/manage/{seg}/{start|stop|uninstall}` 的成功应答（失败走基座错误信封 `{ok:false,message}`）：
+/// 开关带 `action`，卸载带脚本输出 `log`。
+#[derive(Serialize)]
+struct ActionDone<'a> {
+    ok: bool,
+    service: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    action: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    log: Option<String>,
 }
 
 /// qt-resource-rebuilder 的 exthome（qmd 补丁所在目录）：基石探测与扩展加载扫描共用。
@@ -136,7 +176,7 @@ pub fn toggle(seg: &str, action: &str) -> ApiResult {
         "stop" => run("systemctl", &["stop", &unit]).map_err(ApiError::internal)?,
         _ => return Err(ApiError::bad("action 只能 start|stop")),
     };
-    Ok(Reply::ok(&serde_json::json!({"ok": true, "service": m.service, "action": action})))
+    Ok(Reply::ok(&ActionDone { ok: true, service: m.service, action: Some(action), log: None }))
 }
 
 /// `POST /api/manage/{seg}/uninstall`：调已装的 `shelf-uninstall --only <令牌>`（对称删单元/二进制/qmd）。
@@ -149,7 +189,7 @@ pub fn uninstall(paths: &Paths, seg: &str, req: &mut Request<'_>) -> ApiResult {
         return Err(ApiError::bad("设备上没有 shelf-uninstall（重装一次 shelf 会装上它），网页卸载不可用；可 SSH 跑 uninstall.sh --only"));
     }
     let out = rmsvc_core::proc::run_timeout("sh", &[&script.to_string_lossy(), "--only", m.only], UNINSTALL_TIMEOUT).map_err(ApiError::internal)?;
-    Ok(Reply::ok(&serde_json::json!({"ok": true, "service": m.service, "log": out})))
+    Ok(Reply::ok(&ActionDone { ok: true, service: m.service, action: None, log: Some(out) }))
 }
 
 #[cfg(test)]
@@ -235,5 +275,8 @@ mod tests {
         let mut want = serde_json::to_value(&reg).unwrap();
         want["seg"] = "fonts".into();
         assert_eq!(v, serde_json::json!({"services": [want]}));
+        let done = |a: ActionDone| serde_json::to_value(a).unwrap();
+        assert_eq!(done(ActionDone { ok: true, service: "book-serve", action: Some("stop"), log: None }), serde_json::json!({"ok": true, "service": "book-serve", "action": "stop"}));
+        assert_eq!(done(ActionDone { ok: true, service: "book-serve", action: None, log: Some("x".into()) }), serde_json::json!({"ok": true, "service": "book-serve", "log": "x"}));
     }
 }
