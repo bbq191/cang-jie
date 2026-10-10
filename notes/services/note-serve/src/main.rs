@@ -23,7 +23,8 @@ mod trash;
 
 use config::NoteConfig;
 use export_state::ExportState;
-use ink::{EntryStore, InkHttp};
+use ink::EntryStore;
+use notesvc::InkClient;
 use notebooks::NotebookState;
 use publish::{generate_chapter, ChapterResult, Ctx, Uploader, XochitlUploader};
 use rmsvc_core::events::EventBus;
@@ -97,7 +98,7 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let bind_addr = service::parse_bind(&args, SPEC.default_bind);
     let paths = Paths::from_env();
-    let cfg: NoteConfig = rmsvc_core::config::load_or_seed(&paths.app_config_dir(APP).join("note.json"));
+    let cfg: NoteConfig = notesvc::load_or_seed_logged("note-serve", &paths.app_config_dir(APP).join("note.json"));
     let notebooks = NotebookState::new(paths.app_state_dir(APP).join("notebooks"));
     if let Err(e) = notebooks.ensure() {
         eprintln!("[note-serve] 建目录失败: {e}");
@@ -110,7 +111,7 @@ fn main() {
     }
     let uploader = XochitlUploader::new(&cfg.xochitl_host, &paths.xochitl_dir(), cfg.upload_timeout_secs);
     let st = Arc::new(State {
-        store: Box::new(InkHttp::new(paths.clone())),
+        store: Box::new(InkClient::new(paths.clone())),
         uploader: Box::new(uploader),
         trash: Box::new(BookServeTrash::new(paths.clone())),
         notebooks,

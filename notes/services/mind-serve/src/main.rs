@@ -15,7 +15,7 @@ mod prompt;
 mod worker;
 
 use config::MindConfig;
-use ink::{EntryStore, InkHttp};
+use notesvc::InkClient;
 use ledger::Ledger;
 use rmsvc_core::http::{bind, ApiError, Reply, Router, ServeOpts};
 use rmsvc_core::paths::Paths;
@@ -32,7 +32,7 @@ const SPEC: ServiceSpec = ServiceSpec { name: "mind-serve", label: "笔记·脑"
 struct State {
     cfg: ConfigCell<MindConfig>,
     ledger: Ledger,
-    store: InkHttp,
+    store: InkClient,
     clients: vendorcfg::ClientCache,
 }
 
@@ -42,7 +42,8 @@ impl State {
     }
     /// 配置没变就复用上一次的调用端（连同还活着的 HTTPS 连接），见 `vendorcfg::ClientCache`。
     fn model(&self, cfg: &MindConfig) -> Result<Arc<vendorcfg::ChatClient>, String> {
-        self.clients.get(cfg, &cfg.backend, Duration::from_secs(cfg.timeout_secs), "未配置 API key（网页「模型」设置里粘贴，或环境变量 DASHSCOPE_API_KEY）")
+        // 后端标识用 `usage_key()`（预置 id 或 `custom:<model>`）：写进回答 `backend`，跟用量账本同一个键（NT-3）。
+        self.clients.get(cfg, &cfg.usage_key(), Duration::from_secs(cfg.timeout_secs), "未配置 API key（网页「管理 → 模型管理」里粘贴，或环境变量 DASHSCOPE_API_KEY）")
     }
 }
 
@@ -53,11 +54,11 @@ fn main() {
     // `.migrate()`：老配置文件搬进新形状，不迁移会让真机已存的 key 在升级后凭空消失，见 config.rs 文档；
     // 读→迁移→0600→落盘一次这套启动流程收在 `ConfigCell::load`。
     let cfg = ConfigCell::load(&paths.app_config_dir(APP).join("mind.json"), MindConfig::migrate);
-    let st = Arc::new(State { cfg, ledger: Ledger::open(&paths.app_state_dir(APP).join("mind.json")), store: InkHttp::new(paths.clone()), clients: Default::default() });
+    let st = Arc::new(State { cfg, ledger: Ledger::open(&paths.app_state_dir(APP).join("mind.json")), store: InkClient::new(paths.clone()), clients: Default::default() });
     let router = Router::new()
         .get("/status", bind(&st, |s, _| {
             let (cfg, usage) = (s.cfg(), s.ledger.snapshot());
-            Ok(Reply::ok(&serde_json::json!({"config": cfg.public(), "usageByModel": vendorcfg::usage::usage_profile(&cfg, config::PRESETS, &usage), "usage": usage})))
+            Ok(Reply::ok(&serde_json::json!({"config": cfg.public(), "usageByModel": vendorcfg::usage::usage_profile(&cfg, &usage), "usage": usage})))
         }))
         .get("/config", bind(&st, |s, _| Ok(Reply::ok(&s.cfg().public()))))
         .put("/config", bind(&st, |s, r| {
@@ -79,6 +80,7 @@ fn main() {
                 Err(msg) => Err(ApiError::bad(msg)),
             }
         }));
-    println!("[mind-serve] 配置 {}；后端 {} {}；key {:?}", st.cfg.path().display(), st.cfg().backend, st.cfg().model(), st.cfg().key_source());
+    let c = st.cfg();
+    println!("[mind-serve] 配置 {}；模型 {}（{} @ {}）；key {:?}", st.cfg.path().display(), c.usage_key(), c.model(), c.base_url(), c.key_source());
     service::run_or_exit(&SPEC, &bind_addr, &paths, router, ServeOpts::default())
 }

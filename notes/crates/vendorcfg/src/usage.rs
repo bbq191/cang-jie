@@ -39,7 +39,29 @@ impl<Extra> Default for UsageBook<Extra> {
 
 pub struct Ledger<Extra = ()> {
     path: PathBuf,
-    usage: Mutex<UsageBook<Extra>>,
+    usage: Mutex<LedgerState<Extra>>,
+}
+
+struct LedgerState<Extra> {
+    book: UsageBook<Extra>,
+    /// 当前有几个 [`LedgerHold`] 在持有（>0 时记账只改内存、标脏，最后一个放手时一次落盘）。
+    holds: usize,
+    dirty: bool,
+}
+
+/// 合并落盘的作用域，见 [`Ledger::hold`]。放手（含 panic 展开）时把这期间攒下的改动一次写盘。
+pub struct LedgerHold<'a, Extra: Clone + Serialize + DeserializeOwned> {
+    ledger: &'a Ledger<Extra>,
+}
+
+impl<Extra: Clone + Serialize + DeserializeOwned> Drop for LedgerHold<'_, Extra> {
+    fn drop(&mut self) {
+        let mut st = rmsvc_core::sync::lock(&self.ledger.usage);
+        st.holds -= 1;
+        if st.holds == 0 && st.dirty {
+            self.ledger.save(&mut st);
+        }
+    }
 }
 
 impl<Extra: Clone + Serialize + DeserializeOwned> Ledger<Extra> {
@@ -50,15 +72,37 @@ impl<Extra: Clone + Serialize + DeserializeOwned> Ledger<Extra> {
             rmsvc_core::config::backup_corrupt(path, None);
             eprintln!("[vendorcfg] 用量账本 {} 解析失败，从零记起（原内容另存同目录 .corrupt，已有副本就不覆盖）", path.display());
         }
-        Ledger { path: path.to_path_buf(), usage: Mutex::new(rmsvc_core::config::load_or_default(path)) }
+        Ledger { path: path.to_path_buf(), usage: Mutex::new(LedgerState { book: rmsvc_core::config::load_or_default(path), holds: 0, dirty: false }) }
     }
     pub fn snapshot(&self) -> UsageBook<Extra> {
-        rmsvc_core::sync::lock(&self.usage).clone()
+        rmsvc_core::sync::lock(&self.usage).book.clone()
+    }
+    /// 合并落盘：持有期间的记账只改内存，放手时一次写盘。transcribe-serve 一轮批量转写包一层——此前每调一次模型
+    /// 记一次账就整份重写一次账本，一轮 N 条是 N（逐条记账）+ 1（一轮报告）次写闪存，现在一轮 1 次（NT-5，2026-10-10）。
+    /// **取舍**：持有期间进程被杀/掉电，这一轮攒下的计数丢失（最多 `max_per_run` 次调用的用量）；账本只用于网页上看
+    /// 用量/花费估算，不是计费凭据，丢一轮可以接受。panic 展开时照常落盘（`Drop`）。没持有时每次记账照旧立即写盘
+    /// （mind-serve 一次提问只记一次账，合并不出东西）。
+    pub fn hold(&self) -> LedgerHold<'_, Extra> {
+        rmsvc_core::sync::lock(&self.usage).holds += 1;
+        LedgerHold { ledger: self }
+    }
+    fn save(&self, st: &mut LedgerState<Extra>) {
+        // 写盘失败（满盘、目录权限）不能静默吞掉：内存里照常记着，下一次记账再试；日志里留一条，免得账本悄悄停在旧值没人知道。
+        match rmsvc_core::config::save(&self.path, &st.book, None) {
+            Ok(()) => st.dirty = false,
+            Err(e) => {
+                st.dirty = true;
+                eprintln!("[vendorcfg] 用量账本 {} 写盘失败（内存里照记，下次记账再试）: {e}", self.path.display());
+            }
+        }
     }
     fn edit(&self, f: impl FnOnce(&mut UsageBook<Extra>)) {
-        let mut u = rmsvc_core::sync::lock(&self.usage);
-        f(&mut u);
-        let _ = rmsvc_core::config::save(&self.path, &*u, None);
+        let mut st = rmsvc_core::sync::lock(&self.usage);
+        f(&mut st.book);
+        st.dirty = true;
+        if st.holds == 0 {
+            self.save(&mut st);
+        }
     }
     pub fn record_ok(&self, model_key: &str, prompt_tokens: u64, completion_tokens: u64, now: u64) {
         self.edit(|u| {
@@ -91,7 +135,8 @@ impl<Extra: Clone + Serialize + DeserializeOwned> Ledger<Extra> {
 /// 用量全 0——方便用户先把价格填上）；账本里出现过但不在预置表里的（比如用过的自定义模型）也补进来。
 /// 花费只在用户填过单价（`prices`，缺省 0）时才算，没填就是 `null`，网页只显示 token 数不显示金额——理由见
 /// crate 头注"花费不做官方定价表"。`transcribe-serve`/`mind-serve` 此前各写一份逐行相同的版本。
-pub fn usage_profile<C: crate::VendorConfig, E>(cfg: &C, presets: &[crate::Preset], usage: &UsageBook<E>) -> serde_json::Value {
+pub fn usage_profile<C: crate::VendorConfig, E>(cfg: &C, usage: &UsageBook<E>) -> serde_json::Value {
+    let presets = C::presets();
     let mut keys: Vec<String> = presets.iter().map(|p| p.id.to_string()).collect();
     for k in usage.by_model.keys() {
         if !keys.contains(k) {
@@ -163,7 +208,7 @@ mod tests {
         let mut book: UsageBook = UsageBook::default();
         book.by_model.insert("m1".into(), ModelUsage { calls: 2, ok: 2, prompt_tokens: 2000, completion_tokens: 1000, ..Default::default() });
         book.by_model.insert("custom:x".into(), ModelUsage { calls: 1, ok: 1, prompt_tokens: 10, ..Default::default() });
-        let v = usage_profile(&cfg, TEST_PRESETS, &book);
+        let v = usage_profile(&cfg, &book);
         let rows = v.as_array().unwrap();
         assert_eq!(rows.iter().map(|r| r["id"].as_str().unwrap()).collect::<Vec<_>>(), ["m1", "m2", "custom:x"], "预置全列（没用过的用量 0），账本里的自定义模型补在后面");
         assert_eq!(rows[0]["active"], true);
@@ -195,6 +240,48 @@ mod tests {
         let b = &back.by_model["model-b"];
         assert_eq!((b.calls, b.ok, b.prompt_tokens), (1, 1, 50), "不同模型各算各的，不会混到一起");
         assert_eq!(back.last_run.unwrap().done, 1);
+    }
+
+    /// 持有期间记账不落盘，放手时一次写盘；嵌套持有只在最外层放手时写；panic 展开也会落盘。
+    #[test]
+    fn hold_coalesces_writes_into_one() {
+        let t = tempfile::tempdir().unwrap();
+        let p = t.path().join("transcribe.json");
+        let l: Ledger<FakeRun> = Ledger::open(&p);
+        {
+            let _h = l.hold();
+            for i in 0..20 {
+                l.record_ok("m", 1, 1, i);
+                let _inner = l.hold();
+            }
+            l.record_run(FakeRun { done: 20 });
+            assert!(!p.exists(), "持有期间 21 次记账一次都没写盘");
+            assert_eq!(l.snapshot().by_model["m"].calls, 20, "内存里照记");
+        }
+        let back: UsageBook<FakeRun> = Ledger::open(&p).snapshot();
+        assert_eq!((back.by_model["m"].calls, back.last_run.unwrap().done), (20, 20), "放手时一次落盘");
+
+        let l2: Ledger<FakeRun> = Ledger::open(&p);
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _h = l2.hold();
+            l2.record_fail("m", "x", 99);
+            panic!("一轮里 panic");
+        }));
+        assert!(r.is_err());
+        assert_eq!(Ledger::<FakeRun>::open(&p).snapshot().by_model["m"].failed, 1, "panic 展开时也落盘");
+    }
+
+    /// 写盘失败不吞：内存照记、标脏，下一次能写时补上。
+    #[test]
+    fn save_failure_keeps_counts_and_retries() {
+        let t = tempfile::tempdir().unwrap();
+        let blocker = t.path().join("dir-is-a-file");
+        std::fs::write(&blocker, b"x").unwrap();
+        let p = blocker.join("mind.json"); // 父"目录"是个文件 → 写盘必失败
+        let l: Ledger<()> = Ledger::open(&p);
+        l.record_ok("m", 1, 1, 1);
+        assert_eq!(l.snapshot().by_model["m"].calls, 1);
+        assert!(rmsvc_core::sync::lock(&l.usage).dirty, "没写成，标脏");
     }
 
     #[test]

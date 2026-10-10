@@ -29,11 +29,11 @@ pub const PRESETS: &[Preset] = &[
 /// 官方已下线的预置 id → 现行 id（老配置里存的选择自动迁过去）。
 const RETIRED_PRESETS: &[(&str, &str)] = &[("deepseek-v4-flash", "deepseek-flash")];
 
+/// 老配置里的 `backend` 键（恒为 "qwen"，2026-10-10 前会被写进草稿/回答的 `backend`）已删：读到时直接忽略，
+/// 新版不再写出；旧版本读新文件缺这个键按它自己的缺省补上。草稿/回答现在记真实模型标识 `usage_key()`。
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct MindConfig {
-    /// 后端标识（写进 `Answer.backend`）。
-    pub backend: String,
     /// 当前选中的预置 id；`"custom"` 走下面两个手填字段。
     pub preset: String,
     #[serde(skip_serializing_if = "String::is_empty")]
@@ -64,7 +64,6 @@ pub struct MindConfig {
 impl Default for MindConfig {
     fn default() -> Self {
         MindConfig {
-            backend: "qwen".into(),
             preset: PRESETS[0].id.to_string(),
             custom_model: String::new(),
             custom_base_url: String::new(),
@@ -109,10 +108,6 @@ impl MindConfig {
     }
     /// 套用 PUT /config 的 JSON（同 `transcribe-serve::config::apply` 的规则，少了节流字段）。
     pub fn apply(&mut self, j: &JsonBody) -> Result<(), String> {
-        let backend = j.str_or("backend", "");
-        if !backend.is_empty() {
-            self.backend = backend.to_string();
-        }
         vendorcfg::apply_common(PRESETS, j, &mut self.preset, &mut self.custom_model, &mut self.custom_base_url, &mut self.keys, &mut self.prices)?;
         if let Some(v) = j.opt_u64("timeoutSecs") { self.timeout_secs = v.clamp(5, 600); }
         if let Some(v) = j.0.get("prompt") {
@@ -125,6 +120,15 @@ impl MindConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 预置表里每一项的 `provider` 必须跟它 baseUrl 认出的厂商一致：不然同一账号的 key 按预置存一格、按自定义地址
+    /// 又认到另一格（09-08 真机踩过的 key 找不到）。
+    #[test]
+    fn preset_providers_match_base_url_table() {
+        for p in PRESETS {
+            assert_eq!(vendorcfg::provider_for_base_url(p.base_url), Some(p.provider), "{}", p.id);
+        }
+    }
 
     #[test]
     fn key_priority_and_masking_scoped_by_provider() {

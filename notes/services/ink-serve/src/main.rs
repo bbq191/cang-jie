@@ -1,27 +1,18 @@
 //! ink-serve —— 笔记·矿（loopback 8795）。监听原生书库（事件驱动、防抖），书页 `.rm` 变了就只扫变更页：
 //! 勾画（GlyphRange）+ 旁边手写（笔画簇）→ 条目 → 裁图 → 条目库（**唯一写者**，其它服务经这里改字段）。
-//! 路由（经网关前缀 `/api/ink`）：`GET /books` · `GET /books/{uuid}` · `GET /books/{uuid}/crops/{file}` ·
-//! `POST /books/{uuid}/entries/{id}`（text/style/draft/answer/askAi/question/destination 字段更新，
-//! 缺省底座无 PATCH；`text` 现在走 `notecore::model::Entry::apply_marked_text`——行首 `-`/`1.`/`- [ ]`/`口`/`##`/
-//! `### ` 标记自动定样式（与设备内置打字样式一一对应，2026-09-25）并从正文剥掉，不再需要网页手动选样式的下拉（整理区第二轮反馈点 1，
-//! 2026-09-08，见白皮书 §03u）；`style` 字段仍保留，给 `transcribe-serve::worker` 写草稿时的内部路径用
-//! （它走行首标记兜底出的是 `Marker::Style`，不经过 `text` 这条路；09-25 前另有 `subheadHint` 覆盖小节名，已删）——三期（2026-09-08）砍掉了"分区"这个概念，`## 文字`/`section`/`sectionHint`/
-//! `PUT .../sections` 整个都没了，AI 触发早就是 `askAi`+`question` 的事，笔记本排版分组也不要了，见白皮书
-//! §03s；`askAi`+`question` 是"问AI"勾选框+问题输入框，`mind-serve` 读这两个字段触发按条目单发问答；
-//! `GET /books` 只列条目库里还有活条目的书）·
-//! `POST /books/{uuid}/entries/{id}/request`（浏览态"转入笔记"：`Mined→Pending`）·
-//! `POST /books/{uuid}/entries/{id}/skip`（浏览态"不需要"：`Mined→Skipped`）·
-//! `POST /books/{uuid}/entries/{id}/archive`（三期"不要了"：`→Archived`，两处投影都摘掉，见
-//! `notecore::model::Entry::set_triage`；已撤销/已归档的条目对以上三个动作都拒绝）·
-//! `POST /books/{uuid}/entries/{id}/restore`（回收站"恢复"，整理区第二轮反馈点 3，2026-09-08：
-//! `Skipped`/`Revoked`/`Archived` 都能恢复，落点按条目已有内容倒推，见 `notecore::model::Entry::restore`；
-//! 只对终态条目生效，对活条目调用会被拒）·
-//! `POST /books/{uuid}/purge`（清空回收站：物理删掉 `Archived`/`Revoked`/`Skipped` 这三种终态条目，
-//! 手动触发、不可恢复，见 `notecore::model::Book::purge_terminal`）·
+//! 路由（经网关前缀 `/api/ink`；请求/应答形状见 `notecore::api`，收发两端共用）：
+//! `GET /books`（只列还有活条目的书）· `GET /books/{uuid}`（每条条目带 `live`，只在应答里、不落盘）·
+//! `GET /books/{uuid}/crops/{file}` · `GET /search` ·
+//! `POST /books/{uuid}/entries/{id}`（网页改字：`text`/`askAi`/`question`/`destination`，`EntryPatch`；`text` 的行首
+//! `-`/`1.`/`- [ ]`/`口`/`##`/`### ` 标记定样式并剥掉，见 `Entry::apply_marked_text`；未知字段/形状不对 400）·
+//! `POST /books/{uuid}/entries/{id}/draft`（transcribe-serve 写草稿：转写原文，`Entry::accept_draft` 统一剥标记、
+//! 样式只作建议）· `POST /books/{uuid}/entries/{id}/answer`（mind-serve 写回答）·
+//! `POST /books/{uuid}/entries/{id}/request`|`skip`|`archive`（浏览/整理动作，见 `Entry::set_triage`；终态一律拒绝）·
+//! `POST /books/{uuid}/entries/{id}/restore`（回收站恢复，见 `Entry::restore`）·
+//! `POST /books/{uuid}/purge`（清空回收站，手动、不可恢复，见 `Book::purge_terminal`）·
 //! `POST /books/{uuid}/rescan` · `GET /events`。条目库 `$XDG_STATE_HOME/notes/books/<uuid>.json`，裁图 `$XDG_DATA_HOME/notes/crops/`。
-//! `destination` 字段（三期，落设备笔记本/Obsidian/两处都要，缺省两处都要）走通用 PATCH，见下方。
-//! 原 `POST /koreader/import`（KOReader 高亮/生词回流，2026-09-16，笔记线白皮书 §03al）随 KOReader 卸载
-//! 已从仓库删除（2026-09-30），见 git 历史；条目库里以前导入的 KOReader 书仍保留，见 `ingest::ingest_doc` 的早退。
+//! 条目状态只经 `notecore::model::Entry` 的方法改（2026-10-10 收拢，NT-1），这里不直接给 `status` 赋值。
+//! 原 `POST /koreader/import` 随 KOReader 卸载已删（2026-09-30）；条目库里以前导入的 KOReader 书仍保留，见 `ingest::ingest_doc` 的早退。
 mod bookdb;
 mod config;
 mod crop;
@@ -31,10 +22,11 @@ mod search;
 
 use bookdb::BookDb;
 use config::IngestConfig;
-use notecore::model::{Answer, Destination, Draft, Entry, Status, Style};
+use notecore::api::{AnswerPost, BookBrief, BookList, BookView, DraftPost, EntryPatch};
+use notecore::model::{Entry, Status};
 use rmsvc_core::events::EventBus;
 use rmsvc_core::fs::plain_name;
-use rmsvc_core::http::{bind, ApiError, ApiResult, JsonBody, Reply, Request, Router, ServeOpts};
+use rmsvc_core::http::{bind, ApiError, ApiResult, Reply, Request, Router, ServeOpts};
 use rmsvc_core::paths::Paths;
 use rmsvc_core::service::{self, ServiceSpec};
 use std::sync::Arc;
@@ -92,63 +84,18 @@ fn triage(s: &State, r: &mut Request<'_>, target: Status) -> ApiResult {
     edit_entry(s, r.param("uuid"), r.param("id"), |e| e.set_triage(target, now))
 }
 
-/// 每条条目保留的转写草稿份数（最新在前）。
-const MAX_DRAFTS: usize = 10;
-
-/// 通用改字端点（`POST /books/{uuid}/entries/{id}`）的字段规则：网页改字/问题/去处，transcribe-serve 写草稿（带样式建议），
-/// mind-serve 写回答。抽成函数便于单测。
-fn patch_entry(e: &mut Entry, j: &JsonBody, now: u64) -> Result<(), String> {
-    // 终态守卫（2026-09-09 审计补）：这条通用改字端点原来不检查状态，能把已"跳过/撤销/
-    // 删除"的条目通过 apply_marked_text/写草稿悄悄拉回 Draft，绕开 set_triage/restore
-    // 明文规定的业务规则——先恢复（`/restore`）才能再改。
-    if e.is_terminal() {
-        return Err("这条已跳过/撤销/删除，不能再改，请先在回收站里恢复".to_string());
-    }
-    // 用户直接在网页文本框改字：跟转写草稿写回同一套行首标记规则（`notecore::model::Entry::
-    // apply_marked_text`）——`-`/`1.`/`口`/`##`/`### ` 都认，样式不再靠单独的下拉手动选
-    // （整理区第二轮反馈点 1，2026-09-08，见白皮书 §03u）。
-    if let Some(t) = j.opt_str("text") {
-        e.apply_marked_text(t, now);
-    }
-    let draft = j.0.get("draft").and_then(|v| serde_json::from_value::<Draft>(v.clone()).ok());
-    // 随草稿带来的样式（转写结果的行首标记）只是建议：条目已经有人校对过的文字时不动它的样式——
-    // 补了几笔触发的再转写不能把用户定稿那条的圆点/编号改掉（增量规则"校对文本永不被覆盖"，
-    // 样式是它的一部分；2026-09-25 第四轮审计）。
-    let style_is_suggestion = draft.is_some() && e.text.is_some();
-    if let Some(v) = j.0.get("style").and_then(|v| serde_json::from_value::<Style>(v.clone()).ok()).filter(|_| !style_is_suggestion) {
-        e.style = v;
-    }
-    if let Some(d) = draft {
-        e.drafts.insert(0, d);
-        // 草稿只留最近几份：每补几笔/每点一次「重新转写」都会加一份，不设上限条目库会一直长，每次写回都要重写整本。
-        e.drafts.truncate(MAX_DRAFTS);
-        if e.text.is_none() {
-            e.status = Status::Draft;
-        }
-    }
-    if let Some(a) = j.0.get("answer") {
-        e.answer = serde_json::from_value::<Answer>(a.clone()).ok();
-    }
-    // 「问AI」勾选框 + 问题输入框（二期按条目单发，mind-serve 触发的动作端点另开，见白皮书 §03n）。
-    if let Some(v) = j.opt_bool("askAi") {
-        e.ask_ai = v;
-    }
-    if let Some(v) = j.0.get("question") {
-        e.question = v.as_str().filter(|s| !s.trim().is_empty()).map(str::to_string);
-    }
-    // 落设备笔记本 / 落 Obsidian / 两处都要（三期），见 notecore::model::Destination。
-    if let Some(v) = j.0.get("destination").and_then(|v| serde_json::from_value::<Destination>(v.clone()).ok()) {
-        e.destination = v;
-    }
-    e.updated = now;
-    Ok(())
+/// 请求体 → 契约类型（`notecore::api`，`deny_unknown_fields`）：JSON 坏了、字段名/形状不对一律 400，
+/// 不再像此前那样逐字段 `from_value(..).ok()` 静默丢掉（`answer` 形状写错曾直接把已有回答清空，NT-2）。
+fn decode<T: serde::de::DeserializeOwned>(r: &mut Request<'_>) -> Result<T, ApiError> {
+    let bytes = r.read_small_body().map_err(ApiError::bad)?;
+    serde_json::from_slice(&bytes).map_err(|e| ApiError::bad(format!("请求体格式不对: {e}")))
 }
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let bind_addr = service::parse_bind(&args, SPEC.default_bind);
     let paths = Paths::from_env();
-    let cfg: IngestConfig = rmsvc_core::config::load_or_seed(&paths.app_config_dir(APP).join("ink.json"));
+    let cfg: IngestConfig = notesvc::load_or_seed_logged("ink-serve", &paths.app_config_dir(APP).join("ink.json"));
     let db = BookDb::new(paths.app_state_dir(APP).join("books"));
     let st = Arc::new(State { paths: paths.clone(), cfg, db, bus: Arc::new(EventBus::new()) });
     if let Err(e) = std::fs::create_dir_all(st.crops_dir()).and_then(|_| st.db.ensure()) {
@@ -184,99 +131,161 @@ fn main() {
             });
         });
     }
-    let router = Router::new()
-        .get("/events", bind(&st, |s, _| Ok(s.bus.sse_reply())))
-        .get("/books", bind(&st, |s, _| {
-            let items: Vec<serde_json::Value> = s.db.list_active().iter().map(|b| serde_json::json!({"uuid": b.uuid, "title": b.title, "chapters": b.chapters.len(), "entries": b.entries.iter().filter(|e| e.status != Status::Revoked).count(), "pending": b.entries.iter().filter(|e| e.needs_transcribe()).count()})).collect();
-            Ok(Reply::ok(&serde_json::json!({"items": items})))
+    let router = router(&st);
+    println!("[ink-serve] 条目库 {}；裁图 {}；监听 {}", st.db.dir().display(), st.crops_dir().display(), st.paths.xochitl_dir().display());
+    service::run_or_exit(&SPEC, &bind_addr, &paths, router, ServeOpts::default())
+}
+
+/// 路由表（单独成函数，测试直接对它发请求）。
+fn router(st: &Arc<State>) -> Router {
+    Router::new()
+        .get("/events", bind(st, |s, _| Ok(s.bus.sse_reply())))
+        .get("/books", bind(st, |s, _| {
+            Ok(Reply::ok(&BookList { items: s.db.list_active().iter().map(|b| BookBrief::of(b)).collect() }))
         }))
         // 全文搜索：跨书搜勾画原文/定稿/草稿/提问/AI 回答/书名，见 search.rs。`limit` 缺省 50、上限 200。
-        .get("/search", bind(&st, |s, r| {
+        .get("/search", bind(st, |s, r| {
             let q = r.q("q").unwrap_or_default();
             let limit = r.q_parse::<usize>("limit").unwrap_or(50).clamp(1, 200);
             Ok(Reply::ok(&serde_json::json!({"items": search::search(&s.db.list(), q, limit)})))
         }))
-        .get("/books/{uuid}", bind(&st, |s, r| {
+        .get("/books/{uuid}", bind(st, |s, r| {
             let b = s.db.read(r.param("uuid")).map_err(ApiError::internal)?.ok_or_else(|| ApiError::not_found("没有这本书的条目"))?;
-            Ok(Reply::ok(&*b))
+            // 每条条目带上 `live`（只在应答里，不落盘），网页不再自己抄一份"哪些状态算活"的判据。
+            Ok(Reply::ok(&BookView::of(&b)))
         }))
-        .get("/books/{uuid}/crops/{file}", bind(&st, |s, r| {
+        .get("/books/{uuid}/crops/{file}", bind(st, |s, r| {
             let f = plain_name(r.param("file")).map_err(ApiError::bad)?;
             let bytes = std::fs::read(s.crops_dir().join(f)).map_err(|_| ApiError::not_found("没有这张裁图"))?;
             // 裁图名带笔迹哈希（`<条目id>-<hash>.png`，笔迹一变就换新名字、旧图删掉），内容永不变：让浏览器长期缓存，
             // 笔记页每次重画不再重新下载（网关转发时透传这个头）。
             Ok(Reply::bytes(rmsvc_core::formats::mime_of(f), bytes).with_header("Cache-Control", "private, max-age=31536000, immutable"))
         }))
-        .post("/books/{uuid}/entries/{id}", bind(&st, |s, r| {
+        .post("/books/{uuid}/entries/{id}", bind(st, |s, r| {
             let (uuid, id) = (r.param("uuid").to_string(), r.param("id").to_string());
-            let j = r.json()?;
+            let p: EntryPatch = decode(r)?;
             let now = rmsvc_core::clock::now_secs();
-            edit_entry(s, &uuid, &id, |e| patch_entry(e, &j, now))
+            edit_entry(s, &uuid, &id, |e| p.apply(e, now))
         }))
-        .post("/books/{uuid}/entries/{id}/request", bind(&st, |s, r| triage(s, r, Status::Pending)))
-        .post("/books/{uuid}/entries/{id}/skip", bind(&st, |s, r| triage(s, r, Status::Skipped)))
-        .post("/books/{uuid}/entries/{id}/archive", bind(&st, |s, r| triage(s, r, Status::Archived)))
-        .post("/books/{uuid}/entries/{id}/restore", bind(&st, |s, r| {
+        // 转写服务写草稿（原文，行首标记由 `Entry::accept_draft` 统一剥、样式只作建议，见 NT-1）。
+        .post("/books/{uuid}/entries/{id}/draft", bind(st, |s, r| {
+            let (uuid, id) = (r.param("uuid").to_string(), r.param("id").to_string());
+            let d: DraftPost = decode(r)?;
+            let now = rmsvc_core::clock::now_secs();
+            edit_entry(s, &uuid, &id, |e| e.accept_draft(&d.text, &d.backend, &d.hash, now))
+        }))
+        // 问 AI 服务写回答。形状不对在 `decode` 就 400，碰不到已有回答。
+        .post("/books/{uuid}/entries/{id}/answer", bind(st, |s, r| {
+            let (uuid, id) = (r.param("uuid").to_string(), r.param("id").to_string());
+            let a: AnswerPost = decode(r)?;
+            let now = rmsvc_core::clock::now_secs();
+            edit_entry(s, &uuid, &id, |e| e.accept_answer(a.into_answer(now), now))
+        }))
+        .post("/books/{uuid}/entries/{id}/request", bind(st, |s, r| triage(s, r, Status::Pending)))
+        .post("/books/{uuid}/entries/{id}/skip", bind(st, |s, r| triage(s, r, Status::Skipped)))
+        .post("/books/{uuid}/entries/{id}/archive", bind(st, |s, r| triage(s, r, Status::Archived)))
+        .post("/books/{uuid}/entries/{id}/restore", bind(st, |s, r| {
             let now = rmsvc_core::clock::now_secs();
             edit_entry(s, r.param("uuid"), r.param("id"), |e| e.restore(now))
         }))
-        .post("/books/{uuid}/purge", bind(&st, |s, r| {
+        .post("/books/{uuid}/purge", bind(st, |s, r| {
             let removed = ingest::purge_terminal(&s.db, &s.crops_dir(), r.param("uuid")).map_err(ApiError::internal)?.ok_or_else(|| ApiError::not_found("没有这本书的条目"))?;
             if removed > 0 {
                 s.bus.publish("notes", "entries");
             }
             Ok(Reply::ok(&serde_json::json!({"ok": true, "removed": removed})))
         }))
-        .post("/books/{uuid}/rescan", bind(&st, |s, r| {
+        .post("/books/{uuid}/rescan", bind(st, |s, r| {
             let uuid = plain_name(r.param("uuid")).map_err(ApiError::bad)?.to_string(); // ingest 会拼 xochitl 目录路径，同样要防穿越
             // 强制：清掉页 mtime 记录再摄取
             // 只对条目库里已有的书清（`update_existing`）：此前用 `update(.., Default::default)` 会给一个从未摄取过的 uuid
             // 建出一份 uuid/标题都是空串的空书，之后摄取沿用它、书就永远带着空 uuid。
-            let _ = s.db.update_existing(&uuid, |b| b.page_mtimes.clear());
+            // 条目库读不出（文件坏了）要报出来，不能吞掉再假装"已重扫"。
+            s.db.update_existing(&uuid, |b| b.page_mtimes.clear()).map_err(ApiError::internal)?;
             s.ingest(&uuid);
             Ok(Reply::ok(&serde_json::json!({"ok": true})))
-        }));
-    println!("[ink-serve] 条目库 {}；裁图 {}；监听 {}", st.db.dir().display(), st.crops_dir().display(), st.paths.xochitl_dir().display());
-    service::run_or_exit(&SPEC, &bind_addr, &paths, router, ServeOpts::default())
+        }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rmsvc_core::http::Method;
 
-    fn entry(text: Option<&str>, style: Style) -> Entry {
-        let mut e: Entry = serde_json::from_str(r#"{"id":"e","page":"p","page_index":0,"created":0,"updated":0,"status":"pending"}"#).unwrap();
-        e.text = text.map(str::to_string);
-        e.style = style;
-        e
+    /// 沙箱里起一份 State（HOME/XDG 全在临时目录，不碰开发机），条目库放一本书一条条目（已有回答）。
+    fn setup() -> (tempfile::TempDir, Arc<State>, Router) {
+        let t = tempfile::tempdir().unwrap();
+        let paths = Paths::sandbox(t.path());
+        let db = BookDb::new(paths.app_state_dir(APP).join("books"));
+        db.ensure().unwrap();
+        let e: Entry = serde_json::from_str(r#"{"id":"e","page":"p","page_index":0,"created":0,"updated":0,"status":"pending","answer":{"text":"旧回答","backend":"b","at":1,"brief":"问"}}"#).unwrap();
+        db.update("u", || notecore::model::Book { uuid: "u".into(), title: "书".into(), ..Default::default() }, |b| b.entries.push(e)).unwrap();
+        let st = Arc::new(State { paths, cfg: IngestConfig::default(), db, bus: Arc::new(EventBus::new()) });
+        let r = router(&st);
+        (t, st, r)
     }
-    fn draft_body(text: &str, style: &str) -> serde_json::Value {
-        serde_json::json!({"draft": {"text": text, "backend": "b", "at": 1, "hash": "h"}, "style": style})
+    fn call(r: &Router, method: Method, path: &str, body: &str) -> (u16, serde_json::Value) {
+        let mut b = body.as_bytes();
+        let mut req = Request { method, path: path.into(), query: Default::default(), params: Default::default(), content_type: "application/json".into(), content_length: Some(body.len()), headers: vec![], body: &mut b };
+        let rep = r.dispatch(&mut req);
+        (rep.status, serde_json::from_slice(&rep.body).unwrap_or_default())
+    }
+    fn entry_of(st: &State) -> Entry {
+        st.db.load("u").unwrap().entries[0].clone()
     }
 
-    /// 回归：补笔触发的再转写（带样式建议）不改已校对条目的样式；没校对过的照常采纳。
+    /// NT-2：回答形状不对（走老的通用端点、或新端点缺字段）一律 400，已有回答原样不动；形状对才替换。
     #[test]
-    fn draft_style_suggestion_never_overrides_reviewed_entry() {
-        let mut reviewed = entry(Some("我定稿的正文"), Style::Body);
-        reviewed.status = Status::Reviewed;
-        patch_entry(&mut reviewed, &JsonBody(draft_body("查作者", "bullet")), 5).unwrap();
-        assert_eq!((reviewed.style, reviewed.status, reviewed.text.as_deref()), (Style::Body, Status::Reviewed, Some("我定稿的正文")));
-        assert_eq!(reviewed.drafts.len(), 1, "草稿照收，作为建议");
+    fn misshaped_answer_is_400_and_never_clears_existing_answer() {
+        let (_t, st, r) = setup();
+        assert_eq!(call(&r, Method::Post, "/books/u/entries/e", r#"{"answer":{"text":1}}"#).0, 400);
+        assert_eq!(call(&r, Method::Post, "/books/u/entries/e", r#"{"answer":null}"#).0, 400);
+        assert_eq!(call(&r, Method::Post, "/books/u/entries/e/answer", r#"{"text":"新"}"#).0, 400);
+        assert_eq!(call(&r, Method::Post, "/books/u/entries/e/answer", "不是 JSON").0, 400);
+        assert_eq!(entry_of(&st).answer.unwrap().text, "旧回答");
+        assert_eq!(call(&r, Method::Post, "/books/u/entries/e", r#"{"askAi":"yes"}"#).0, 400, "类型不对不再悄悄当没给");
+        assert!(!entry_of(&st).ask_ai);
 
-        let mut pending = entry(None, Style::Body);
-        patch_entry(&mut pending, &JsonBody(draft_body("查作者", "bullet")), 5).unwrap();
-        assert_eq!((pending.style, pending.status), (Style::Bullet, Status::Draft));
+        assert_eq!(call(&r, Method::Post, "/books/u/entries/e/answer", r#"{"text":"新回答","backend":"qwen-plus","brief":"问"}"#).0, 200);
+        let a = entry_of(&st).answer.unwrap();
+        assert_eq!((a.text.as_str(), a.backend.as_str()), ("新回答", "qwen-plus"));
     }
 
+    /// NT-1 端到端：转写服务送原文，再转写（样式已是圆点）后草稿里也不留 `- `。
     #[test]
-    fn drafts_are_capped_newest_first_and_terminal_is_refused() {
-        let mut e = entry(None, Style::Body);
-        for i in 0..MAX_DRAFTS + 5 {
-            patch_entry(&mut e, &JsonBody(draft_body(&format!("第{i}份"), "body")), i as u64).unwrap();
+    fn draft_endpoint_strips_marker_every_time() {
+        let (_t, st, r) = setup();
+        for h in ["h1", "h2"] {
+            let (code, _) = call(&r, Method::Post, "/books/u/entries/e/draft", &format!(r#"{{"text":"- 查作者","backend":"qwen3-vl-plus","hash":"{h}"}}"#));
+            assert_eq!(code, 200);
         }
-        assert_eq!(e.drafts.len(), MAX_DRAFTS);
-        assert_eq!(e.drafts[0].text, format!("第{}份", MAX_DRAFTS + 4), "最新的在前");
-        e.status = Status::Archived;
-        assert!(patch_entry(&mut e, &JsonBody(serde_json::json!({"text": "x"})), 99).is_err());
+        let e = entry_of(&st);
+        assert_eq!((e.style, e.status, e.display_text()), (notecore::model::Style::Bullet, Status::Draft, Some("查作者")));
+        assert_eq!(call(&r, Method::Post, "/books/u/entries/e/draft", r#"{"draft":{"text":"x"},"style":"bullet"}"#).0, 400, "老的请求体形状不再接受");
+        assert_eq!(call(&r, Method::Post, "/books/u/entries/nope/draft", r#"{"text":"x","backend":"b","hash":"h"}"#).0, 404);
+    }
+
+    /// 契约字段 `live`：只在应答里，条目库文件里没有。
+    #[test]
+    fn book_reply_has_live_but_disk_file_does_not() {
+        let (_t, st, r) = setup();
+        let (code, v) = call(&r, Method::Get, "/books/u", "");
+        assert_eq!(code, 200);
+        assert_eq!(v["entries"][0]["live"], true, "pending 算活");
+        assert_eq!(v["entries"][0]["status"], "pending");
+        call(&r, Method::Post, "/books/u/entries/e/archive", "");
+        assert_eq!(call(&r, Method::Get, "/books/u", "").1["entries"][0]["live"], false);
+        let disk = std::fs::read_to_string(st.db.dir().join("u.json")).unwrap();
+        assert!(!disk.contains("\"live\""), "live 不落盘: {disk}");
+        let (_, list) = call(&r, Method::Get, "/books", "");
+        assert_eq!(list["items"][0]["uuid"], "u");
+    }
+
+    /// 条目库坏了：rescan 报 500，不再吞掉错误回 ok。
+    #[test]
+    fn rescan_reports_corrupt_book() {
+        let (_t, st, r) = setup();
+        std::fs::write(st.db.dir().join("u.json"), b"{ broken").unwrap();
+        assert_eq!(call(&r, Method::Post, "/books/u/rescan", "").0, 500);
     }
 }

@@ -41,8 +41,8 @@ reMarkable 的强项是**荧光笔勾书，再在勾出来的地方旁边手写*
 
 | 服务 | 路由 |
 |---|---|
-| ink | `GET /books`（只列还有活条目的书）· `GET /books/{uuid}` · `GET /books/{uuid}/crops/{file}` · `POST /books/{uuid}/entries/{id}`（改 `text` / `style` / `destination` / `draft` / `answer` / `askAi` / `question`；终态条目拒改）· `POST …/entries/{id}/request`（转入笔记）· `…/skip`（不需要）· `…/archive`（不要了）· `…/restore`（恢复）· `POST /books/{uuid}/purge`（清空回收站，不可恢复）· `POST /books/{uuid}/rescan` · `GET /search?q=&limit=` · `GET /events`；原 `POST /koreader/import` 已从仓库删除（2026-09-30），见 git 历史（KOReader 09-29 从设备卸载），以前导入的 KOReader 条目照常可用 |
-| transcribe | `GET /status` · `GET /config` · `PUT /config`（`preset` / `backend` / `apiKey`（只写）/ `clearKey` / `price`（`{inputPer1k,outputPer1k}`，与 GET 回的同名；老写法 `{input,output}` 也认）/ 自定义 `model`+`baseUrl` / `auto` / `maxPerRun` / `pauseMs` / `timeoutSecs` / `maxAttempts` / `prompt`）· `POST /run` · `POST /books/{uuid}/entries/{id}`（强制转写一条，返回 token 用量）· `POST /retry` · `GET /events` |
+| ink | `GET /books`（只列还有活条目的书）· `GET /books/{uuid}`（每条条目带 `live`＝是否进投影，只在应答里、不落盘）· `GET /books/{uuid}/crops/{file}` · `POST /books/{uuid}/entries/{id}`（网页改 `text` / `destination` / `askAi` / `question`；未知字段、形状不对回 400；终态条目拒改）· `POST …/entries/{id}/draft`（transcribe 写草稿：`{text,backend,hash}`，原文）· `…/answer`（mind 写回答：`{text,backend,brief}`）· `…/request`（转入笔记）· `…/skip`（不需要）· `…/archive`（不要了）· `…/restore`（恢复）· `POST /books/{uuid}/purge`（清空回收站，不可恢复）· `POST /books/{uuid}/rescan` · `GET /search?q=&limit=` · `GET /events`。请求/应答类型在 `notecore::api`，收发两端共用；原 `POST /koreader/import` 已删（2026-09-30），以前导入的 KOReader 条目照常可用 |
+| transcribe | `GET /status` · `GET /config` · `PUT /config`（`preset` / `apiKey`（只写）/ `clearKey` / `price`（`{inputPer1k,outputPer1k}`，与 GET 回的同名；老写法 `{input,output}` 也认）/ 自定义 `model`+`baseUrl` / `auto` / `maxPerRun` / `pauseMs` / `timeoutSecs` / `maxAttempts` / `prompt`）· `POST /books/{uuid}/entries/{id}`（强制转写一条，返回 token 用量）· `GET /events`（`POST /run`、`/retry` 网页不用，10-10 删；配置里的 `backend` 10-10 起不再读写） |
 | mind | `GET /status` · `GET /config` · `PUT /config`（同上，只有 `timeoutSecs` / `prompt`，没有 `auto` / `maxPerRun` / `pauseMs` / `maxAttempts` 这些节流字段）· `POST /books/{uuid}/entries/{id}/ask`（要求已勾「问 AI」且问题非空）|
 | notes | `GET /status` · `GET /books/{uuid}/sync`（每章两个去处的同步状态）· `POST /books/{uuid}/chapters/{idx}/generate`（生成本章设备笔记本）· `POST /books/{uuid}/chapters/{idx}/export`（md 落设备 vault；内部按整本重导，内容没变的章跳过）· `GET /books/{uuid}/chapters/{idx}/export.md`（浏览器下载）· `POST /books/{uuid}/import-md {title, markdown}` · `GET /events`。只有这 7 个；网页从没用过的 `GET /books`、`GET …/notebooks`、`GET …/exports`、整本 `POST …/generate`、整本 `POST …/export`、`GET …/vault.json` 已于 2026-10-09 删掉 |
 
@@ -56,6 +56,7 @@ notes/
 ├── crates/epubmap/       .epubindex + 目录（按 OPF 声明找 nav/NCX；OPF、href 解码与 .epubindex 解析用 ../rmsvc-core/epubpkg）→ 页号对应的章/小节
 ├── crates/notecore/      领域核心（纯函数）：条目模型、聚簇配对、增量合并、行首标记、投影、md 导出/导入（KOReader 合并 2026-09-30 已删，只留旧数据兼容）
 ├── crates/vendorcfg/     两个 AI 服务共用：预置表、key 分厂商、配置迁移、用量账本、OpenAI 兼容调用端 ChatClient + ClientCache
+├── crates/notesvc/       三个服务共用的 ink-serve 客户端 InkClient + 配置损坏时打日志留副本的读取
 ├── services/             ink-serve · transcribe-serve · mind-serve · note-serve
 ├── systemd/              四个 .service（PartOf=shelf.target）
 ├── testdata/             真机样本（renggu 墓碑页 / renggu_marks 勾画+手写 / seven_styles 七种打字样式）
@@ -79,7 +80,7 @@ notes/
 与书架共用交叉编译环境（`rustup target add aarch64-unknown-linux-musl` + aarch64 交叉 gcc），见 [`../shelf/README.md`](../shelf/README.md)「构建 · 部署 · 卸载」。
 
 ```sh
-cd notes && cargo test --workspace      # host：239 过 + 1 忽略（rmv6 29 · epubmap 10 · notecore 67 · vendorcfg 25 · ink 30 · transcribe 25 · mind 22 · note 31 另 1 个 ignored；2026-10-09 实跑）
+cd notes && cargo test --workspace      # host：257 过 + 1 忽略（rmv6 29 · epubmap 10 · notecore 75 · notesvc 2 · vendorcfg 28 · ink 32 · transcribe 27 · mind 23 · note 31 另 1 个 ignored；2026-10-10 实跑）
 cd ../shelf && sh build.sh               # host 测试 + 交叉编译（notes/ 在就一起编）
 cd ../packaging && sh deploy.sh <设备IP> --only ink,transcribe,mind,note   # 只装/更新笔记线（网关总会一起装）；不加 --only 就全装
 ```

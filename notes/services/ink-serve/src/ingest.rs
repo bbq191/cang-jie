@@ -6,7 +6,7 @@ use crate::crop::render_ink;
 use crate::doc::Doc;
 use epubmap::BookMap;
 use notecore::ingest::{drafts_of_page, merge_page, MergeStats, PageCtx};
-use notecore::model::{Book, Status};
+use notecore::model::Book;
 use rmsvc_core::cache::FileStamp;
 use std::path::Path;
 
@@ -171,17 +171,9 @@ fn refresh_crops(crops_dir: &Path, page_id: &str, strokes: &[rmv6::page::Stroke]
 fn revoke_stale(db: &BookDb, uuid: &str, now: u64) -> Result<Option<DocStats>, String> {
     let Some(revoked) = db.update_existing(uuid, |b| {
         b.page_mtimes.clear();
-        let mut n = 0usize;
-        // 同一个"排除法"漏洞（见 notecore::ingest::merge_page 的注释）：`Skipped`/`Archived` 也是
-        // 终态，书被删/进回收站不该把它们悄悄改判成 `Revoked`——那样以后 `restore()` 会走错分支。
-        // 用 `is_terminal()` 排除全部三种终态，只把还活着（Mined/Pending/Draft/Reviewed）的条目
-        // 因"书不在了"而转 Revoked。
-        for e in b.entries.iter_mut().filter(|e| !e.is_terminal()) {
-            e.status = Status::Revoked;
-            e.updated = now;
-            n += 1;
-        }
-        n
+        // `Entry::revoke` 只撤还活着（Mined/Pending/Draft/Reviewed）的条目：`Skipped`/`Archived` 也是终态，书被删/
+        // 进回收站不该把它们改判成 `Revoked`——那样以后 `restore()` 会走错分支（同 notecore::ingest::merge_page）。
+        b.entries.iter_mut().map(|e| e.revoke(now)).filter(|&r| r).count()
     })? else { return Ok(None) };
     Ok((revoked > 0).then(|| DocStats { pages: 0, merge: MergeStats { revoked, ..Default::default() } }))
 }
@@ -241,6 +233,7 @@ pub fn candidate_docs(lib: &Path) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use notecore::model::Status;
 
     #[test]
     fn skips_non_epub_and_ingests_only_changed_pages() {

@@ -1,12 +1,12 @@
 //! 一轮转写的编排（纯逻辑，依赖全是 trait，可用内存桩单测）：
-//! 列书 → 每本取条目 → 挑 `needs_transcribe`（或指定的一条强制）→ 取裁图 → 视觉模型 → 草稿写回（行首标记兜底判样式）。
-//! 失败记在 `Failures`（同指纹超过 `max_attempts` 不再自动重试，网页可清）；每轮最多 `max_per_run` 条。
+//! 列书 → 每本取条目 → 挑 `needs_transcribe`（或指定的一条强制）→ 取裁图 → 视觉模型 → 原文写回草稿
+//! （行首标记由 ink-serve 的 `Entry::accept_draft` 统一处理，这里不剥）。
+//! 失败记在 `Failures`（同指纹超过 `max_attempts` 不再自动重试；网页「重新转写」强制那一条，成功即清掉它的记录）；每轮最多 `max_per_run` 条。
 use crate::backend::Vision;
 use crate::config::TranscribeConfig;
 use crate::ink::EntryStore;
 use crate::ledger::{Ledger, RunReport};
-use notecore::marker::split_leading_marker;
-use notecore::model::{Draft, Style};
+use notecore::api::DraftPost;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -46,9 +46,6 @@ impl Failures {
     }
     pub fn clear_one(&self, uuid: &str, id: &str) {
         rmsvc_core::sync::lock(&self.0).remove(&Self::key(uuid, id));
-    }
-    pub fn clear(&self) {
-        rmsvc_core::sync::lock(&self.0).clear();
     }
     pub fn list(&self) -> Vec<Failure> {
         let mut v: Vec<Failure> = rmsvc_core::sync::lock(&self.0).values().cloned().collect();
@@ -92,11 +89,11 @@ fn transcribe_entry(c: &Ctx<'_>, uuid: &str, e: &notecore::model::Entry) -> Resu
     // 本地错误也会被算成模型调用失败（2026-09-24 第三轮审计）。
     let t = c.vision.transcribe(&png, &prompt).inspect_err(|err| c.ledger.record_fail(&c.cfg.usage_key(), err, c.now))?;
     c.ledger.record_ok(&c.cfg.usage_key(), t.prompt_tokens, t.completion_tokens, c.now);
-    // 行首标记兜底：几何没认出来（仍是正文）时按转写结果认，并剥掉标记——可能认出内容样式（Style）
-    // 也可能认出结构性标记（### 小节），见 `notecore::marker::Marker`。
-    let (marker, text) = if e.style == Style::Body { split_leading_marker(&t.text) } else { (None, t.text.clone()) };
-    let draft = Draft { text: text.clone(), backend: c.vision.name().to_string(), at: c.now, hash: ink.hash.clone() };
-    c.store.post_draft(uuid, &e.id, &draft, marker)?;
+    // 只送原文：剥行首标记、样式采不采纳都在 ink-serve 的 `Entry::accept_draft`（NT-1，2026-10-10）。此前这里只在样式
+    // 还是正文时剥，样式一旦被首次转写改成圆点，补笔再转写就不剥了，草稿里留下 `- `。
+    // `backend` 记真实模型标识（`ChatClient` 以 `usage_key()` 建，见 main.rs `State::vision`），不再恒为配置里的 "qwen"。
+    let draft = DraftPost { text: t.text, backend: c.vision.name().to_string(), hash: ink.hash.clone() };
+    c.store.post_draft(uuid, &e.id, &draft)?;
     Ok(Transcribed { prompt_tokens: t.prompt_tokens, completion_tokens: t.completion_tokens })
 }
 
@@ -182,19 +179,18 @@ pub fn run_once(c: &Ctx<'_>, only: Option<Target<'_>>) -> RunReport {
 mod tests {
     use super::*;
     use crate::backend::Fixed;
-    use crate::ink::BookBrief;
-    use notecore::marker::Marker;
-    use notecore::model::{Book, Entry, Ink, Quote, Status};
+    use notecore::api::BookBrief;
+    use notecore::model::{Book, Entry, Ink, Quote, Status, Style};
 
     struct Mem {
         book: Mutex<Book>,
-        posted: Mutex<Vec<(String, Draft, Option<Marker>)>>,
+        posted: Mutex<Vec<(String, DraftPost)>>,
         fail_post: std::sync::atomic::AtomicBool,
     }
     impl EntryStore for Mem {
         fn list_books(&self) -> Result<Vec<BookBrief>, String> {
             let b = self.book.lock().unwrap();
-            Ok(vec![BookBrief { uuid: b.uuid.clone(), pending: b.entries.iter().filter(|e| e.needs_transcribe()).count() }])
+            Ok(vec![BookBrief::of(&b)])
         }
         fn book(&self, _uuid: &str) -> Result<Book, String> {
             Ok(self.book.lock().unwrap().clone())
@@ -202,18 +198,15 @@ mod tests {
         fn crop(&self, _uuid: &str, file: &str) -> Result<Vec<u8>, String> {
             if file == "missing.png" { Err("没有这张裁图".into()) } else { Ok(b"\x89PNG".to_vec()) }
         }
-        fn post_draft(&self, _uuid: &str, id: &str, draft: &Draft, marker: Option<Marker>) -> Result<(), String> {
+        /// 跟 ink-serve 一样走真的 `Entry::accept_draft`，测试覆盖的就是线上那条规则。
+        fn post_draft(&self, _uuid: &str, id: &str, draft: &DraftPost) -> Result<(), String> {
             if self.fail_post.load(std::sync::atomic::Ordering::Relaxed) {
                 return Err("ink-serve 连不上".into());
             }
-            self.posted.lock().unwrap().push((id.into(), draft.clone(), marker.clone()));
+            self.posted.lock().unwrap().push((id.into(), draft.clone()));
             let mut b = self.book.lock().unwrap();
-            if let Some(e) = b.entries.iter_mut().find(|e| e.id == id) {
-                e.drafts.insert(0, draft.clone());
-                e.status = Status::Draft;
-                if let Some(Marker::Style(s)) = marker { e.style = s; }
-            }
-            Ok(())
+            let e = b.entries.iter_mut().find(|e| e.id == id).ok_or("没有这条目")?;
+            e.accept_draft(&draft.text, &draft.backend, &draft.hash, 9)
         }
     }
     fn entry(id: &str, hash: &str, crop: &str, quote: Option<&str>) -> Entry {
@@ -238,14 +231,33 @@ mod tests {
         assert_eq!((r.scanned, r.done, r.failed, r.left), (3, 2, 0, 1), "max_per_run=2 剩 1: {r:?}");
         assert_eq!((r.prompt_tokens, r.completion_tokens), (20, 4), "两次成功调用（各 10/2，见 backend::Fixed）累加，点「重转」弹出消耗要用这两个数");
         let posted = store.posted.lock().unwrap().clone();
-        assert_eq!(posted[0].1, Draft { text: "背诵".into(), backend: "fixed".into(), at: 9, hash: "h1".into() });
-        assert_eq!(posted[0].2, Some(Marker::Style(Style::Numbered)), "行首 1. → 有序，且标记剥掉");
+        assert_eq!(posted[0].1, DraftPost { text: "1. 背诵".into(), backend: "fixed".into(), hash: "h1".into() }, "只送原文");
+        let e = store.book.lock().unwrap().entries[0].clone();
+        assert_eq!((e.style, e.drafts[0].text.as_str()), (Style::Numbered, "背诵"), "行首 1. → 有序，且标记剥掉（ink-serve 侧）");
         assert_eq!(ledger.snapshot().by_model[&cfg().usage_key()].ok, 2);
         // 第二轮：只剩 c；a/b 已有同指纹草稿不重做
         let r = run_once(&c, None);
         assert_eq!((r.scanned, r.done, r.left), (1, 1, 0));
         let r = run_once(&c, None);
         assert_eq!(r.scanned, 0, "全部有草稿后零调用");
+    }
+
+    /// NT-1 回归（2026-10-10）：没定稿的条目首次转写得 `- 查作者` → 样式变圆点；补笔后再转写，
+    /// 草稿里不能再带着 `- `——否则设备笔记本显示"圆点 + `- 查作者`"，导出 md 成了 `- - 查作者`。
+    #[test]
+    fn retranscribe_after_style_changed_still_strips_marker() {
+        let t = tempfile::tempdir().unwrap();
+        let ledger = Ledger::open(&t.path().join("l.json"));
+        let store = mem(vec![entry("a", "h1", "a.png", None)]);
+        let vision = Fixed("- 查作者".into());
+        let f = Failures::default();
+        let c = Ctx { store: &store, vision: &vision, cfg: &cfg(), ledger: &ledger, failures: &f, now: 1 };
+        assert_eq!(run_once(&c, None).done, 1);
+        store.book.lock().unwrap().entries[0].ink.as_mut().unwrap().hash = "h2".into(); // 补了几笔
+        assert_eq!(run_once(&c, None).done, 1);
+        let b = store.book.lock().unwrap();
+        let e = &b.entries[0];
+        assert_eq!((e.style, e.drafts[0].text.as_str(), e.display_text()), (Style::Bullet, "查作者", Some("查作者")));
     }
 
     #[test]
@@ -325,8 +337,6 @@ mod tests {
         // 指纹变了 → 计数归零重试
         store.book.lock().unwrap().entries[0].ink.as_mut().unwrap().hash = "h9".into();
         assert_eq!(run_once(&c, None).failed, 1);
-        f.clear();
-        assert!(f.list().is_empty());
     }
 
     /// 账本只记模型调用：取不到裁图（没调模型）不记；模型成功但写回失败，token 照记为成功、不另记失败。
