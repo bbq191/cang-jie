@@ -4,13 +4,15 @@
 //! 审计发现，仿照 `note-serve::chapter_store::ChapterStore<T>` 的做法泛型化，只抽持久化+入队+剔除
 //! 这层通用外壳；入队前的领域校验（uuid 形状、名字对不对得上、文件夹是否已存在……）留给各自的
 //! `add()` 包装方法，那是两边真正不同、不该合并的部分。
+use crate::agent_failures::AgentFailures;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use rmsvc_core::events::Wake;
 use std::collections::HashMap;
+use std::hash::Hash;
 use std::marker::PhantomData;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 pub struct PendingQueue<T> {
@@ -84,11 +86,14 @@ impl<T: Clone + Serialize + DeserializeOwned> PendingQueue<T> {
 /// - **有限次重试**：同一个键最多交出 [`HANDOUT_MAX_ATTEMPTS`] 次；交满了、静默期过了还没真实发生（xochitl 那边一直
 ///   执行不成，比如 `entryForId` 拿不到条目但 `.metadata` 还在），就放弃这一项——调用方把它移出队列并记一行日志。
 ///   此前没有终止条件，这样的项每个静默期被交出一次、代理每次执行失败写一行日志，永远不停（2026-09-25 第四轮审计）。
-pub struct Handout {
+///
+/// 键 `K` 是待办项的身份（回收站：文档 uuid；建文件夹：（上级 uuid, 名字））。2026-10-10 前键只收 `String`，建文件夹把
+/// （上级, 名字）拼成 `"<上级>/<名字>"` 再拆回来（审计 SH-1）。键只在内存里，不落盘。
+pub struct Handout<K> {
     /// 入队代数 + 条件变量（`notify` 加一、`wait` 睡到代数变化）。
     wake: Wake,
     /// 键 → (最近一次交出的时刻, 已交出次数)。只保留仍在待办里的键。
-    handed: Mutex<HashMap<String, (Instant, u32)>>,
+    handed: Mutex<HashMap<K, (Instant, u32)>>,
     quiet: Duration,
     max_attempts: u32,
 }
@@ -97,20 +102,26 @@ pub struct Handout {
 pub const HANDOUT_MAX_ATTEMPTS: u32 = 5;
 
 /// [`Handout::take`] 的结果：这次交出的键 + 交满次数仍没完成、该放弃的键。
-#[derive(Debug, Default, PartialEq)]
-pub struct Taken {
-    pub hand: Vec<String>,
-    pub give_up: Vec<String>,
+#[derive(Debug, PartialEq)]
+pub struct Taken<K> {
+    pub hand: Vec<K>,
+    pub give_up: Vec<K>,
 }
 
-impl Handout {
-    pub fn new(quiet: Duration) -> Handout {
+impl<K> Default for Taken<K> {
+    fn default() -> Self {
+        Taken { hand: Vec::new(), give_up: Vec::new() }
+    }
+}
+
+impl<K: Hash + Eq + Clone> Handout<K> {
+    pub fn new(quiet: Duration) -> Handout<K> {
         Handout { wake: Wake::default(), handed: Mutex::new(HashMap::new()), quiet, max_attempts: HANDOUT_MAX_ATTEMPTS }
     }
 
     /// 单测用：改最多交出次数。
     #[cfg(test)]
-    pub fn with_max_attempts(mut self, n: u32) -> Handout {
+    pub fn with_max_attempts(mut self, n: u32) -> Handout<K> {
         self.max_attempts = n;
         self
     }
@@ -122,7 +133,7 @@ impl Handout {
 
     /// 从"仍待办的键"里挑出这次该交出的（去掉静默期内交过的），并把它们记为"已交出"；静默期已过、却已经交满次数的
     /// 放进 `give_up`（不再记录，调用方负责移出队列）。
-    pub fn take(&self, keys: Vec<String>) -> Taken {
+    pub fn take(&self, keys: Vec<K>) -> Taken<K> {
         let now = Instant::now();
         let mut handed = rmsvc_core::sync::lock(&self.handed);
         handed.retain(|k, _| keys.contains(k));
@@ -153,7 +164,7 @@ impl Handout {
     /// 睡眠还会在最早一个静默期到期时醒一次：此前只等入队或 `wait` 到期，代理用 290 秒长轮询时，交出后没执行成功的
     /// 那一项要等满 290 秒才重交，"静默期过了自带重试"名存实亡——建文件夹落库只等 20 秒，重试永远赶不上
     /// （2026-09-25 第四轮审计）。空闲（没有交出过的待办）时仍然只在入队或到期时醒。
-    pub fn wait(&self, wait: Duration, mut fetch: impl FnMut() -> Result<(Vec<String>, usize), String>) -> Result<(Vec<String>, usize), String> {
+    pub fn wait(&self, wait: Duration, mut fetch: impl FnMut() -> Result<(Vec<K>, usize), String>) -> Result<(Vec<K>, usize), String> {
         let deadline = Instant::now() + wait;
         let mut total_pruned = 0;
         loop {
@@ -168,6 +179,83 @@ impl Handout {
             let wake_at = self.next_retry().map_or(deadline, |r| r.min(deadline));
             self.wake.wait_change(seen, wake_at.saturating_duration_since(now));
         }
+    }
+}
+
+/// 交给 QML 代理执行的一项待办（回收站 `trash::Pending`、建文件夹 `mkdir::Pending`）：身份键 + 放弃时怎么记。
+pub trait AgentItem: Clone + Serialize + DeserializeOwned {
+    type Key: Hash + Eq + Clone;
+    /// 放弃记录的种类（`agent_failures.rs` 的 `kind`）。
+    const KIND: &'static str;
+    fn key(&self) -> Self::Key;
+    /// 交满次数仍没做成、放弃时打的那行日志。
+    fn give_up_log(&self) -> String;
+    /// 放弃记录给人看的名字和（有的话）文档 uuid。
+    fn failure(&self) -> (&str, &str);
+}
+
+/// 一个"落盘待办 + 交给 QML 代理"的完整队列（2026-10-10 合并 `trash.rs` / `mkdir.rs` 里逐段相同的 `pending` 流程，审计 SH-1）：
+/// 剔除已经真实发生的 → 挑出这次该交出的 → 交满次数的放弃（移出队列、记日志、记给网页看）。各自的 `add` 领域校验、
+/// "还要不要等"的判据留在各自模块。
+pub struct AgentQueue<T: AgentItem> {
+    q: PendingQueue<T>,
+    handout: Handout<T::Key>,
+    /// 放弃时记一条给网页看（见 `agent_failures.rs`）；单测不挂。
+    failures: Option<Arc<AgentFailures>>,
+}
+
+impl<T: AgentItem> AgentQueue<T> {
+    pub fn new(file: PathBuf, quiet: Duration) -> AgentQueue<T> {
+        AgentQueue { q: PendingQueue::new(file), handout: Handout::new(quiet), failures: None }
+    }
+
+    pub fn with_failures(mut self, f: Arc<AgentFailures>) -> AgentQueue<T> {
+        self.failures = Some(f);
+        self
+    }
+
+    /// 单测用：改"重复交出"的静默期。
+    #[cfg(test)]
+    pub fn with_handout_quiet(mut self, d: Duration) -> AgentQueue<T> {
+        self.handout = Handout::new(d);
+        self
+    }
+
+    /// 入队（去重语义同 [`PendingQueue::add`]）并唤醒长轮询中的代理。返回入队后的队列长度。
+    pub fn add(&self, exists: impl Fn(&T) -> bool, make: impl FnOnce() -> T) -> Result<usize, String> {
+        let n = self.q.add(exists, make)?;
+        self.handout.notify();
+        Ok(n)
+    }
+
+    pub fn list(&self) -> Vec<T> {
+        self.q.list()
+    }
+
+    /// 待办（QML 代理拉取）：先剔除不再满足 `still_pending` 的（已经真实发生 / 消失，QML 端无需 ack），再挑出这次该交出的；
+    /// 交满 [`HANDOUT_MAX_ATTEMPTS`] 次仍没做成的放弃（移出队列、打日志、记给网页）。返回 (这次交出的键, 本次清掉几条)。
+    pub fn pending(&self, still_pending: impl Fn(&T) -> bool) -> Result<(Vec<T::Key>, usize), String> {
+        let (kept, pruned) = self.q.prune(still_pending)?;
+        let taken = self.handout.take(kept.iter().map(T::key).collect());
+        let mut dropped = pruned;
+        if !taken.give_up.is_empty() {
+            let (_, n) = self.q.prune(|p| !taken.give_up.contains(&p.key()))?;
+            dropped += n;
+            for p in kept.iter().filter(|p| taken.give_up.contains(&p.key())) {
+                println!("[book-serve] {}", p.give_up_log());
+                if let Some(f) = &self.failures {
+                    let (name, uuid) = p.failure();
+                    f.record(T::KIND, name, uuid);
+                }
+            }
+        }
+        Ok((taken.hand, dropped))
+    }
+
+    /// 长轮询版 [`Self::pending`]：有待办立即返回，没有就睡到入队或 `wait` 到期；`wait` 为零＝立即返回。
+    /// `still_pending` 每次查队列都重新造一个（判据里可以缓存这一轮的书库扫描，下一轮醒来重扫）。
+    pub fn pending_wait<F: Fn(&T) -> bool>(&self, wait: Duration, still_pending: impl Fn() -> F) -> Result<(Vec<T::Key>, usize), String> {
+        self.handout.wait(wait, || self.pending(still_pending()))
     }
 }
 
@@ -199,7 +287,7 @@ mod tests {
     /// 有限次重试：交满次数后（静默期已过）放弃，放弃后不再记录；完成（不在待办里）的项清掉计数。
     #[test]
     fn handout_gives_up_after_max_attempts() {
-        let h = Handout::new(Duration::ZERO).with_max_attempts(3);
+        let h = Handout::<String>::new(Duration::ZERO).with_max_attempts(3);
         let keys = || vec!["a".to_string(), "b".to_string()];
         for _ in 0..3 {
             assert_eq!(h.take(keys()), Taken { hand: keys(), give_up: vec![] });
@@ -208,7 +296,7 @@ mod tests {
         assert!(h.next_retry().is_none(), "放弃/完成的项不再占计时");
         assert_eq!(h.take(vec!["a".to_string()]).hand, vec!["a".to_string()], "放弃后若又被重新入队，从零计");
         // 静默期内不交也不算次数
-        let h = Handout::new(Duration::from_secs(60)).with_max_attempts(1);
+        let h = Handout::<String>::new(Duration::from_secs(60)).with_max_attempts(1);
         assert_eq!(h.take(keys()).hand.len(), 2);
         assert_eq!(h.take(keys()), Taken::default());
     }

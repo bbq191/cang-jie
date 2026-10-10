@@ -19,10 +19,10 @@
 //! "已经建出来就剔除"都按（父, 名）判：只有那个父文件夹正下方有同名活文件夹才算存在。网页的 `POST /mkdir/add {name}`
 //! 不变：建在根，名字里的 `/` 当普通字符。
 //!
-//! 持久化+入队去重+剔除这层通用外壳委托 `pending_queue::PendingQueue<T>`（2026-09-09 消重复，跟
-//! `trash.rs` 是同一份基础设施，见该模块文档）；这里只留领域校验（名字合法性/文件夹是否已存在）。
+//! 持久化、入队去重、剔除、交给代理、交满次数放弃这一整套委托 `pending_queue::AgentQueue<T>`（2026-09-09 消重复、2026-10-10
+//! 再合并 `pending` 流程，跟 `trash.rs` 是同一份基础设施，见该模块文档）；这里只留领域校验（名字合法性/文件夹是否已存在）。
 use crate::agent_failures::AgentFailures;
-use crate::pending_queue::{Handout, PendingQueue, HANDOUT_MAX_ATTEMPTS};
+use crate::pending_queue::{AgentItem, AgentQueue, HANDOUT_MAX_ATTEMPTS};
 use serde::{Deserialize, Serialize};
 use rmsvc_core::xochitl::{find_child_folder, folder_keys, is_uuid_shape};
 use std::path::{Path, PathBuf};
@@ -50,45 +50,46 @@ pub struct MkdirItem {
     pub parent: String,
 }
 
-/// 交出记录（[`Handout`]）只认字符串键：拼成 `<父 uuid>/<名字>`。父是 uuid（或空串），不含 `/`，按第一个 `/` 拆回来不会错；
-/// 名字里带 `/` 也没关系。
-fn key_of(parent: &str, name: &str) -> String {
-    format!("{parent}/{name}")
+impl AgentItem for Pending {
+    /// （上级 uuid, 名字）：不同上级下的同名文件夹是不同的项。
+    type Key = (String, String);
+    const KIND: &'static str = "mkdir";
+    fn key(&self) -> (String, String) {
+        (self.parent.clone(), self.name.clone())
+    }
+    fn give_up_log(&self) -> String {
+        let parent = if self.parent.is_empty() { "书库根" } else { self.parent.as_str() };
+        format!("建文件夹《{}》（上级 {parent}）已交给 xochitl {HANDOUT_MAX_ATTEMPTS} 次仍没建出来，放弃（移出队列）", self.name)
+    }
+    fn failure(&self) -> (&str, &str) {
+        (&self.name, "")
+    }
 }
 
-fn item_of(key: &str) -> MkdirItem {
-    let (parent, name) = key.split_once('/').unwrap_or(("", key));
-    MkdirItem { name: name.to_string(), parent: parent.to_string() }
+fn item_of((parent, name): (String, String)) -> MkdirItem {
+    MkdirItem { name, parent }
 }
 
 pub struct MkdirQueue {
-    q: PendingQueue<Pending>,
+    /// 落盘队列 + 长轮询 + 交出后静默期（见 [`HANDOUT_QUIET`]），与 `trash.rs` 共用一套。
+    q: AgentQueue<Pending>,
     lib_dir: PathBuf,
-    /// 长轮询 + 交出后静默期（见 [`HANDOUT_QUIET`]），与 `trash.rs` 共用。
-    handout: Handout,
-    /// 放弃时记一条给网页看（见 `agent_failures.rs`）；单测不挂。
-    failures: Option<Arc<AgentFailures>>,
 }
 
 impl MkdirQueue {
     pub fn new(state_books_dir: &Path, lib_dir: &Path) -> MkdirQueue {
-        MkdirQueue {
-            q: PendingQueue::new(state_books_dir.join("mkdir-pending.json")),
-            lib_dir: lib_dir.to_path_buf(),
-            handout: Handout::new(HANDOUT_QUIET),
-            failures: None,
-        }
+        MkdirQueue { q: AgentQueue::new(state_books_dir.join("mkdir-pending.json"), HANDOUT_QUIET), lib_dir: lib_dir.to_path_buf() }
     }
 
     pub fn with_failures(mut self, f: Arc<AgentFailures>) -> MkdirQueue {
-        self.failures = Some(f);
+        self.q = self.q.with_failures(f);
         self
     }
 
     /// 单测用：缩短/取消"重复交出"的静默期。
     #[cfg(test)]
     fn with_handout_quiet(mut self, d: Duration) -> MkdirQueue {
-        self.handout = Handout::new(d);
+        self.q = self.q.with_handout_quiet(d);
         self
     }
 
@@ -117,9 +118,7 @@ impl MkdirQueue {
         if find_child_folder(&self.lib_dir, parent, name).is_some() {
             return Ok(0); // 已经存在，不用建
         }
-        let n = self.q.add(|p| p.parent == parent && p.name == name, || Pending { name: name.to_string(), parent: parent.to_string(), at: rmsvc_core::clock::now_secs() })?;
-        self.handout.notify();
-        Ok(n)
+        self.q.add(|p| p.parent == parent && p.name == name, || Pending { name: name.to_string(), parent: parent.to_string(), at: rmsvc_core::clock::now_secs() })
     }
 
     /// 待办（QML 代理拉取）：顺手清掉已经真实建出来的（QML 端无需 ack），以及交满次数仍没建出来、放弃的。
@@ -128,39 +127,25 @@ impl MkdirQueue {
     /// 线上走的是长轮询版 [`Self::pending_wait`]，这个立即返回的版本只给单测用。
     #[cfg(test)]
     pub fn pending(&self) -> Result<(Vec<MkdirItem>, usize), String> {
-        let (keys, dropped) = self.pending_keys()?;
-        Ok((keys.iter().map(|k| item_of(k)).collect(), dropped))
+        let (keys, dropped) = self.q.pending(self.still_pending())?;
+        Ok((keys.into_iter().map(item_of).collect(), dropped))
     }
 
-    /// [`Self::pending`] 的本体，项用 [`key_of`] 的字符串键表示（[`Handout`] 只认字符串）。
-    fn pending_keys(&self) -> Result<(Vec<String>, usize), String> {
-        // 书库文件夹只扫一遍、且只在队列非空时扫（`prune` 对空队列不调谓词）：此前每条待办各调一次
-        // 按名字找文件夹，每次都把书库里全部 `.metadata` 读一遍解析一遍，k 条待办＝k 遍全库扫描，
-        // 长轮询每次唤醒都来一轮（2026-09-24 审计）。判据与 `find_child_folder` 相同（那个父文件夹下有活的同名 CollectionType）。
+    /// "这一项还要不要等"的判据：那个父文件夹正下方还没有同名活文件夹。书库文件夹只扫一遍、且只在队列非空时扫
+    /// （`prune` 对空队列不调谓词）：此前每条待办各调一次按名字找文件夹，每次都把书库里全部 `.metadata` 读一遍解析一遍，
+    /// k 条待办＝k 遍全库扫描，长轮询每次唤醒都来一轮（2026-09-24 审计）。判据与 `find_child_folder` 相同。
+    /// 每次查队列造一个新的（长轮询醒来重扫）。
+    fn still_pending(&self) -> impl Fn(&Pending) -> bool + '_ {
         let folders = std::cell::OnceCell::new();
-        let (kept, pruned) = self.q.prune(|p| !folders.get_or_init(|| folder_keys(&self.lib_dir)).contains(&(p.parent.clone(), p.name.clone())))?;
-        let taken = self.handout.take(kept.into_iter().map(|p| key_of(&p.parent, &p.name)).collect());
-        let mut dropped = pruned;
-        if !taken.give_up.is_empty() {
-            let (_, n) = self.q.prune(|p| !taken.give_up.contains(&key_of(&p.parent, &p.name)))?;
-            dropped += n;
-            for key in &taken.give_up {
-                let name = item_of(key).name;
-                println!("[book-serve] 建文件夹《{name}》（上级 {}）已交给 xochitl {HANDOUT_MAX_ATTEMPTS} 次仍没建出来，放弃（移出队列）", if key.starts_with('/') { "书库根" } else { key.split('/').next().unwrap_or("") });
-                if let Some(f) = &self.failures {
-                    f.record("mkdir", &name, "");
-                }
-            }
-        }
-        Ok((taken.hand, dropped))
+        move |p: &Pending| !folders.get_or_init(|| folder_keys(&self.lib_dir)).contains(&(p.parent.clone(), p.name.clone()))
     }
 
     /// 长轮询版 [`Self::pending`]：有待办立即返回；没有就阻塞到入队唤醒或 `wait` 到期（到期返回空列表）。
     /// 这样 QML 代理不必每 8 秒定时拉一次——空闲时整条链路零唤醒，入队后也是即刻响应而不是平均等 4 秒。
     /// `wait` 为零＝不等（旧的立即返回语义）。
     pub fn pending_wait(&self, wait: Duration) -> Result<(Vec<MkdirItem>, usize), String> {
-        let (keys, dropped) = self.handout.wait(wait, || self.pending_keys())?;
-        Ok((keys.iter().map(|k| item_of(k)).collect(), dropped))
+        let (keys, dropped) = self.q.pending_wait(wait, || self.still_pending())?;
+        Ok((keys.into_iter().map(item_of).collect(), dropped))
     }
 
     pub fn list(&self) -> Vec<Pending> {

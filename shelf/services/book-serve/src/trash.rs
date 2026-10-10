@@ -7,10 +7,10 @@
 //! 已不存在的条目清掉（QML 端无需 ack）。队列文件 `$XDG_STATE_HOME/shelf/books/trash-pending.json`。
 //! 调用方：网页「管理 → 设备健康 → 清理」删书库里的重复副本、电脑上的 sheng-ren 删书（`POST /trash/add`）。
 //!
-//! 持久化+入队去重+剔除这层通用外壳委托 `pending_queue::PendingQueue<T>`（2026-09-09 消重复，跟
-//! `mkdir.rs` 是同一份基础设施，见该模块文档）；这里只留领域校验（uuid 形状/名字核对/是否已在回收站）。
+//! 持久化、入队去重、剔除、交给代理、交满次数放弃这一整套委托 `pending_queue::AgentQueue<T>`（2026-09-09 消重复、2026-10-10
+//! 再合并 `pending` 流程，跟 `mkdir.rs` 是同一份基础设施，见该模块文档）；这里只留领域校验（uuid 形状/名字核对/是否已在回收站）。
 use crate::agent_failures::AgentFailures;
-use crate::pending_queue::{Handout, PendingQueue, HANDOUT_MAX_ATTEMPTS};
+use crate::pending_queue::{AgentItem, AgentQueue, HANDOUT_MAX_ATTEMPTS};
 use rmsvc_core::xochitl::Metadata;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -28,21 +28,32 @@ pub struct Pending {
     pub at: u64,
 }
 
+impl AgentItem for Pending {
+    type Key = String;
+    const KIND: &'static str = "trash";
+    fn key(&self) -> String {
+        self.uuid.clone()
+    }
+    fn give_up_log(&self) -> String {
+        format!("《{}》（{}）已交给 xochitl {HANDOUT_MAX_ATTEMPTS} 次仍没进回收站，放弃（移出队列）", self.name, self.uuid)
+    }
+    fn failure(&self) -> (&str, &str) {
+        (&self.name, &self.uuid)
+    }
+}
+
 pub struct TrashQueue {
-    q: PendingQueue<Pending>,
+    q: AgentQueue<Pending>,
     lib_dir: PathBuf,
-    handout: Handout,
-    /// 放弃时记一条给网页看（见 `agent_failures.rs`）；单测不挂。
-    failures: Option<Arc<AgentFailures>>,
 }
 
 impl TrashQueue {
     pub fn new(state_books_dir: &Path, lib_dir: &Path) -> TrashQueue {
-        TrashQueue { q: PendingQueue::new(state_books_dir.join("trash-pending.json")), lib_dir: lib_dir.to_path_buf(), handout: Handout::new(HANDOUT_QUIET), failures: None }
+        TrashQueue { q: AgentQueue::new(state_books_dir.join("trash-pending.json"), HANDOUT_QUIET), lib_dir: lib_dir.to_path_buf() }
     }
 
     pub fn with_failures(mut self, f: Arc<AgentFailures>) -> TrashQueue {
-        self.failures = Some(f);
+        self.q = self.q.with_failures(f);
         self
     }
 
@@ -76,38 +87,24 @@ impl TrashQueue {
         }
         // `uuid: &str` 是 Copy，两个闭包各自拿一份拷贝就够——不要先转成 String 再共享，
         // 那样第一个闭包借用、第二个闭包要移动，会被借用检查器拦下来。
-        let n = self.q.add(|p| p.uuid == uuid, || Pending { uuid: uuid.to_string(), name: vis, at: rmsvc_core::clock::now_secs() })?;
-        self.handout.notify();
-        Ok(n)
+        self.q.add(|p| p.uuid == uuid, || Pending { uuid: uuid.to_string(), name: vis, at: rmsvc_core::clock::now_secs() })
     }
 
     /// 待办 uuid（QML 代理拉取）：顺手清掉已进回收站 / 已不存在的，以及交满 [`HANDOUT_MAX_ATTEMPTS`] 次仍没进回收站、
     /// 放弃的（xochitl 的 `entryForId` 拿不到条目但 `.metadata` 还在时，代理每次都执行失败）。返回 (待办 uuid 列表, 本次清掉几条)。
+    #[cfg(test)]
     pub fn pending(&self) -> Result<(Vec<String>, usize), String> {
-        let (kept, pruned) = self.q.prune(|p| self.still_pending(&p.uuid))?;
-        let taken = self.handout.take(kept.iter().map(|p| p.uuid.clone()).collect());
-        let mut dropped = pruned;
-        if !taken.give_up.is_empty() {
-            let (_, n) = self.q.prune(|p| !taken.give_up.contains(&p.uuid))?;
-            dropped += n;
-            for p in kept.iter().filter(|p| taken.give_up.contains(&p.uuid)) {
-                println!("[book-serve] 《{}》（{}）已交给 xochitl {HANDOUT_MAX_ATTEMPTS} 次仍没进回收站，放弃（移出队列）", p.name, p.uuid);
-                if let Some(f) = &self.failures {
-                    f.record("trash", &p.name, &p.uuid);
-                }
-            }
-        }
-        Ok((taken.hand, dropped))
+        self.q.pending(|p| self.still_pending(&p.uuid))
     }
 
     /// 长轮询版 [`Self::pending`]：有待办立即返回，没有就睡到入队或 `wait` 到期；`wait` 为零＝立即返回。
     pub fn pending_wait(&self, wait: Duration) -> Result<(Vec<String>, usize), String> {
-        self.handout.wait(wait, || self.pending())
+        self.q.pending_wait(wait, || |p: &Pending| self.still_pending(&p.uuid))
     }
 
     #[cfg(test)]
     fn with_handout_quiet(mut self, d: Duration) -> TrashQueue {
-        self.handout = Handout::new(d);
+        self.q = self.q.with_handout_quiet(d);
         self
     }
 
