@@ -1,6 +1,7 @@
 //! `xochitl.conf`（QSettings INI，`~/.config/remarkable/xochitl.conf`）`[General]` 单键读写。
-//! 用途：原生休眠屏隐藏键 `SleepScreenPath`（3.28.0.172 真机通，书架白皮书 §03w）——xochitl 把该 png 满屏画成休眠屏、
-//! 隐藏插画卡、每次休眠重读文件，取代了 bind-mount 覆盖 `/usr/share/remarkable/suspended.png` 整套。
+//! 用途：wallpaper-serve 写原生休眠屏隐藏键 `SleepScreenPath`（3.28.0.172 真机通，书架白皮书 §03w）——xochitl 把该 png 满屏画成
+//! 休眠屏、隐藏插画卡、每次休眠重读文件，取代了 bind-mount 覆盖 `/usr/share/remarkable/suspended.png` 整套。键名常量 2026-10-10
+//! 搬进 wallpaper-serve（审计 CORE-3）；本模块只管"安全地读写 `[General]` 里的某个键"，不认识具体键。
 //!
 //! **纪律**：文件里有 `DeveloperPassword` / `UserToken` / `devicetoken` 等凭证——本模块**绝不返回、绝不打印任何行内容**，
 //! 错误信息只带键名。写法：整文件读入 → 只动目标行 → 同目录 tmp+rename 原子覆盖；首次改动前备份一份 `<conf>.shelf-bak`
@@ -8,8 +9,6 @@
 //! 但新值要到 xochitl 下次启动（`xovi/start`）才进 `isettings`。
 use crate::paths::Paths;
 use std::path::{Path, PathBuf};
-
-pub const SLEEP_SCREEN_KEY: &str = "SleepScreenPath";
 const GENERAL: &str = "[General]";
 
 /// `$XDG_CONFIG_HOME/remarkable/xochitl.conf`。
@@ -124,6 +123,7 @@ fn backup_once(conf: &Path) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    const SLEEP_SCREEN_KEY: &str = "SleepScreenPath";
     const SAMPLE: &str = "[General]\nDeveloperPassword=secret\nWebInterfaceEnabled=true\n\n[Dialogs]\nfoo=1\n";
 
     #[test]
