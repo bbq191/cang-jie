@@ -39,17 +39,9 @@ USAGE_EOF
 case "${1:-}" in -h|--help) usage; exit 0 ;; esac
 case "${1:-}" in ""|-*) HOST="10.11.99.1" ;; *) HOST="$1"; shift ;; esac
 
-# 服务令牌 → 仓库里的顶层目录（交叉编译产物与 systemd 单元都按它找；与 shelf/build.sh 的产出目录一一对应；
-# 新增服务要在这里加一行）
-svc_home() {
-    case "$1" in
-        gateway) echo ../gateway ;;
-        book) echo ../shelf ;;
-        wallpaper|font) echo "../enhance/$(shelf_svc_of "$1")" ;;
-        ink|transcribe|mind|note) echo ../notes ;;
-        *) echo "!! deploy.sh 不知道服务 $1 在哪（manifest.sh 新增了服务？更新本脚本的 svc_home）" >&2; return 1 ;;
-    esac
-}
+# 服务令牌 → 仓库里的顶层目录（交叉编译产物与 systemd 单元都按它找）：取自 manifest.sh 的 shelf_svc_home，
+# 与 shelf/build.sh 编译的项目是同一份（2026-10-10 前这里另写一份清单，审计 PK-2）
+svc_home() { sh_h="$(shelf_svc_home "$1")" || return 1; echo "../$sh_h"; }
 bin_src() { bs_h="$(svc_home "$1")" || return 1; echo "$bs_h/target/$TARGET/release/$(shelf_svc_of "$1")"; }
 # 单元：enhance 下的服务单元在它自己的目录根，其余在 <顶层>/systemd/
 unit_src() {
