@@ -9,7 +9,7 @@ use crate::ops::{OpGuard, OpRegistry};
 use rmsvc_core::fs::ScratchFile;
 use crate::sidecar::{self, Delivered, RenderCheck};
 use serde::Serialize;
-use rmsvc_core::asset::{AssetItem, AssetStore};
+use rmsvc_core::asset::{AssetItem, UploadTarget};
 use rmsvc_core::formats::{self, BOOK_EXTS};
 use rmsvc_core::fs::{plain_name, same_content, unique_path, Content};
 use rmsvc_core::wire::{DeliverStatus, RenderStatus};
@@ -136,11 +136,12 @@ pub struct Staging {
     land: Arc<std::sync::Mutex<()>>,
 }
 
-/// 上传模板适配：母版库作为 [`AssetStore`]——扩展名门＝书籍格式白名单，install＝同分区 rename 入库。
+/// 上传模板适配：母版库作为 [`UploadTarget`]——扩展名门＝书籍格式白名单，install＝同分区 rename 入库。列表 / 删除是母版库自己的
+/// 方法（[`Staging::list`] / [`Staging::remove`]），上传流程用不到（2026-10-10 前实现的是带 list/remove 的 `AssetStore`，只好写两个死转发）。
 /// 暂存目录应传 spool 的 `.work/`（与母版库同分区），见 `AssetUploadFlow::in_dir`。
 pub struct StagingStore<'a>(pub &'a Staging);
 
-impl AssetStore for StagingStore<'_> {
+impl UploadTarget for StagingStore<'_> {
     fn kind(&self) -> &'static str {
         "book"
     }
@@ -151,12 +152,6 @@ impl AssetStore for StagingStore<'_> {
         let landed = self.0.stage_from_path(name, staged)?;
         let bytes = std::fs::metadata(self.0.dir.join(&landed)).map(|m| m.len()).unwrap_or(0);
         Ok(AssetItem::plain(landed, bytes))
-    }
-    fn list(&self) -> Vec<AssetItem> {
-        self.0.list().into_iter().map(|e| AssetItem::plain(e.name, e.bytes)).collect()
-    }
-    fn remove(&self, name: &str) -> Result<(), String> {
-        self.0.remove(name)
     }
     fn reject_message(&self) -> String {
         reject_message()
