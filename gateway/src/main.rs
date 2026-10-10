@@ -141,7 +141,7 @@ fn main() {
     const PROXIED: &[Method] = &[Method::Get, Method::Post, Method::Put, Method::Delete];
     let router = router
         // 事件流（SSE）：受登录守卫（cookie/Basic）保护
-        .get("/api/events", bind(&bus, |b, _| Ok(b.sse_reply())))
+        .get("/api/events", bind(&bus, |b, r| Ok(b.sse_reply_for(r))))
         .get("/api/manage", bind(&paths, |p, _| Ok(manage::status(p))))
         .get("/api/foundation", bind(&paths, |p, _| Ok(manage::foundation(p))))
         .post("/api/manage/{seg}/{action}", bind(&paths, manage::action))

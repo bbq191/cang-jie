@@ -116,13 +116,10 @@ pub fn cleanup_delete(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rmsvc_core::http::Method;
-    use std::collections::HashMap;
+    use rmsvc_core::http::{Method, TestRequest};
 
     fn post(paths: &Paths, body: &[u8]) -> ApiResult {
-        let mut b: &[u8] = body;
-        let mut r = Request { method: Method::Post, path: "/api/device/cleanup/delete".into(), query: HashMap::new(), params: HashMap::new(), content_type: "application/json".into(), content_length: None, headers: vec![], body: &mut b };
-        cleanup_delete(paths, &mut r)
+        TestRequest::new(Method::Post, "/api/device/cleanup/delete").content_type("application/json").body(body.to_vec()).with(|r| cleanup_delete(paths, r))
     }
 
     #[test]
@@ -173,9 +170,8 @@ mod tests {
         let u = "00000002-1111-1111-1111-111111111111";
         std::fs::write(x.join(format!("{u}.metadata")), r#"{"type":"DocumentType","visibleName":"书","parent":"","createdTime":"5"}"#).unwrap();
         std::fs::write(x.join(format!("{u}.pdf")), b"pdf").unwrap();
-        let mut b: &[u8] = b"";
-        let mut r = Request { method: Method::Get, path: "/api/device/cleanup".into(), query: HashMap::new(), params: HashMap::new(), content_type: String::new(), content_length: None, headers: vec![], body: &mut b };
-        let v: serde_json::Value = serde_json::from_slice(&cleanup_list(&paths, &mut r).unwrap().body).unwrap();
+        let rep = TestRequest::new(Method::Get, "/api/device/cleanup").with(|r| cleanup_list(&paths, r)).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&rep.body).unwrap();
         assert_eq!(
             v,
             serde_json::json!({

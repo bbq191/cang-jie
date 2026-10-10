@@ -186,7 +186,7 @@ pub fn toggle(seg: &str, action: &str) -> ApiResult {
 /// 安装不走网页（见文件头）。
 pub fn uninstall(paths: &Paths, seg: &str, req: &mut Request<'_>) -> ApiResult {
     let m = by_seg(seg).ok_or_else(|| ApiError::bad(format!("未知模块 {seg}")))?;
-    let _ = req.read_small_body(); // 排空 body
+    let _ = req.small_body(); // 排空 body
     let script = paths.bin_dir().join("shelf-uninstall");
     if !script.is_file() {
         return Err(ApiError::bad("设备上没有 shelf-uninstall（重装一次 shelf 会装上它），网页卸载不可用；可 SSH 跑 uninstall.sh --only"));
