@@ -15,8 +15,10 @@ mod library;
 pub use library::*;
 // 文件夹类型（根 / uuid）与上传并认领。
 mod claim;
+pub mod content;
 mod folder;
 pub use claim::{ClaimBy, ClaimError, ClaimWait, Claimed, UploadBody, LOCK_FILE_NAME};
+pub use content::PageTable;
 pub use folder::{Folder, FolderId};
 
 pub const DEFAULT_HOST: &str = "10.11.99.1";

@@ -171,6 +171,19 @@ pub struct Metadata {
     /// xochitl 写成毫秒字符串，也认数字；用 [`Metadata::created_ms`] 取。
     #[serde(rename = "createdTime")]
     pub created_time: serde_json::Value,
+    /// 上次看到的页（文档页序，0 起；EPUB 里插了笔记页时与 PDF 页不同，换算见 [`super::PageTable`]）。数字或数字字符串都认；
+    /// 缺、`null`、认不出 → `None`（不让一个怪值把整份 `.metadata` 解析失败）。
+    #[serde(rename = "lastOpenedPage", deserialize_with = "lenient_i64")]
+    pub last_opened_page: Option<i64>,
+}
+
+/// 数字或数字字符串 → `Some`；其余（缺、`null`、别的类型、解析不了）→ `None`。
+fn lenient_i64<'de, D>(d: D) -> Result<Option<i64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let v = <serde_json::Value as serde::Deserialize>::deserialize(d)?;
+    Ok(v.as_i64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())))
 }
 
 /// 字段写成 JSON `null` 时按缺省值处理（迁移前各服务手写的 `as_str().unwrap_or("")` 就是这样认的；
@@ -270,6 +283,19 @@ mod tests {
         assert_eq!(m.parent, "");
         assert!(!m.deleted);
         assert!(m.is_live_document());
+        assert_eq!(m.last_opened_page, None);
+    }
+
+    /// `lastOpenedPage`：数字、数字字符串都认（同 book-serve progress.rs 手解的规则）；怪值不拖垮整份解析。
+    #[test]
+    fn metadata_last_opened_page_is_lenient() {
+        let page = |j: &str| serde_json::from_str::<Metadata>(&format!(r#"{{"visibleName":"书","lastOpenedPage":{j}}}"#)).unwrap().last_opened_page;
+        assert_eq!(page("12"), Some(12));
+        assert_eq!(page(r#"" 7 ""#), Some(7));
+        assert_eq!(page("null"), None);
+        assert_eq!(page(r#""x""#), None);
+        assert_eq!(page("[1]"), None);
+        assert_eq!(page("-1"), Some(-1), "负数原样给，调用方自己判");
     }
 
     #[test]
