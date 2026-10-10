@@ -173,11 +173,14 @@ function renderTransfer(sec){sec.innerHTML=`
       // 第一行：已选数 + 清除；第二行：加入 xochitl（主操作，按钮上标可处理数）；第三行：单本操作 + 删除。
       const chosen=items.filter(it=>picked.has(it.name));
       bar.appendChild(el('div',{class:'stgbar-top'},[el('b',{text:T('stg.selected',{n:picked.size})}),btn(T('stg.batch.clear'),()=>{picked.clear();render()})]));
-      // 按钮文案 = 标签 + 数量角标；窄屏去掉"加入"前缀（.lbl-long），一行三个也放得下（2026-09-24 用户要求手机上不折行）。
-      const lbl=(key,n)=>{const f=document.createDocumentFragment();const t=T(key);const m=t.match(/^(加入 |Add to )(.*)$/);
-        if(m){f.appendChild(el('span',{class:'lbl-long',text:m[1]}));f.appendChild(document.createTextNode(m[2]))}else f.appendChild(document.createTextNode(t));
+      // 按钮文案 = [可省的动词] + 标签 + 数量角标；窄屏去掉动词（.lbl-long，"加入"/"Add to"），一行三个也放得下（2026-09-24
+      // 用户要求手机上不折行）。动词与宾语是两个语言包键（2026-10-10 起；此前用正则从整句译文里切 "加入 |Add to " 前缀，
+      // 改文案或加语言就失效）。
+      const lbl=(key,n,verbKey)=>{const f=document.createDocumentFragment();
+        if(verbKey)f.appendChild(el('span',{class:'lbl-long',text:T(verbKey)+' '}));
+        f.appendChild(document.createTextNode(T(key)));
         if(n!=null)f.appendChild(el('span',{class:'cnt',text:String(n)}));return f};
-      const add=btn([lbl('stg.bar.deliver',chosen.length)],()=>enqueue('deliver',{names:[...picked]}),'btn pri',{title:T('common.paren',{text:T('stg.bar.deliver'),inner:chosen.length})});
+      const add=btn([lbl('stg.bar.deliverObject',chosen.length,'stg.bar.deliverVerb')],()=>enqueue('deliver',{names:[...picked]}),'btn pri',{title:T('common.paren',{text:T('stg.bar.deliver'),inner:chosen.length})});
       const btns=el('div',{class:'stgbar-btns'},[add]);btns.style.setProperty('--cols','1');
       const free=chosen.filter(it=>!it.busy).map(it=>it.name),busyN=chosen.length-free.length;
       const del=btn([lbl('action.delete',free.length)],free.length?async()=>{
@@ -217,20 +220,22 @@ function renderTransfer(sec){sec.innerHTML=`
   g('stgq').addEventListener('input',()=>{clearTimeout(qTimer);qTimer=setTimeout(rerender,150)});
   g('stgq').addEventListener('change',rerender);
   g('stgfmt').addEventListener('change',rerender);
-  const refresh=()=>refreshAt(3);
+  /* 刷新档位（见下）：数字越大取得越全，同一轮合并时取最大。 */
+  const LEVEL={QUEUE:1,LIST:2,FULL:3};
+  const refresh=()=>refreshAt(LEVEL.FULL);
   // 网关自身的批量队列状态（见 batch.rs）。
   const applyQueue=bt=>{
     if(bt.ok!==false){bs={running:!!bt.running,waitingService:!!bt.waitingService,action:bt.action,total:bt.total||0,done:bt.done||0,current:bt.current,queued:bt.queued||[],failed:bt.failed||[]};batchQueued=new Set(bs.queued)}};
   /* 按事件决定取多少（不轮询）。三档，数字越大取得越全：
-     1 = 网关自己的批量队列事件（area=books、不带 svc）：只重取队列状态（1 个请求）。
-     2 = book-serve 的 `staging` 事件（入库、忙态开始/结束、落库结果）与 `render` 事件（渲染自检结果）：只有母版库列表会变，
-         再加队列状态（2 个请求）；xochitl 文件夹列表不会因此变化，不重取。
-     3 = 其余（book-serve 的 mkdir/trash/inbox 事件、切 tab、重连、操作后主动刷新）：全量 3 个请求。
+     QUEUE = 网关自己的批量队列事件（area=books、不带 svc）：只重取队列状态（1 个请求）。
+     LIST  = book-serve 的 `staging` 事件（入库、忙态开始/结束、落库结果）与 `render` 事件（渲染自检结果）：只有母版库列表会变，
+             再加队列状态（2 个请求）；xochitl 文件夹列表不会因此变化，不重取。
+     FULL  = 其余（book-serve 的 mkdir/trash/inbox 事件、切 tab、重连、操作后主动刷新）：全量 3 个请求。
      所有刷新走同一个 coalesce 串行执行（need 记"下一轮至少要取到哪一档"，取最大），不会出现旧的全量结果盖掉新的排队状态。 */
   let need=0;
   const run=coalesce(async()=>{const lvl=need;need=0;if(!lvl)return;
-    if(lvl===1){applyQueue(await j('/api/batch/status'));render();return}
-    const full=lvl>=3;
+    if(lvl===LEVEL.QUEUE){applyQueue(await j('/api/batch/status'));render();return}
+    const full=lvl>=LEVEL.FULL;
     const [d,bt,s]=await Promise.all([j('/api/books/staging'),j('/api/batch/status')].concat(full?[j('/api/books/status')]:[]));
     if(full)fillFolders(s.ok!==false?s.xochitlFolders||[]:[]);
     applyQueue(bt);
@@ -242,4 +247,4 @@ function renderTransfer(sec){sec.innerHTML=`
     g('stgnames').innerHTML=stgNameOptions(items);render()});
   const refreshAt=lvl=>{need=Math.max(need,lvl);return run()};
   uploader($('.up',sec),'/api/books/staging',BOOK_EXT,()=>refresh(),'/api/books/staging');   // 书籍格式原样入库；选中即按 BOOK_EXT 拦；传 dedupeApi 防重传出重复
-  refresh();sec.refresh=refresh;sec.onEvent=ev=>refreshAt(ev.area!=='books'?3:!ev.svc&&ev.kind==='batch'?1:ev.kind==='staging'||ev.kind==='render'?2:3);subtabs(sec);}
+  refresh();sec.refresh=refresh;sec.onEvent=ev=>refreshAt(ev.area!=='books'?LEVEL.FULL:!ev.svc&&ev.kind==='batch'?LEVEL.QUEUE:ev.kind==='staging'||ev.kind==='render'?LEVEL.LIST:LEVEL.FULL);subtabs(sec);}

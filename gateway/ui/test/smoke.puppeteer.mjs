@@ -94,6 +94,9 @@ out.stgNames = await page.evaluate(() => [...document.querySelectorAll('#stglist
 out.stgChips = await page.evaluate(() => [...document.querySelectorAll('#stgchips .chip')].map(c => c.textContent));
 out.stgSeries = await page.evaluate(() => [...document.querySelectorAll('#stgnames option')].map(o => o.value));
 out.fmtOptions = await page.evaluate(() => [...document.querySelectorAll('#stgfmt option')].map(o => o.value));
+// 底栏「加入 xochitl」按钮：动词（窄屏可省）与宾语是两个语言包键，不再用正则切整句译文（FE-10）
+out.deliverBtn = await page.evaluate(() => { const cb = document.querySelector('#stglist input[type=checkbox]'); cb.click();
+  const b = document.querySelector('#stgbar .stgbar-btns .btn.pri'); const r = [b.querySelector('.lbl-long').textContent, b.textContent]; cb.click(); return r; });
 // 代理放弃横幅：页面打开即显示，名字按文本显示；agent-failed 事件只重取这一个接口；「知道了」清空并移除横幅
 out.failBanner = await page.evaluate(() => { const b = document.querySelector('#agentfail'); return b ? {li: b.querySelectorAll('li').length, img: b.querySelectorAll('img').length, text: b.textContent} : null; });
 // WiFi 上不了外网横幅：打开即显示，SSID 按文本显示；× 关掉
@@ -241,6 +244,7 @@ assert.deepEqual(out.fmtBadges, ['EPUB', 'CBZ'], 'format:"other" 不能显示成
 assert.deepEqual(out.stgNames, ['<img src=x onerror=window.__xss=1>', '旧漫画.cbz'], '列表显示 title，默认「未加入」不列 done 的书');
 assert.deepEqual(out.stgChips, ['全部 3', '未加入 2', '已加入 1'], '筛选计数按 done');
 assert.deepEqual(out.stgSeries, ['<img src=x onerror=window.__xss=1>', '旧漫画.cbz', '已加入'], '搜索建议用 series');
+assert.deepEqual(out.deliverBtn, ['加入 ', '加入 xochitl1'], '底栏按钮 = 动词 + 宾语 + 数量');
 assert.deepEqual(out.fmtOptions, ['', 'epub', 'pdf'], '格式筛选项来自 EXT.book');
 assert.ok(out.failBanner && out.failBanner.li === 2 && out.failBanner.img === 0 && out.failBanner.text.includes('<img src=x'), '代理放弃横幅：两条、名字按文本显示');
 assert.deepEqual(out.failEventHits, [1, 0], 'agent-failed 事件只重取放弃记录，不刷母版库');
