@@ -12,7 +12,7 @@
 
 ## 2026-10
 
-### 10-13（前端文案核查 + 字体菜单开关缺省；分支 `fix/ui-text-audit`、`fix/font-enhance-default`）〔已合 master（e688088、073062a）；10-13 17:16 已部署 gateway（`deploy.sh --only gateway`，USB），设备 md5 与本地一致、active、NRestarts=0；字体菜单 qmd 未部署；网页新文案还没在浏览器里看过〕
+### 10-13（前端文案核查 + 字体菜单开关缺省；分支 `fix/ui-text-audit`、`fix/font-enhance-default`）〔已合 master（e688088、073062a）；10-13 17:16 已部署 gateway（`deploy.sh --only gateway`，USB），设备 md5 与本地一致、active、NRestarts=0；字体菜单 qmd 未部署；网页新文案还没在浏览器里看过〕〔17:21 用户部署 `deploy.sh --only font` 并整机重启：journal 有 `SHELF-FONT: onCompleted lang=en appended=2 removed=0 count=6`，新 qmd 在真实 FormatFont.qml 上应用成功；该设备 `fontEnhance` 本就为 true，缺键按开的分支没在真机上走过〕
 
 - 网页文案对照代码逐条核过，改错的：「管理 → 基石」改为用 vellum 装 xovi / qt-resource-rebuilder（原来让用 reManager，xovi 链接也不对）；未装功能的安装命令改为电脑上跑 `packaging/deploy.sh <设备IP> --only …`（原来给的是设备上的 `shelf/install.sh`）；阅读字体的 ⚠ 提示「界面中文回退」改为「中文缺字回退」；界面标题的原生字体名补全为 reMarkable Serif Small；回收站说明补上「不需要」的条目恢复后回「浏览」；模块名去掉「落原生」「矿」「脑」这类内部叫法。另外合并了重复四遍的 sheng-ren 说明，删了几处过时语句。中英文同改。
 - 阅读字体菜单补丁 `font-menu-dynamic.qmd`：`reading-qol.json` 的 `fontEnhance` 以前缺键就当关，而仓库里没有代码写这个键，新设备装完菜单里不会出现上传的字体；现在只有显式 `false` 才关。已有该键为 `true` 的设备行为不变。离线 `apply-diffs`（桩 QML）应用成功，输出与旧版只差这三行；要等下次 `install-all` 或 `deploy.sh --only font` 加整机重启才上机。
