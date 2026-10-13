@@ -61,7 +61,7 @@ function renderFonts(sec){
     sel.value=items.some(it=>it.name===cur)?cur:''};
   const show=d=>{st.style.display=d.restartNeeded?'':'none';st.textContent=d.restartNeeded?T('assets.uiFont.restartNeeded'):''};
   const uiRefresh=async()=>{const d=await j('/api/fonts/ui');const items=d.items||[];
-    fill(sans,'reMarkable Sans',items,d.sans);fill(serif,'reMarkable Serif',items,d.serif);show(d);
+    fill(sans,'reMarkable Sans',items,d.sans);fill(serif,'reMarkable Serif Small',items,d.serif);show(d);
     fillList($('#uil',card),items,(it,left,right)=>{const ex=it.extra||{};
       left.innerHTML=fontLabel(it);
       right.insertAdjacentHTML('beforeend',cjkBadge(ex.cjkPct)+`<span>${fmtB(it.bytes)}</span>`);
