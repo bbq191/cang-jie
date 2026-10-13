@@ -25,9 +25,9 @@ AFFECT /qml/device/view/documentview/FormatFont.qml
             }
             function cjSync(reason) {
                 var t = cjRead("file:///home/root/.local/share/cangjie-ime/reading-qol.json");
-                var fe = false;
-                try { if (t && t.length > 0) fe = !!JSON.parse(t).fontEnhance; } catch (e) {}
-                if (!fe) { console.warn("SHELF-FONT327: " + reason + " fontEnhance=false, skip"); return; }
+                var fe = true; // 只有显式 false 才关：仓库里没有代码写这个键，缺键/缺文件按开（2026-10-13）
+                try { if (t && t.length > 0) { var q = JSON.parse(t); if (q && q.fontEnhance === false) fe = false; } } catch (e) {}
+                if (!fe) { console.warn("SHELF-FONT327: " + reason + " fontEnhance=false（显式关）, skip"); return; }
                 var all = cjBase.concat(cjKeys());
                 var sig = all.join("\u0001"); if (cjLastSig === sig) return; cjLastSig = sig;
                 fontGrid.rows = Math.ceil(all.length / 2);

@@ -6,7 +6,8 @@
 ;   FormatFont.qml 的 fontModel（key=fontconfig 家族名，value=按 UI 语言取 names.cn/tw/en）。
 ;   fonts.json 不存在（书架未装）→ 不追加。
 ;
-; 【开关门控】仍读 reading-qol.json 的 fontEnhance（设置页「阅读字体增强」）；为假不追加。
+; 【开关门控】读 reading-qol.json 的 fontEnhance：只有显式 false 才不追加；缺键、缺文件、读不出都按开
+;   （2026-10-13：原先缺键按关，而仓库里没有任何代码写这个键——旧设置页早已不在——新设备装完菜单里永远没有上传的字体）。
 ;
 ; 【什么时候追加】① Component.onCompleted（首开）；② 菜单再次可见时（onVisibleChanged=true）**差量**追加
 ;   fonts.json 里新出现的 key——这是"上传后免重启就能在菜单里看到"的假设 S-B，真机 spike 决定成败：
@@ -52,9 +53,9 @@ AFFECT /qml/device/view/documentview/FormatFont.qml
             }
             function cjSync(reason) {
                 var t = cjRead("file:///home/root/.local/share/cangjie-ime/reading-qol.json");
-                var fe = false;
-                try { if (t && t.length > 0) fe = !!JSON.parse(t).fontEnhance; } catch (e) {}
-                if (!fe) { console.warn("SHELF-FONT: " + reason + " fontEnhance=false, skip"); return; }
+                var fe = true; // 只有显式 false 才关：仓库里没有代码写这个键，缺键/缺文件按开（2026-10-13）
+                try { if (t && t.length > 0) { var q = JSON.parse(t); if (q && q.fontEnhance === false) fe = false; } } catch (e) {}
+                if (!fe) { console.warn("SHELF-FONT: " + reason + " fontEnhance=false（显式关）, skip"); return; }
                 var lng = cjLang();
                 var fonts = cjFonts();
                 // 先删：fonts.json 里不再有的（字体在 font-serve 那边被删了），从后往前扫，
