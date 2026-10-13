@@ -4,7 +4,7 @@
 >
 > - **先读[书架白皮书](reMarkable书架白皮书.md)**：它讲书架是什么、怎么用、各部分怎么配合、验证到哪一步（第 1–4、8 节）。本文不重复那些概述，只补实现层面的细节；两边说法以代码为准。
 > - **文件名**里的"EPUB 线"是历史叫法（当年 EPUB 走设备端优化、PDF 另走转换线），文件名被多处引用，没改。**节号 §0–§11 保持不变**，别处写"传书线架构 §9"指的就是本文 §9。
-> - **按 2026-10-10 的代码写**（master，含 10-10 重构）。标"10-10"的改动**还没部署到设备**；部署与真机验证状态只记在书架白皮书第 8 节。
+> - **按 2026-10-10 的代码写**（master，含 10-10 重构）。标"10-10"的改动 10-12 已部署、未手测；部署与真机验证状态只记在书架白皮书第 8 节。
 > - 书该被优化成什么样（排版、注释、漫画）、xochitl 阅读器的实测怪癖：**sheng-ren 仓库** `docs/typesetting.md`、`docs/xochitl.md`。已删功能（设备端优化、PDF 转换、KOReader、日漫翻页等）的当年做法：[书架白皮书历史附录](reMarkable书架白皮书-历史附录.md)。
 
 ## 0｜范围
@@ -85,7 +85,7 @@
 ![加入 xochitl：一本书怎样进书库](diagrams/deliver-decision.svg)
 
 - **入口**：`Staging::spawn_deliver`（HTTP `POST /staging/deliver`）先做零耗时校验（格式 400 / 书不在 404 / 忙 409），通过才加忙锁、边车记 `pending`、排进作业队列（`jobs.rs`，与直接导入共用一个工作线程），立即回"已开始"。作业里 `catch_unwind` 兜住 panic、写结果、解忙锁、`bus.publish(books, staging)`。排队期间这本书显示"处理中"。
-- **文件夹**：`XochitlDelivery::ensure_folder`——空＝书库根；非空＝**书库根正下方**按名字找（基座 `Xochitl::child_folder`），没有就 `MkdirQueue::add_in(&Folder::Root, 名字)` 请代理建，`fswatch::wait_for` 先挂监听再查一次，最多等 20 秒（`FOLDER_WAIT_TIMEOUT`，防抖 3 秒），等不到落书库根。目标用 `Folder`（`Root` / `Id(FolderId)`）表示、按 uuid 上传。上传前"设当前文件夹"失败时基座退回书库根。10-10 前按名字在全库任意层找（审计 X-1）。
+- **文件夹**：`XochitlDelivery::ensure_folder`——目标是从书库根起的**各级名字**（`folderPath` 数组，空＝书库根；2026-10-13 起多级，此前只有书库根下一层）。交给 `ensure_folder_path`：每一级在上一级正下方按名字找（基座 `Xochitl::child_folder`），没有就 `MkdirQueue::add_in(&上一级, 名字)` 请代理建，`fswatch::wait_for` 先挂监听再查一次，每级最多等 20 秒（`FOLDER_WAIT_TIMEOUT`，防抖 3 秒），某一级等不到就停在已有的那一级。名字整段比较，里面的 `/` 是普通字符。按 uuid 上传；上传前"设当前文件夹"失败时基座退回书库根。10-10 前按名字在全库任意层找（审计 X-1）。
 - **≤ 体积门**（`nativeUploadLimitMb`，缺省 90MB）走普通上传，流式发送：
   - PDF：`XochitlDelivery::upload_only` → 基座 `Xochitl::upload_to`，不认领。
   - EPUB：`XochitlDelivery::upload_and_claim` → 基座 `Xochitl::upload_and_claim(…, ClaimBy::SameBytes, ClaimWait{…})`：上传前快照书库里最近建的文档，上传后等书库目录变化（防抖 500ms），在快照之外的新文档里找 `<uuid>.epub` 与母版逐字节相同的那份。xochitl 回了 2xx 最多等 20 秒（`CLAIM_WAIT`）；`/upload` 读超时 / 408（`Delivery::LikelyDelivered`）最多等 30 分钟（`CLAIM_WAIT_SLOW`）。认领期间忙锁占着，母版删不掉也改不了名。
@@ -119,7 +119,7 @@
 
 | 队列 | qmd（`shelf/xovi/`） | 触发 | 用途 |
 |---|---|---|---|
-| `mkdir-pending.json`：（上级, 名字） | `shelf-mkdir-agent.qmd`（MainView） | 长轮询 `GET /mkdir/pending?wait=290`（服务端阻塞到入队或到期，上限 300 秒；遇 30 秒客户端超时自动退回 25 秒）；按 `items` 调 `Library.createCollection(parent, name)` | 网页「加入 → 文件夹」与「＋新建」（建在根）；直接导入逐级建多级文件夹（建在上一级里）；`POST /mkdir/add`（建在根） |
+| `mkdir-pending.json`：（上级, 名字） | `shelf-mkdir-agent.qmd`（MainView） | 长轮询 `GET /mkdir/pending?wait=290`（服务端阻塞到入队或到期，上限 300 秒；遇 30 秒客户端超时自动退回 25 秒）；按 `items` 调 `Library.createCollection(parent, name)` | 网页「加入 → 文件夹」（缺的那几级）与「＋新建」（建在当前选中的位置里）；直接导入逐级建多级文件夹（建在上一级里）；`POST /mkdir/add`（建在根） |
 | `trash-pending.json`：uuid + name | `shelf-trash-agent.qmd`（MainView） | 长轮询 `GET /trash/pending?wait=290`（同样带 `cjWait` 自适应，10-10）；先 `Library.entryForId(uuid)` 取条目再取 `.id`，调 `LibraryController.moveEntriesToTrash(ids)`，与当前在看哪个文件夹无关 | 入队按 visibleName 核对 uuid，已进回收站或已删的拒绝；拉取时只把"`.metadata` 真没了、或已进回收站"的项移出，读不了 `.metadata` 先留着；调用方是网关「设备健康 → 清理」和笔记线 note-serve 旧版本软删 |
 | `comic-margins.json`：uuid → 页边距 | `shelf-comic-margins.qmd`（DocumentView） | 开书 1.5 秒后 `GET /margins/{uuid}` | §3 |
 
@@ -218,7 +218,7 @@
 
 网页脚本按页拆成多个文件、编译时拼回同一页：传书页在 `transfer.js`；上传控件 `uploader()`、不确定态进度条 `renderBusy` 在 `dom.js`；事件常量表 `EV` 与取数封装在 `core.js`；`app.js` 只剩装配。`renderTransfer` 渲染「传书」页的两个子面板：**入库**（上传卡，提示"书请先在电脑上用 sheng-ren 的 xochitl 模式优化好再传"）与**母版库**。
 
-母版库页的行为（行内只显示状态、操作在底部栏、加入位置下拉、筛选与分页）见书架白皮书 3.3；页面实现与取舍见网关白皮书「母版库页」。用到的后端字段：列表的 `title` / `series` / `done` / `busy` / `delivered`（§2.2）、`freeBytes` / `lowSpace`、`GET /status` 的 `xochitlFolders`、`GET /api/batch/status`。
+母版库页的行为（行内只显示状态、操作在底部栏、加入位置下拉、筛选与分页）见书架白皮书 3.3；页面实现与取舍见网关白皮书「母版库页」。用到的后端字段：列表的 `title` / `series` / `done` / `busy` / `delivered`（§2.2）、`freeBytes` / `lowSpace`、`GET /status` 的 `xochitlFolderPaths`、`GET /api/batch/status`。
 
 ## 9｜配置与 API 一览
 
@@ -233,19 +233,19 @@
 **`/api/books/*`**（网关代理到 `book-serve:8790`，剥掉 `books` 段；直连后端去掉 `/api/books` 前缀）：
 
 ```
-GET  /status                         {ok, xochitlFolders}（书库根下的文件夹；3 秒缓存，加入 / 直接导入后失效）
+GET  /status                         {ok, xochitlFolders, xochitlFolderPaths}（前者只有书库根下一层的名字，留给旧网页；后者是所有层级、各级名字的数组；3 秒缓存，加入 / 直接导入后失效）
 GET  /staging                        母版库列表 {items, freeBytes, lowSpace}
 POST /staging                        multipart 入库（逐文件）
 GET  /staging/file?name=             下载原件（流式，带 Content-Disposition）
 POST /staging/rename {name, newName} 改名（新名已占用或忙 409、书不在 404、名字不合法 400）
-POST /staging/deliver {name, folder?} 异步加入 xochitl（格式不收 400、书不在 404、忙 409）
+POST /staging/deliver {name, folderPath?, folder?} 异步加入 xochitl（folderPath 各级名字；旧字段 folder 当单段）（格式不收 400、书不在 404、忙 409）
 POST /staging/delete {name}          删除条目（忙 409、书不在 404）
 GET  /margins/{uuid} · POST /margins/applied {uuid}   漫画页边距待办（qmd 用；没登记的 uuid 回 404）
 GET  /progress/{uuid}[?pages=N]      原地替换后的阅读位置（qmd 用）：没有快照 404；新 .epubindex 还没出来 202 {pending:true}；出来了 200 {page}（文档页序，0 起）
 POST /progress/applied {uuid, reason?}  删阅读位置快照（reason=applied / timeout）→ {ok, removed}
 GET  /events                         SSE 事件流
 POST /trash/add {uuid, name} · GET /trash/pending[?wait=秒] · GET /trash   回收站代理队列（GET /trash 只供调试）
-POST /mkdir/add {name}（建在根）· GET /mkdir/pending[?wait=秒] → {items:[{name, parent}]} · GET /mkdir   建文件夹代理队列（GET /mkdir 只供调试）
+POST /mkdir/add {name, parentPath?}（建在 parentPath 那个已有文件夹里，缺省根；上级不在 404）· GET /mkdir/pending[?wait=秒] → {items:[{name, parent}]} · GET /mkdir   建文件夹代理队列（GET /mkdir 只供调试）
 GET  /agent-failures · POST /agent-failures/clear      两个代理交满次数放弃的记录
 POST /import?name=&folder=           直接导入、不进母版库（体＝EPUB 原始字节；folder 是 / 分隔的多级路径）→ 202 {job}
 POST /import?uuid=&name=             原地替换已有文档内容、uuid 不变 → 202 {job}；不在 / 已删 / 回收站 / 非 EPUB → 404；同一 uuid 正在替换 → 409

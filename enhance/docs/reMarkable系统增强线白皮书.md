@@ -123,7 +123,7 @@ hl-snap 走完整的四步，代码在 [`shared/`](../shared/PROVENANCE.md)：
 | `cj_insn_pc_relative`：被覆盖的指令里有 PC 相对寻址（`adr`/`adrp`、`b`/`bl`、`b.cond`/`bc.cond`、`cbz`/`cbnz`、`tbz`/`tbnz`、`cb<cc>`、`ldr`/`ldrsw`/`prfm` literal）就放弃 hook | 这类指令搬进调用桩后，算出来的地址是相对调用桩的，调原函数时会跳飞。以前只靠人工逐条反汇编核对，漏一条就出事；宁可误判放弃，不漏判（`br`/`blr`/`ret` 不算：结果正确） | 2026-10-10（未部署） |
 | 改完把代码页从 RWX 恢复成原来的 `r-x` | 一直留着可写可执行的代码页。原本就可写（例如别的扩展先改过）、跨两页权限不一致或查不到时保持 RWX；调用桩分配失败、PC 相对检查放弃时同样恢复 | 2026-10-09 |
 
-**`minijson`**（2026-10-10，未部署）：两个扩展读配置用同一份极简 JSON 读取 `cj_json_get_bool` / `cj_json_get_string`：只认**顶层对象里后面跟冒号的字符串**为键，符号设为 hidden（两个 `.so` 在同一进程，不导出免得互相调到对方的同名函数）。旧实现用 `strstr` 找 `"键名"`，某个值恰好等于键名（`{"last":"hlSnapCjk","hlSnapCjk":false}`）、或嵌套对象里有同名键时会读错。网关和 font-serve 写出的都是扁平对象，结果与旧版相同。
+**`minijson`**（2026-10-10，10-12 已部署）：两个扩展读配置用同一份极简 JSON 读取 `cj_json_get_bool` / `cj_json_get_string`：只认**顶层对象里后面跟冒号的字符串**为键，符号设为 hidden（两个 `.so` 在同一进程，不导出免得互相调到对方的同名函数）。旧实现用 `strstr` 找 `"键名"`，某个值恰好等于键名（`{"last":"hlSnapCjk","hlSnapCjk":false}`）、或嵌套对象里有同名键时会读错。网关和 font-serve 写出的都是扁平对象，结果与旧版相同。
 
 ui-font 不走第 2、3 步的特征码与跳板，见 [3.3](#33-ui-font界面字体)。
 
@@ -206,7 +206,7 @@ xochitl 不看 EPUB OPF 的 `page-progression-direction`，所以日漫在 xochi
 - **靠 xochitl 隐藏配置键**：`~/.config/remarkable/xochitl.conf` 的 `[General] SleepScreenPath=<png>` 指向 `~/.local/share/shelf/wallpapers/current.png` 后，休眠屏原生满屏显示这张图、自动隐藏插画卡，而且**每次休眠都重读文件**。所以键只写一次（激活第一张时自动写），换图永远是原地覆盖 `current.png`。键名常量在本服务 `native.rs`；读写 `xochitl.conf` 的通用代码在 `rmsvc_core::xochitl_conf`：只动 `[General]` 这一个键，临时文件 + rename，首次改前留 `xochitl.conf.shelf-bak`，**绝不打印行内容**（文件里有 DeveloperPassword、UserToken）。
 - **入池**：等比放大到盖满 954×1696 再居中裁（cover）；2026-10-09 起先在原图上裁出会落在屏幕里的那块，再一次缩放。超过 1600 万像素的源图直接拒收。
 - **轮换触发**：xochitl 每次进休眠都读一遍 `current.png`（2026-09-24 真机 inotify 观察：读完约 120 ms 后它才写 `Normal to DeepSleep`）。服务只监听壁纸目录的 `IN_CLOSE_NOWRITE`，读完就按模式（`sequential` / `random` / `fixed`）换下一张——**下次休眠**显示新图。自己写 `current.png` 产生的是 `IN_CLOSE_WRITE`，不会自己触发自己；10 秒内重复读只算一次，按含休眠的开机时长 `/proc/uptime` 计。
-- **监听实现**（2026-10-10，未部署）：交给基座 `rmsvc_core::fswatch::watch_with(dir, &WatchSpec{mask: CLOSE_NOWRITE, debounce: None}, …)`，删掉了自己那份 inotify + 退避重挂。壁纸目录被删 / 被挪走时，fswatch 按 1 秒起翻倍、5 分钟封顶的间隔等目录回来再挂上；目录由上传入池或服务重启时建回来（目录不在时池是空的，本来没东西可轮换）。一开始挂不上监听时先建目录，再按 5 秒到 5 分钟退避重试。开发机实测空闲时监听线程 0 次上下文切换。
+- **监听实现**（2026-10-10，10-12 已部署）：交给基座 `rmsvc_core::fswatch::watch_with(dir, &WatchSpec{mask: CLOSE_NOWRITE, debounce: None}, …)`，删掉了自己那份 inotify + 退避重挂。壁纸目录被删 / 被挪走时，fswatch 按 1 秒起翻倍、5 分钟封顶的间隔等目录回来再挂上；目录由上传入池或服务重启时建回来（目录不在时池是空的，本来没东西可轮换）。一开始挂不上监听时先建目录，再按 5 秒到 5 分钟退避重试。开发机实测空闲时监听线程 0 次上下文切换。
 - 不写 `/usr`、不做 bind-mount、没有开机单元和 sleep 钩子，也不起 `journalctl` 子进程。旧的 bind-mount 方案存档在 [`wallpaper-serve/legacy-bind-mount/`](../wallpaper-serve/legacy-bind-mount/README.md)，已退役。
 
 ### 3.7 lo-alias：让 10.11.99.1 常驻可达
@@ -277,7 +277,7 @@ xochitl 的网页上传口（`:80`，`POST /upload`）只绑 USB 网卡的 `10.1
 | wallpaper-serve `/api/wallpapers` | `GET /` · `GET /status` · `POST /`（multipart，`?activate=1`） | 池 / 状态（含 `native.restartPending`）/ 上传 |
 | | `PUT /current {name}` · `PUT /mode {mode}` · `DELETE /{name}` · `GET /{name}` · `GET /events` | 切换 / 轮换模式 / 删 / 预览 / 事件流 |
 
-**错误码**（2026-10-10 起，未部署；此前一律 400）：
+**错误码**（2026-10-10 起，10-12 已部署；此前一律 400）：
 
 - font-serve：没有这个字体家族 404、选没装的界面字体 400、删字体文件 / 重写索引 / 存选择失败 500。
 - wallpaper-serve：名字不合法 400、池里没有 404、删正在用的那张 409、写 `current.png` / 状态文件 / `xochitl.conf` 失败 500。
@@ -409,7 +409,7 @@ cd enhance/ui-font && make aarch64     # 产物 ui-font.so（已提交进仓库�
 
 ## 7. 验证现状
 
-设备固件 3.28.0.172。截至 2026-10-10，设备上的 `extensions.d/` 是 `hl-snap.so`、`ui-font.so`、`qt-resource-rebuilder.so`（10-09 16:33 `ls` 核对），**没有** `cangjie-langhook.so`；设备上 `hl-snap.so` 的 md5 是 `f7261e7f…`（10-09 16:32 部署，整机重启后核对、已载入、hook 安装日志正常），`ui-font.so` 是 `21cda291…`（10-09 13:48 部署）。仓库里 10-10 重编的 `hl-snap.so` `261606f0…`、`ui-font.so` `c294752f…` **还没部署**。
+设备固件 3.28.0.172。截至 2026-10-13，设备上的 `extensions.d/` 是 `hl-snap.so`、`ui-font.so`、`qt-resource-rebuilder.so`，**没有** `cangjie-langhook.so`；`hl-snap.so` 是 10-10 重编的 `261606f0…`、`ui-font.so` 是 `c294752f…`（10-12 约 08:38 已部署（10-13 核对设备上的文件得知，部署当时没记录），功能未在真机上手测）。上一版 `hl-snap.so` `f7261e7f…`（10-09 16:32 部署）整机重启后核对过已载入、hook 安装日志正常。
 
 ### 7.1 真机验证过的
 
@@ -439,9 +439,9 @@ cd enhance/ui-font && make aarch64     # 产物 ui-font.so（已提交进仓库�
 | 第五轮审计（09-30）：壁纸收到 `IN_IGNORED` 重建监听、`shelf-mkdir-agent.qmd` 失败打日志 | 09-30 14:10，38✓ | 壁纸照常轮换；建文件夹失败时 journal 有 `SHELF-MKDIR: failed` |
 | 第四轮审计（09-25）：font-serve 开机复用索引、上传暂存移到 `/home`；壁纸去重改用 `/proc/uptime`；mkdir / trash 代理出错退避 | 随 09-25 / 09-30 部署上机 | `systemctl restart font-serve` 后"索引 N 个家族"秒回、`fonts.conf` mtime 不变；停掉 book-serve 时代理不再每 15 秒重试。代理 qmd 的 `apply-diffs` **只在带同名锚点的桩 QML 上跑过** |
 
-### 7.3 只在开发机验证、还没部署（2026-10-10）
+### 7.3 已部署、还没手测（10-10 的改动，10-12 部署）
 
-| 项 | 开发机验证 | 部署后要确认 |
+| 项 | 开发机验证 | 要在真机上确认 |
 |---|---|---|
 | 两个扩展的 `minijson`、`cj_insn_pc_relative` 防线（两个 `.so` 都重编） | `shared` 单测新增 PC 相对 21+17 例与 JSON 用例；把旧 hl-snap 函数逐字复制跑出三种错法；交叉编译零警告，符号上限不变 | journal 仍有 `荧光笔EXPAND hook 安装完成` 与 `[ui-font] 安装完成`、没有 `PC 相对寻址，…放弃 hook`；网页关掉再打开吸附开关，各划一段中文看效果跟着变；界面字体照常 |
 | 两个服务迁到基座新接口：壁纸监听改 `fswatch::watch_with`、`UploadTarget`、错误码分级、`/events` 改 `sse_reply_for`；font-serve 的 `ttf` 模块搬回本服务 | font-serve 21 项、wallpaper-serve 16 项 `cargo test --locked`，clippy 零告警；沙箱里空闲 30 秒监听线程 0 次上下文切换 | 壁纸上传 / 切换 / 删除照常；休眠一次后 journal 有 `休眠屏已读 → 轮换到 …`；字体上传 / 删除、改界面字体照常；网页事件流照常推送 |
@@ -490,7 +490,7 @@ cd enhance/ui-font && make aarch64     # 产物 ui-font.so（已提交进仓库�
 | 09-30 第五轮 | 壁纸收到 `IN_IGNORED` 重建监听；hl-snap `make clean` 不删已提交的胶水；font-serve 回执去掉 KOReader 提示；mkdir 代理失败打日志；发现 `check-compatibility` 不做校验 | 09-30 14:10 部署 |
 | 10-07 | 删日漫翻页规则；新增界面字体 ui-font | 已部署；ui-font 真机目测通过 |
 | 10-09 第六轮 | 壁纸先裁再缩放（12MP 横图 1.72s → 1.01s，中间图 15MB → 6.5MB）；font-serve `fc-cache` 只扫用户目录（开发机 CPU 0.7s → 0.006s）、一批一次、加超时；两个服务的通用代码迁到 rmsvc-core。**三处 C 隐患**：#1 glyph 上界、#2 代码页恢复 `r-x`（同日又补了调用桩分配失败时的恢复）、#3 ui-font 非 PIE 防递归 | 13:48 / 16:32 部署；#2 真机确认，#1 #3 只有离线证据 |
-| 10-10 第七轮 | `minijson` 合并、`cj_insn_pc_relative` 防线（审计 EN-2） | 未部署 |
+| 10-10 第七轮 | `minijson` 合并、`cj_insn_pc_relative` 防线（审计 EN-2） | 10-12 已部署，未手测 |
 | 10-10 重构第二阶段 | 壁纸监听迁 `fswatch::watch_with`（CORE-7）、`UploadTarget`（CORE-6）、错误分级（CORE-1）、`sse_reply_for`（CORE-5）；`ttf` 模块与 `SleepScreenPath` 常量从基座搬回服务（CORE-3）；上传整体错误类型化（multipart 400 / 暂存 500） | 未部署 |
 
 审计报告编号（EN-2、CORE-1 等）见 [`docs/AUDIT-2026-10-10.md`](../../docs/AUDIT-2026-10-10.md)；逐日的用户可见变化见 [`docs/CHANGELOG.md`](../../docs/CHANGELOG.md)。
@@ -521,7 +521,7 @@ cd enhance/ui-font && make aarch64     # 产物 ui-font.so（已提交进仓库�
 | 2026-09-30 | 第五轮审计（14:10 部署）；移除 hw-stroke 与 battop（15:23 部署，自动清残留） |
 | 2026-10-07 | 删日漫翻页规则；界面字体 ui-font（`packaging` 加 `ui-font` 步） |
 | 2026-10-09 | 第六轮审计与三处 C 隐患修复（13:48 部署）；调用桩失败路径补口子（16:32 部署）；仓库公开 |
-| 2026-10-10 | 第七轮审计与重构第二阶段（未部署）；白皮书按新手阅读顺序重组 |
+| 2026-10-10 | 第七轮审计与重构第二阶段（10-12 已部署）；白皮书按新手阅读顺序重组 |
 
 ## 附录 B　xochitl 笔画渲染链（逆向笔记）
 
@@ -569,8 +569,8 @@ cd enhance/ui-font && make aarch64     # 产物 ui-font.so（已提交进仓库�
 | §03n | 移除手写优化与电池刺客 | [A.4](#a4-已移除的功能)；清理实现见 `packaging/README.md` |
 | §03o | 界面字体 ui-font | [3.3 ui-font](#33-ui-font界面字体)；真机记录在 [7.1](#71-真机验证过的) |
 | §03p | 第六轮审计与已知风险（三处 C 隐患 #1–#3） | 机制在 [3.1](#31-xovi-扩展怎么生效)（页权限恢复）、[3.2](#32-hl-snap荧光笔汉字吸附)（glyph 上界）、[3.3](#33-ui-font界面字体)（防递归）；改动摘要在 [A.3](#a3-历轮审计给本线的改动摘要)；验证状态在 [7.1](#71-真机验证过的)、[7.2](#72-已部署部署自检通过但功能没手测) |
-| §03q | 第七轮审计（10-10：minijson、PC 相对检查） | [3.1](#31-xovi-扩展怎么生效)；验证状态 [7.3](#73-只在开发机验证还没部署2026-10-10) |
-| §03r | 重构第二阶段给两个服务的改动（10-10） | [3.6](#36-wallpaper-serve休眠壁纸)、[4.2](#42-http-接口)；验证状态 [7.3](#73-只在开发机验证还没部署2026-10-10) |
+| §03q | 第七轮审计（10-10：minijson、PC 相对检查） | [3.1](#31-xovi-扩展怎么生效)；验证状态 [7.3](#73-已部署还没手测10-10-的改动10-12-部署) |
+| §03r | 重构第二阶段给两个服务的改动（10-10） | [3.6](#36-wallpaper-serve休眠壁纸)、[4.2](#42-http-接口)；验证状态 [7.3](#73-已部署还没手测10-10-的改动10-12-部署) |
 | §04 | 踩坑（逆向方法论 / hook 安全性 / qmd 离线验证 / 构建与环境） | [5.4 加新 hook 前的检查清单](#54-加新-hook-前的检查清单)、[5.3 改 qmd 怎么离线验证](#53-改-qmd-怎么离线验证)、[5.1 构建](#51-构建)、[6.2 排错](#62-排错)；"hook 安全性"末条（整机重启）在 [3.8](#38-扩展怎么换入为什么一律整机重启) |
 | §05 | 真机待办 | [7. 验证现状](#7-验证现状) |
 | 附录「迁移沿革」 | | [A.5 迁移沿革](#a5-迁移沿革) |

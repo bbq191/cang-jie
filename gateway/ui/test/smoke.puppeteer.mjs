@@ -22,7 +22,7 @@ let html = fs.readFileSync(UI + 'index.html', 'utf8');
 html = html.replace('__STYLE__', fs.readFileSync(UI + 'style.css','utf8')).replace('__SCRIPT__', () => concatenated());
 const zh = fs.readFileSync(UI + 'locales/zh-CN.json','utf8');
 const mock = `
-window.__hits = {}; window.__es = []; window.__hidden = false; window.__xss = 0;
+window.__hits = {}; window.__posts = []; window.__es = []; window.__hidden = false; window.__xss = 0;
 Object.defineProperty(document, 'hidden', {get: () => window.__hidden});
 class ES { constructor(u){ this.u=u; this.closed=false; window.__es.push(this); setTimeout(() => this.onopen && !this.closed && this.onopen(), 10);} close(){ this.closed=true; } }
 const __st = window.setTimeout.bind(window); window.setTimeout = (f, ms, ...a) => __st(f, ms === 60000 && window.__hiddenCloseMs ? window.__hiddenCloseMs : ms === 5000 && window.__fastRetry ? 50 : ms, ...a);
@@ -42,7 +42,9 @@ const routes = {
   '/api/notes/books/u1/sync': () => ({chapters:[]}),
   '/api/transcribe/status': () => ({failures:[]}),
   '/api/books/staging': () => ({ok:true, items:[{name: evil, title: evil.replace(/\.epub$/, ''), series: evil.replace(/\.epub$/, ''), done:false, format:'epub', bytes:1000, mtime:1, delivered:{deliver:{status:'failed', message:'"><img src=x onerror=window.__xss=1>'}}}, {name:'旧漫画.cbz', title:'旧漫画.cbz', series:'旧漫画.cbz', done:false, format:'other', bytes:10, mtime:1}, {name:'已加入 -- 某作者.epub', title:'已加入', series:'已加入', done:true, format:'epub', bytes:10, mtime:1, delivered:{native:1}}], freeBytes: 9e9}),
-  '/api/books/status': () => ({ok:true, xochitlFolders:[]}),
+  '/api/books/status': () => ({ok:true, xochitlFolders:['漫画'], xochitlFolderPaths:[['漫画'], ['漫画', '乱马1/2']]}),
+  '/api/batch': () => ({ok:true, queued:1, skipped:0}),
+  '/api/books/mkdir/add': () => ({ok:true, pending:1}),
   '/api/session': () => ({ok:true, mustChange:false}),
   '/api/batch/status': () => ({running:false,total:0,done:0,queued:[],failed:[]}),
   '/api/foundation': () => ({}),
@@ -59,6 +61,7 @@ window.__fails = [{kind:'trash', name: evil, uuid:'11111111-1111-1111-1111-11111
 window.fetch = async (url, opt) => {
   const p = String(url).split('?')[0];
   window.__hits[p] = (window.__hits[p]||0) + 1;
+  if (opt && typeof opt.body === 'string') window.__posts.push([p, JSON.parse(opt.body)]);
   await new Promise(r => setTimeout(r, 30));
   const f = routes[p]; const body = f ? f() : {};
   return { status: 200, ok: true, json: async () => body, text: async () => JSON.stringify(body) };
@@ -232,6 +235,24 @@ out.cleanupPartial = await page.evaluate(async () => {
   await new Promise(r => setTimeout(r, 300));
   return document.querySelector('#toasthost').textContent;
 });
+// 加入位置（2026-10-13 多级）：下拉列出所有层级、按路径显示；选子文件夹后批量提交 folderPath 数组（名字里的 / 不拆）；
+// 「新建」建在当前选中的位置里，mkdir/add 带 parentPath，之后选中的是新路径
+out.folders = await page.evaluate(async () => {
+  const sel = document.querySelector('#folder');
+  const labels = [...sel.options].map(o => o.textContent);
+  sel.value = JSON.stringify(['漫画', '乱马1/2']); sel.dispatchEvent(new Event('change'));
+  const cb = document.querySelector('#stglist input[type=checkbox]'); cb.click();
+  document.querySelector('#stgbar .stgbar-btns .btn.pri').click();
+  await new Promise(r => setTimeout(r, 300));
+  const batch = (window.__posts.find(([p]) => p === '/api/batch') || [])[1];
+  sel.value = '__new__'; sel.dispatchEvent(new Event('change'));
+  const newIn = document.querySelector('#xnewin').textContent;
+  document.querySelector('#xnewname').value = '卷01';
+  document.querySelector('#xnewgo').click();
+  await new Promise(r => setTimeout(r, 300));
+  const mk = (window.__posts.find(([p]) => p === '/api/books/mkdir/add') || [])[1];
+  return {labels, batchPath: batch && batch.folderPath, legacy: batch && 'folder' in batch, newIn, mk, picked: localStorage.getItem('shelf.folder'), shown: sel.options[sel.selectedIndex].textContent};
+});
 // 无轮询：等 4 秒无新请求
 const h1 = await hits();
 await new Promise(r => setTimeout(r, 4000));
@@ -287,5 +308,12 @@ assert.equal(out.connectingUntouched, 1, '浏览器自己在重连（CONNECTING�
 assert.deepEqual(out.toggles, [[[true, '已加载'], [false, '待重启']], [[false, '网页功能']]], '系统增强/实验室开关按 toggles 渲染');
 assert.ok(out.cleanupPartial.includes('旧.epub') && out.cleanupPartial.includes('拒绝原因'), `清理部分失败应列出 {name,message}：${out.cleanupPartial}`);
 assert.equal(out.idleHits, 0, '空闲时不该有轮询');
+assert.deepEqual(out.folders.labels, ['根目录', '漫画', '漫画 › 乱马1/2', '＋ 新建文件夹…'], '加入位置列出所有层级');
+assert.deepEqual(out.folders.batchPath, ['漫画', '乱马1/2'], '批量提交各级名字的数组');
+assert.equal(out.folders.legacy, false, '不再发单段 folder');
+assert.ok(out.folders.newIn.includes('漫画 › 乱马1/2'), '新建框显示建在哪里');
+assert.deepEqual(out.folders.mk, {name: '卷01', parentPath: ['漫画', '乱马1/2']}, '新建文件夹带上级路径');
+assert.equal(out.folders.picked, JSON.stringify(['漫画', '乱马1/2', '卷01']), '新建后选中新路径');
+assert.equal(out.folders.shown, '漫画 › 乱马1/2 › 卷01', '还没建出来的新路径也显示在下拉里');
 assert.deepEqual(errs, [], '不该有 JS 报错');
 console.log('smoke OK');

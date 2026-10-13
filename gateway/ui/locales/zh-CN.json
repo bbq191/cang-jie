@@ -481,5 +481,6 @@
   "stg.dest.createFirst": "先点「创建」建好新文件夹，或选一个已有的加入位置",
   "stg.fmt.other": "其他格式",
   "stg.bar.deliverVerb": "加入",
-  "stg.bar.deliverObject": "xochitl"
+  "stg.bar.deliverObject": "xochitl",
+  "stg.dest.newIn": "建在「{parent}」里："
 }

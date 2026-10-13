@@ -481,5 +481,6 @@
   "stg.dest.createFirst": "Click \"Create\" for the new folder first, or pick an existing destination",
   "stg.fmt.other": "Other",
   "stg.bar.deliverVerb": "Add to",
-  "stg.bar.deliverObject": "xochitl"
+  "stg.bar.deliverObject": "xochitl",
+  "stg.dest.newIn": "Inside “{parent}”:"
 }

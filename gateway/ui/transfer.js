@@ -82,7 +82,7 @@ function renderTransfer(sec){sec.innerHTML=`
       <div class="stg-headrow"><h3 style="margin:0">${T('transfer.staging.title')}</h3><span class="small" id="stgcap"></span></div>
       <div class="stg-dest">
         <div class="stg-destcol"><label class="small" for="folder">${T('stg.dest.xochitl')}</label><select id="folder"></select></div>
-        <span class="stg-newrow" id="xnew" hidden><input type="text" id="xnewname" placeholder="${T('stg.dest.newPlaceholder')}"><button class="btn pri" id="xnewgo">${T('stg.dest.create')}</button><button class="btn" id="xnewx">${T('stg.dest.cancel')}</button></span>
+        <span class="stg-newrow" id="xnew" hidden><span class="small" id="xnewin"></span><input type="text" id="xnewname" placeholder="${T('stg.dest.newPlaceholder')}"><button class="btn pri" id="xnewgo">${T('stg.dest.create')}</button><button class="btn" id="xnewx">${T('stg.dest.cancel')}</button></span>
         <details class="cmp"><summary>${T('transfer.staging.optDetailsSummary')}</summary><p class="small">${T('transfer.staging.optNote')}</p></details>
       </div>
       <div class="small" id="stgfree"></div>
@@ -100,22 +100,28 @@ function renderTransfer(sec){sec.innerHTML=`
   let bs={running:false,waitingService:false,total:0,done:0,failed:[],queued:[],current:null,action:null};
   let batchQueued=new Set();
   const g=id=>$('#'+id,sec);
-  // 加入位置：下拉（现有文件夹）+「＋新建文件夹」。选中值记在本机；"根目录"= 空串。新建走 book-serve 的 mkdir 队列，
-  // 由 xochitl 里的 QML 代理（长轮询）真正建出来。**不在这里等它建好**：fillFolders 会把记住的名字补进下拉（哪怕 xochitl 那边
-  // 还没出现），加入 xochitl 时 book-serve 自己会等这个文件夹建出来（deliver.rs::ensure_folder）；建好后 mkdir 事件
-  // 触发的刷新把它换成真实列表里的那一项。此前这里每 2 秒查一次 /api/books/status、最多 12 次，按钮也跟着卡 24 秒。
+  // 加入位置：下拉（xochitl 书库里所有层级的文件夹）+「＋新建文件夹」（建在当前选中的位置里）。2026-10-13 起多级：位置用
+  // 各级名字的数组表示（名字本身可能带 `/`，如《乱马1/2》，不能拼成字符串再拆），下拉的 value 与本机记忆都是它的 JSON；
+  // 旧版记的单个名字当一级。新建走 book-serve 的 mkdir 队列，由 xochitl 里的 QML 代理（长轮询）真正建出来。**不在这里等它建好**：
+  // fillFolders 会把记住的位置补进下拉（哪怕 xochitl 那边还没出现），加入 xochitl 时 book-serve 自己会等缺的那几级建出来
+  // （delivery.rs::ensure_folder）；建好后 mkdir 事件触发的刷新把它换成真实列表里的那一项。
   const NEW='__new__';
   const fsel=g('folder'),newBox=g('xnew'),newName=g('xnewname');
-  const xFolder=()=>fsel.value===NEW?'':fsel.value;
-  const fillFolders=names=>{const want=LS.get('folder','');const list=[...new Set(names.filter(Boolean))];if(want&&!list.includes(want))list.push(want);
-    fsel.replaceChildren(el('option',{value:'',text:T('stg.dest.root')}),...list.map(n=>el('option',{value:n,text:n})),el('option',{value:NEW,text:T('stg.dest.new')}));
+  const pathOf=v=>{if(!v)return[];try{const a=JSON.parse(v);if(Array.isArray(a))return a.map(String)}catch{}return[v]};
+  const keyOf=p=>p.length?JSON.stringify(p):'';
+  const pathLabel=p=>p.length?p.join(' › '):T('stg.dest.root');
+  const xFolder=()=>fsel.value===NEW?[]:pathOf(fsel.value);
+  const fillFolders=paths=>{const want=keyOf(pathOf(LS.get('folder','')));const keys=[...new Set(paths.map(keyOf).filter(Boolean))];if(want&&!keys.includes(want))keys.push(want);
+    fsel.replaceChildren(el('option',{value:'',text:T('stg.dest.root')}),...keys.map(k=>el('option',{value:k,text:pathLabel(pathOf(k))})),el('option',{value:NEW,text:T('stg.dest.new')}));
     fsel.value=newBox.hidden?want:NEW}; // 新建框还开着（正在填名字）时刷新别把下拉跳回旧值
-  fsel.addEventListener('change',()=>{if(fsel.value===NEW){newBox.hidden=false;newName.focus()}else{newBox.hidden=true;LS.set('folder',fsel.value)}});
-  g('xnewx').onclick=()=>{newBox.hidden=true;newName.value='';fsel.value=LS.get('folder','')};
+  fsel.addEventListener('change',()=>{if(fsel.value===NEW){g('xnewin').textContent=T('stg.dest.newIn',{parent:pathLabel(pathOf(LS.get('folder','')))});newBox.hidden=false;newName.focus()}else{newBox.hidden=true;LS.set('folder',fsel.value)}});
+  g('xnewx').onclick=()=>{newBox.hidden=true;newName.value='';fsel.value=keyOf(pathOf(LS.get('folder','')))};
   guardClick(g('xnewgo'),async()=>{const name=newName.value.trim();if(!name){toast(T('stg.dest.needName'),'warn');return}
-    const r=await postJ('/api/books/mkdir/add',{name});if(r.ok===false)return;
-    toast(T('stg.dest.created',{name}),'info',6000);
-    LS.set('folder',name);newBox.hidden=true;newName.value='';await refresh()});
+    const parentPath=pathOf(LS.get('folder',''));
+    const r=await postJ('/api/books/mkdir/add',{name,parentPath});if(r.ok===false)return;
+    const target=[...parentPath,name];
+    toast(T('stg.dest.created',{name:pathLabel(target)}),'info',6000);
+    LS.set('folder',keyOf(target));newBox.hidden=true;newName.value='';await refresh()});
   // 筛选/分页状态。默认「未加入」（顶替原来"全部 + 隐藏已完成"的默认视图）；旧版存的「已优化」筛选（done）也回落到它。
   let st=['all','todo','finished'].includes(LS.get('stgSt','todo'))?LS.get('stgSt','todo'):'todo',page=1,pageSize=+LS.get('stgPageSize','25')||25;
   const filtered=()=>{const q=g('stgq').value.toLowerCase(),f=g('stgfmt').value;
@@ -124,7 +130,7 @@ function renderTransfer(sec){sec.innerHTML=`
   // 批量状态里只有文件名（网关的队列不懂书名规则）：当前列表里查得到就用 book-serve 给的 title，查不到（已删/改名）显示原文件名。
   const titleOf=name=>{const it=items.find(x=>x.name===name);return it&&it.title||name};
   const enqueue=async(action,body)=>{if(fsel.value===NEW){toast(T('stg.dest.createFirst'),'warn');return}
-    const r=await postJ('/api/batch',{action,folder:xFolder(),...body});
+    const r=await postJ('/api/batch',{action,folderPath:xFolder(),...body});
     if(r.ok===false)return;
     toast(r.queued?T('stg.batch.queuedToast',{queued:r.queued,skip:r.skipped?T('stg.batch.skipped',{n:r.skipped}):''}):T('stg.batch.none'),r.queued?'ok':'warn');
     if(r.queued)picked.clear();await refresh()};
@@ -237,7 +243,7 @@ function renderTransfer(sec){sec.innerHTML=`
     if(lvl===LEVEL.QUEUE){applyQueue(await j('/api/batch/status'));render();return}
     const full=lvl>=LEVEL.FULL;
     const [d,bt,s]=await Promise.all([j('/api/books/staging'),j('/api/batch/status')].concat(full?[j('/api/books/status')]:[]));
-    if(full)fillFolders(s.ok!==false?s.xochitlFolders||[]:[]);
+    if(full)fillFolders(s.ok===false?[]:s.xochitlFolderPaths||(s.xochitlFolders||[]).map(n=>[n])); // 旧 book-serve 只给根下一层名字
     applyQueue(bt);
     if(d.ok===false){items=[];render();g('stgcap').textContent='';g('stgfree').textContent='';g('stglist').innerHTML=`<li class="small stg-empty" style="color:var(--bad)">${esc(T('transfer.staging.unavailable',{msg:d.message||T('transfer.staging.notOpen')}))}</li>`;return}
     items=d.items||[];const tot=items.reduce((a,b)=>a+b.bytes,0);g('stgcap').textContent=items.length?T('transfer.staging.capSummary',{count:items.length,size:fmtB(tot)}):'';

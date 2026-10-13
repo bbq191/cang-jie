@@ -26,7 +26,7 @@
 - **qmd 补丁**：qt-resource-rebuilder 读的 QML 补丁文件，xochitl 启动时读一次，用来改界面。
 - **开关 ≠ 已生效**：扩展和补丁的网页开关旁有「已加载 / 未加载 / 待重启」徽章，由网关读 xochitl 主进程的 `/proc/<pid>/maps` 判定；「管理 → 基石」也列出 xochitl 里实际生效的扩展。
 
-**现状（2026-10-10）**：设备上是 10-09 部署的版本（部署自检通过，荧光笔吸附、壁纸、字体这些功能本身没再手测）。10-10 第七轮审计与重构第二阶段的改动（两个扩展的 `minijson` 与 PC 相对指令防线、两个服务迁到 rmsvc-core 新接口与错误码分级）**已合并、未部署**，见白皮书第 7 章。
+**现状（2026-10-13）**：10-10 第七轮审计与重构第二阶段的改动（两个扩展的 `minijson` 与 PC 相对指令防线、两个服务迁到 rmsvc-core 新接口与错误码分级）10-12 约 08:38 已部署（10-13 核对设备上的文件得知，部署当时没记录），功能未在真机上手测，见白皮书第 7 章。
 
 **已移除（2026-09-30，别再加回）**：手写优化（`handwriting-stroke/`）和电池刺客（`battop/`）。重跑 `install-all.sh` 会自动清掉旧设备上的残留；见白皮书附录 A.4。
 
@@ -36,7 +36,7 @@
 - 落点：阅读字体装进 fontconfig 用户字体目录 `~/.local/share/fonts/`（界面字体在子目录 `shelf-ui/`），字体菜单读 `~/.local/share/shelf/fonts.json`，回退规则写 `~/.config/fontconfig/fonts.conf`，界面字体选择写 `~/.local/share/shelf/ui-font.json`。
 - 一批上传后只跑一次 `fc-cache -f ~/.local/share/fonts`（只扫用户字体目录）；`fc-scan` 30 秒、`fc-cache` 120 秒超时。
 - 代码：`src/main.rs` 路由、`store.rs` 扫描与 fc-cache、`fontconfig.rs` 生成 `fonts.conf`、`ttf.rs` 解析字体家族名与 CJK 覆盖率、`ui.rs` 界面字体选择。原理见白皮书 3.5 节与书架白皮书的字体章节（[`../shelf/docs/reMarkable书架白皮书.md`](../shelf/docs/reMarkable书架白皮书.md) 4.9 节）。
-- 错误码（2026-10-10 起，未部署）：没有这个字体家族 404、选没装的界面字体 400、删字体文件 / 重写索引 / 存选择失败 500；上传请求体不是合法 multipart 400、暂存目录建不起来 500。
+- 错误码（2026-10-10 起，10-12 已部署）：没有这个字体家族 404、选没装的界面字体 400、删字体文件 / 重写索引 / 存选择失败 500；上传请求体不是合法 multipart 400、暂存目录建不起来 500。
 - host 测试：`cd font-serve && cargo test --locked`（21 项，2026-10-10 实跑）。
 
 ## 构建与测试

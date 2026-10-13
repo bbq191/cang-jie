@@ -291,7 +291,7 @@ service::run_or_exit(&SPEC, &bind_addr, &paths, router, ServeOpts::default());
 | `epubpkg::epubindex` | **真机**：书架"原地替换后找回阅读位置"10-09 真机跑通一次 |
 | 09-24～10-07 历轮改动（读空闲超时、accept 暂时性错误、权限保留、暂存移出 tmpfs、`Wake`/`registry_wake`、mDNS 地址变化驱动等） | 已部署；多数行为没在真机上专门触发（mDNS 地址变化重扫只有 host 单测与网络命名空间端到端；accept 暂时性错误没在真机上触发过） |
 | 10-09 第六轮审计（`proc`、fswatch 单线程 poll 与目录重挂、`wait_for`、大文件认领改等 inotify、设文件夹失败退根、TLS 原子写与换叶顺序、`epubpkg` 等） | 已部署（13:48 自检 38✓；同日审计后续随 15:53 那次部署上机，39✓）；除 `epubindex` 外，这些行为没在真机上专门触发过 |
-| **10-10 重构两阶段**（rustls 0.23.45、`Folder`/`FolderId` 与 `upload_and_claim`、跨进程 flock、`PageTable`、`EntryKind`、`wire` 枚举、`http::Body`、`FlowError`、删 `From<String>`、`gateway` feature、`load_or_seed` 损坏留证、模块归位） | **开发机**：单测 155 个 + 文档测试 2 个通过（本次实跑；10-10 重构时连跑 10 次无偶发失败）、clippy 全过、aarch64 全量交叉编译通过；**未部署、未在真机上验证** |
+| **10-10 重构两阶段**（rustls 0.23.45、`Folder`/`FolderId` 与 `upload_and_claim`、跨进程 flock、`PageTable`、`EntryKind`、`wire` 枚举、`http::Body`、`FlowError`、删 `From<String>`、`gateway` feature、`load_or_seed` 损坏留证、模块归位） | **开发机**：单测 155 个 + 文档测试 2 个通过（本次实跑；10-10 重构时连跑 10 次无偶发失败）、clippy 全过、aarch64 全量交叉编译通过；10-12 约 08:38 已部署（10-13 核对设备上的文件得知，部署当时没记录），功能未在真机上手测 |
 
 **待真机确认**
 

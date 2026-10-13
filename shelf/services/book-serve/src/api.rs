@@ -1,14 +1,14 @@
 //! HTTP 适配层（唯一碰 http 类型的地方，只做取参 + 调领域方法 + 回执）。路由（经网关时前缀 `/api/books`）：
 //! `GET /status`
 //! 母版库：`GET /staging` → `{items, freeBytes, lowSpace}`（`lowSpace`：剩余空间低于 300 MiB，判据见 `staging::low_space`，查不到空间为 false）· `POST /staging`（multipart，原样入库）
-//! · `POST /staging/deliver {name, folder?}`（2026-09-19 起投完永远保留母版，不再有 `keep` 参数；`POST /staging/mark` 2026-10-07 删，
+//! · `POST /staging/deliver {name, folderPath?: [各级名字], folder?}`（`folderPath` 从书库根起逐级，缺的那几级会建；旧调用方的 `folder` 当单段；2026-09-19 起投完永远保留母版，不再有 `keep` 参数；`POST /staging/mark` 2026-10-07 删，
 //!   原调用方是已删的网关批量「加入 KOReader」）
 //! · `POST /staging/delete {name}` · `POST /staging/rename {name, newName}` · `GET /staging/file?name=`（原件下载，流式）
 //! · 2026-10-07 删除：`/staging/optimize`、`/staging/fetch-article`、`/staging/originals/*`、`/staging/cancel`（书架不再优化书，
 //!   优化全部在电脑上用 sheng-ren 做；剩下的投递没有能中途停的步骤）。
 //! · `GET /events`（SSE：母版库/inbox 变更即推，网页零轮询）。
 //! 原生回收站队列：`POST /trash/add {uuid, name}`（name 必须与书库 visibleName 相符）· `GET /trash/pending?wait=` → `{uuids}`（MainView 代理 qmd 长轮询拉取执行）· `GET /trash`（只供调试：ssh 上 curl 看队列）。
-//! 原生建文件夹队列：`POST /mkdir/add {name}`（建在书库根）· `GET /mkdir/pending?wait=` → `{items: [{name, parent}]}`（MainView 代理
+//! 原生建文件夹队列：`POST /mkdir/add {name, parentPath?: [各级名字]}`（建在 `parentPath` 那个已有文件夹里，缺省书库根；上级不在 → 404）· `GET /mkdir/pending?wait=` → `{items: [{name, parent}]}`（MainView 代理
 //! shelf-mkdir-agent.qmd 长轮询拉取执行；`parent` 是上级文件夹 uuid，空串＝书库根）· `GET /mkdir`（只供调试）。
 //! 代理放弃记录：`GET /agent-failures` → `{items:[{kind,name,uuid?,at}]}` · `POST /agent-failures/clear`（两个队列交满次数仍没做成的项）。
 //! 2026-09-05 起规则统一"所有书只落母版库"：旧 `POST /?target=` 直投路已删（`/staging*` 是网页的唯一入口）。
@@ -69,9 +69,9 @@ pub fn router(st: Arc<State>) -> Router {
             let j = r.json()?;
             let name = j.str("name")?.to_string();
             // 母版库永远保留（可再投另一读器对照，2026-09-19 起不再有"投完自动删除"这条路）；
-            // folder 空＝书库根；非空＝书库根下这个名字的文件夹，没有会先经 mkdir 队列建出来再投，见 XochitlDelivery::ensure_folder。
+            // 目标文件夹：从书库根起的各级名字（空＝书库根），缺的那几级先经 mkdir 队列建出来再投，见 XochitlDelivery::ensure_folder。
             // 排进与直接导入共用的后台作业队列，一次一本（见 jobs.rs）。
-            s.staging.spawn_deliver(&name, j.str_or("folder", ""), &s.jobs, s.bus.clone()).map_err(api_error)?;
+            s.staging.spawn_deliver(&name, &folder_path(&j), &s.jobs, s.bus.clone()).map_err(api_error)?;
             s.bus.publish(ev::AREA, ev::STAGING); // 立即推一次，UI 马上看到这条目进入 busy 状态
             Ok(Reply::ok(&serde_json::json!({"ok": true, "message": format!("《{name}》已开始投递，完成后自动刷新"), "async": true})))
         }))
@@ -122,7 +122,11 @@ pub fn router(st: Arc<State>) -> Router {
         .get("/trash", bind(&st, |s, _| Ok(Reply::ok(&serde_json::json!({"items": s.trash.list()})))))
         // ── 原生书库建文件夹队列（真正的建夹由 xochitl 自己的 Library.createCollection 执行，见 mkdir.rs / shelf-mkdir-agent.qmd）──
         .post("/mkdir/add", bind(&st, |s, r| {
-            let n = s.mkdir.add(r.json()?.str("name")?).map_err(api_error)?;
+            let j = r.json()?;
+            let parent_path = j.str_list("parentPath");
+            let parent = rmsvc_core::xochitl::folder_by_path(s.xochitl.library_dir(), &parent_path)
+                .ok_or_else(|| ApiError::not_found(format!("上级文件夹「{}」不在了", parent_path.join(" › "))))?;
+            let n = s.mkdir.add_in(&parent, j.str("name")?).map_err(api_error)?;
             s.invalidate_status(); // 文件夹候选可能变了
             if n > 0 {
                 s.bus.publish(ev::AREA, ev::MKDIR);
@@ -162,6 +166,11 @@ pub fn router(st: Arc<State>) -> Router {
 
 /// 领域错误 → 状态码（2026-10-10，审计 CORE-1）：请求不对 400、不在 404、冲突（正在处理中 / 已占用）409、设备这边出错 500。
 /// 此前一律 `map_err(ApiError::bad)` 报 400。
+/// 请求里的目标文件夹：`folderPath`（各级名字的数组）优先；没有就看旧字段 `folder`（单段名字，空＝书库根）。
+fn folder_path(j: &rmsvc_core::http::JsonBody) -> Vec<String> {
+    j.opt_str_list("folderPath").unwrap_or_else(|| Some(j.str_or("folder", "").trim().to_string()).filter(|f| !f.is_empty()).into_iter().collect())
+}
+
 fn api_error(e: Error) -> ApiError {
     match e {
         Error::Invalid(m) => ApiError::bad(m),
@@ -627,6 +636,32 @@ mod tests {
         let (code, v) = call(&router, Method::Get, "/mkdir/pending", "");
         assert_eq!(code, 200);
         assert_eq!(v, serde_json::json!({"items": [{"name": "漫画/卷01", "parent": ""}, {"name": "卷01", "parent": P}]}));
+    }
+
+    /// 网页新建文件夹带 `parentPath`：建在那个已有文件夹里（队列项的 parent 是它的 uuid）；上级不在 → 404，不入队。
+    #[test]
+    fn mkdir_add_under_parent_path() {
+        const P: &str = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+        let t = tempfile::tempdir().unwrap();
+        let st = state(&t);
+        let lib = st.xochitl.library_dir().to_path_buf();
+        std::fs::create_dir_all(&lib).unwrap();
+        std::fs::write(lib.join(format!("{P}.metadata")), r#"{"type":"CollectionType","visibleName":"乱马1/2","parent":""}"#).unwrap();
+        let router = router(st.clone());
+        assert_eq!(call(&router, Method::Post, "/mkdir/add", r#"{"name":"卷01","parentPath":["乱马1/2"]}"#).0, 200);
+        assert_eq!(call(&router, Method::Post, "/mkdir/add", r#"{"name":"卷02","parentPath":["没有这个"]}"#).0, 404);
+        let (_, v) = call(&router, Method::Get, "/mkdir/pending", "");
+        assert_eq!(v, serde_json::json!({"items": [{"name": "卷01", "parent": P}]}));
+    }
+
+    /// 目标文件夹：`folderPath` 优先；旧字段 `folder` 当单段（名字里的 / 不拆）；都没有＝书库根。
+    #[test]
+    fn folder_path_prefers_array_and_falls_back_to_single_name() {
+        let j = |s: &str| rmsvc_core::http::JsonBody(serde_json::from_str(s).unwrap());
+        assert_eq!(folder_path(&j(r#"{"folderPath":["漫画","卷01"],"folder":"x"}"#)), vec!["漫画", "卷01"]);
+        assert_eq!(folder_path(&j(r#"{"folder":"乱马1/2"}"#)), vec!["乱马1/2"]);
+        assert_eq!(folder_path(&j(r#"{"folder":"  "}"#)), Vec::<String>::new());
+        assert_eq!(folder_path(&j(r#"{}"#)), Vec::<String>::new());
     }
 
     #[test]

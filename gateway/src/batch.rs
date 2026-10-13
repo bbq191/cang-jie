@@ -46,7 +46,27 @@ impl Action {
 struct Job {
     action: Action,
     name: String,
+    /// 旧版落盘的单段目标文件夹（2026-10-13 前只有它）；新任务只写 `folder_path`，这个留空、不落盘。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     folder: String,
+    /// 目标文件夹：从书库根起的各级名字，空＝书库根（2026-10-13）。
+    #[serde(default, rename = "folderPath", skip_serializing_if = "Vec::is_empty")]
+    folder_path: Vec<String>,
+}
+
+impl Job {
+    fn new(action: Action, name: String, folder_path: Vec<String>) -> Job {
+        Job { action, name, folder: String::new(), folder_path }
+    }
+
+    /// 交给 book-serve 的目标路径：新字段优先，旧任务的单段 `folder` 当一级。
+    fn target(&self) -> Vec<String> {
+        if self.folder_path.is_empty() && !self.folder.is_empty() {
+            vec![self.folder.clone()]
+        } else {
+            self.folder_path.clone()
+        }
+    }
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -179,7 +199,7 @@ fn staging(c: &SvcClient) -> Result<StagingList, SvcError> {
 
 /// 入队。`names=None` 表示"母版库里所有该动作适用的书"；`Some` 只处理点名的。已经在队列里/正在处理的同名书跳过
 /// （不重复排）；点名了但不适用的（如 CBZ）计入 skipped。
-pub fn enqueue(paths: &Paths, action: Action, names: Option<Vec<String>>, folder: &str) -> Result<Enqueued, SvcError> {
+pub fn enqueue(paths: &Paths, action: Action, names: Option<Vec<String>>, folder_path: &[String]) -> Result<Enqueued, SvcError> {
     let list = staging(&book_serve(paths))?;
     let wanted: Vec<String> = match &names {
         Some(n) => n.clone(),
@@ -202,7 +222,7 @@ pub fn enqueue(paths: &Paths, action: Action, names: Option<Vec<String>>, folder
                 skipped += 1;
                 continue;
             }
-            st.queue.push_back(Job { action, name, folder: folder.to_string() });
+            st.queue.push_back(Job::new(action, name, folder_path.to_vec()));
             queued += 1;
         }
         if queued > 0 {
@@ -224,7 +244,7 @@ pub fn enqueue(paths: &Paths, action: Action, names: Option<Vec<String>>, folder
     Ok(Enqueued { queued, skipped })
 }
 
-/// `POST /api/batch {action, names?, all?, folder?}`：`names` 缺省且 `all:true` 表示"母版库里所有适用的"。
+/// `POST /api/batch {action, names?, all?, folderPath?, folder?}`（`folderPath` 各级名字；旧网页的 `folder` 当单段）：`names` 缺省且 `all:true` 表示"母版库里所有适用的"。
 pub fn submit(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
     let j = req.json()?;
     let action = j.opt_str("action").and_then(Action::parse).ok_or_else(|| ApiError::bad("action 只能是 deliver"))?;
@@ -233,7 +253,8 @@ pub fn submit(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
     if names.is_none() && !j.bool_or("all", false) {
         return Err(ApiError::bad("要么给 names，要么 all:true"));
     }
-    let e = enqueue(paths, action, names, j.str_or("folder", ""))?;
+    let folder_path = j.opt_str_list("folderPath").unwrap_or_else(|| Some(j.str_or("folder", "").trim().to_string()).filter(|f| !f.is_empty()).into_iter().collect());
+    let e = enqueue(paths, action, names, &folder_path)?;
     Ok(Reply::ok(&e))
 }
 
@@ -446,7 +467,7 @@ fn abort_requested() -> bool {
 
 fn run_one(paths: &Paths, job: &Job) -> Result<(), String> {
     let (path, body) = match job.action {
-        Action::Deliver => ("/staging/deliver", json!({"name": job.name, "folder": job.folder})),
+        Action::Deliver => ("/staging/deliver", json!({"name": job.name, "folderPath": job.target()})),
     };
     // 「全部中止」若落在出队之后、交给 book-serve 之前：不在这里拦一下，这本书会照样整本投完。
     if abort_requested() {
@@ -572,8 +593,8 @@ mod tests {
     #[test]
     fn state_roundtrips_through_json_and_skips_worker_flag() {
         let mut st = State::default();
-        st.queue.push_back(Job { action: Action::Deliver, name: "a.epub".into(), folder: "乱马1/2".into() });
-        st.current = Some(Job { action: Action::Deliver, name: "b.epub".into(), folder: String::new() });
+        st.queue.push_back(Job { action: Action::Deliver, name: "a.epub".into(), folder: "乱马1/2".into(), folder_path: vec![] });
+        st.current = Some(Job::new(Action::Deliver, "b.epub".into(), vec![]));
         st.total = 3;
         st.done = 1;
         st.failed.push(("c.epub".into(), "boom".into()));
@@ -584,12 +605,23 @@ mod tests {
         assert_eq!((back.total, back.done, back.queue.len(), back.failed.len()), (3, 1, 1, 1));
         assert_eq!(back.current.unwrap().name, "b.epub");
         assert_eq!(back.queue[0].folder, "乱马1/2", "任务自带的目标文件夹必须保留");
+        assert_eq!(back.queue[0].target(), vec!["乱马1/2"], "旧任务的单段文件夹当一级，名字里的 / 不拆");
         assert!(!back.worker_alive);
+    }
+
+    /// 多级目标落盘、读回不丢；新任务不写旧字段 `folder`。
+    #[test]
+    fn folder_path_roundtrips_and_omits_legacy_field() {
+        let job = Job::new(Action::Deliver, "a.epub".into(), vec!["漫画".into(), "卷01".into()]);
+        let text = serde_json::to_string(&job).unwrap();
+        assert!(text.contains(r#""folderPath":["漫画","卷01"]"#) && !text.contains(r#""folder":"#), "{text}");
+        assert_eq!(serde_json::from_str::<Job>(&text).unwrap().target(), vec!["漫画", "卷01"]);
+        assert!(Job::new(Action::Deliver, "b.epub".into(), vec![]).target().is_empty(), "空＝书库根");
     }
 
     #[test]
     fn recover_interrupted_puts_current_back_first() {
-        let job = |n: &str| Job { action: Action::Deliver, name: n.into(), folder: String::new() };
+        let job = |n: &str| Job::new(Action::Deliver, n.into(), vec![]);
         let mut st = State { current: Some(job("b.epub")), total: 2, ..Default::default() };
         st.queue.push_back(job("c.epub"));
         recover_interrupted(&mut st);
@@ -599,7 +631,7 @@ mod tests {
 
     #[test]
     fn validate_queue_drops_missing_or_ineligible_and_adjusts_total() {
-        let job = |n: &str, a: Action| Job { action: a, name: n.into(), folder: String::new() };
+        let job = |n: &str, a: Action| Job::new(a, n.into(), vec![]);
         let mut st = State { total: 3, ..Default::default() };
         st.queue.push_back(job("keep.epub", Action::Deliver));
         st.queue.push_back(job("comic.cbz", Action::Deliver)); // 不是 EPUB/PDF → 不再适用
@@ -613,7 +645,7 @@ mod tests {
     /// 回归：resume 放弃等待后队列留在内存里（没有 worker），下一次入队开新一轮时总数要把这些遗留项算进去。
     #[test]
     fn new_round_counts_leftover_queue_in_total() {
-        let job = |n: &str| Job { action: Action::Deliver, name: n.into(), folder: String::new() };
+        let job = |n: &str| Job::new(Action::Deliver, n.into(), vec![]);
         let mut st = State { total: 9, done: 7, ..Default::default() };
         st.failed.push(("old".into(), "x".into()));
         st.queue.push_back(job("left1"));
@@ -649,9 +681,9 @@ mod tests {
         {
             let mut st = lock();
             st.queue.clear();
-            st.current = Some(Job { action: Action::Deliver, name: "now".into(), folder: String::new() });
-            st.queue.push_back(Job { action: Action::Deliver, name: "a".into(), folder: String::new() });
-            st.queue.push_back(Job { action: Action::Deliver, name: "b".into(), folder: String::new() });
+            st.current = Some(Job::new(Action::Deliver, "now".into(), vec![]));
+            st.queue.push_back(Job::new(Action::Deliver, "a".into(), vec![]));
+            st.queue.push_back(Job::new(Action::Deliver, "b".into(), vec![]));
             st.total = 3; // 1 本已在做 + 2 本排队
         }
         assert_eq!(stop(&paths), 2);
@@ -678,7 +710,7 @@ mod tests {
         listener.set_nonblocking(true).unwrap();
         let info = rmsvc_core::registry::ServiceInfo { name: "book-serve".into(), port: listener.local_addr().unwrap().port(), label: String::new(), version: String::new(), pid: std::process::id(), ui: None };
         let _reg = rmsvc_core::registry::register(&paths, &info).unwrap();
-        let job = Job { action: Action::Deliver, name: "stop-race.epub".into(), folder: String::new() };
+        let job = Job::new(Action::Deliver, "stop-race.epub".into(), vec![]);
         lock().abort_current = true;
         assert_eq!(run_one(&paths, &job).unwrap_err(), ABORTED);
         assert!(listener.accept().is_err(), "中止后不该再向 book-serve 提交");
@@ -780,8 +812,8 @@ mod tests {
         let saved = std::mem::take(&mut *lock());
         {
             let mut st = lock();
-            st.current = Some(Job { action: Action::Deliver, name: "b.epub".into(), folder: String::new() });
-            st.queue.push_back(Job { action: Action::Deliver, name: "c.epub".into(), folder: "漫画".into() });
+            st.current = Some(Job::new(Action::Deliver, "b.epub".into(), vec![]));
+            st.queue.push_back(Job { action: Action::Deliver, name: "c.epub".into(), folder: "漫画".into(), folder_path: vec![] });
             st.total = 3;
             st.done = 1;
             st.failed.push(("a.epub".into(), "boom".into()));

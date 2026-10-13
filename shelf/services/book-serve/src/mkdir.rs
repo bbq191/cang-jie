@@ -102,7 +102,8 @@ impl MkdirQueue {
     /// 拦它没有技术依据、只会挡合法输入——见 `Xochitl::folder_by_name`/`child_folder`/`upload_and_claim` 全程都是按
     /// `visibleName` 字符串整体比较，folder 的文件系统路径只走 uuid，从不落到名字里。
     ///
-    /// 建在书库根（`POST /mkdir/add`、网页落库用），等于 `add_in(&Folder::Root, name)`。
+    /// 建在书库根，等于 `add_in(&Folder::Root, name)`。2026-10-13 起 `POST /mkdir/add` 带上级、直接调 `add_in`，只剩单测用。
+    #[cfg(test)]
     pub fn add(&self, name: &str) -> Result<usize, Error> {
         self.add_in(&Folder::Root, name)
     }

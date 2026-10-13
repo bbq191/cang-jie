@@ -33,7 +33,7 @@
 | 页面 | `GET /` · `GET /ui/locales/{lang}` · `GET/POST /password` · `GET /api/session` |
 | 服务发现 / 管理 | `GET /api/services`（每项带 `seg`）· `GET /api/manage` · `GET /api/foundation` · `POST /api/manage/{seg}/{start\|stop\|uninstall}` |
 | 事件 | `GET /api/events`（SSE） |
-| 批量队列 | `POST /api/batch {action:"deliver", names? \| all:true, folder?}` → `{queued, skipped}` · `GET /api/batch/status` · `POST /api/batch/stop` |
+| 批量队列 | `POST /api/batch {action:"deliver", names? \| all:true, folderPath?}` → `{queued, skipped}` · `GET /api/batch/status` · `POST /api/batch/stop` |
 | 系统增强 | `GET /api/enhance/status`（`toggles:[{key,on,kind,loaded}]`）· `PUT /api/enhance/qol` |
 | 设备健康 | `GET /api/device/health[?fresh=1]` · `GET /api/device/ota` · `GET /api/device/wifi` · `GET /api/device/cleanup` · `POST /api/device/cleanup/delete {area, names}` → `{deleted, failed, partial}` |
 | 反向代理 | `GET/POST/PUT/DELETE /api/<seg>/*`，`<seg>` ∈ `books` `fonts` `wallpapers` `ink` `transcribe` `mind` `notes` |
@@ -64,7 +64,7 @@
 ## 部署与验证现状
 
 - 2026-10-09 第六轮审计的改动 10-09 已部署（`install-all`，整机重启后部署自检 38✓），**功能还没在真机上手测**。
-- 2026-10-10 重构（网页脚本拆成 8 个源文件、接口 DTO 化、`TOGGLES`、事件按 `tab` 路由、后端下发派生字段）**未部署、未在真机上验证**，只有 host 测试。
+- 2026-10-10 重构（网页脚本拆成 8 个源文件、接口 DTO 化、`TOGGLES`、事件按 `tab` 路由、后端下发派生字段）**10-12 约 08:38 已部署（10-13 核对设备上的文件得知，部署当时没记录），功能未在真机上手测**。
 - 完整的验证表与待手测清单见[白皮书第 8 章](docs/reMarkable网关白皮书.md#8-验证现状)。
 
 ## 目录
