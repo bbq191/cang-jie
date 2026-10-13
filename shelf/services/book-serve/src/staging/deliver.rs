@@ -13,12 +13,12 @@ impl Staging {
     // ───────────── 落库 ─────────────
 
     /// 加入 xochitl：纯复制原字节（书架不优化书，书应先在电脑上用 sheng-ren 优化好）。xochitl 只读 EPUB/PDF。`folder`
-    /// 空＝书库根目录（2026-09-19 起没有"默认文件夹"配置），非空＝书库根下这个名字的文件夹（没有就建，见
+    /// 是从书库根起的各级文件夹名，空＝书库根目录（2026-09-19 起没有"默认文件夹"配置；缺的那几级会建，见
     /// [`XochitlDelivery::ensure_folder`]）；母版库条目投完**永远保留**（2026-09-19 用户明确要求去掉"投完自动删除"这个功能——母版是可以
     /// 换设备重投的底本，不该被一次性动作悄悄清掉；要删由用户自己在列表里点
     /// 删除）。返回回执文案 + EPUB 的渲染自检计划（调用方起线程跑 `render_check::run`）。
     /// **同步、阻塞**——上传大书、等建文件夹都能到分钟级；HTTP 接口不该直接暴露这个方法，用 [`Self::spawn_deliver`] 排进后台作业队列。
-    pub fn deliver(&self, name: &str, folder: &str) -> Result<DeliverOutcome, String> {
+    pub fn deliver(&self, name: &str, folder: &[String]) -> Result<DeliverOutcome, String> {
         let p = self.deliverable(name)?;
         let size = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
         let folder = self.delivery.ensure_folder(folder);
@@ -102,12 +102,12 @@ impl Staging {
     /// 真正结果通过 `bus` 的 `books`/`staging` 事件 + `GET /staging` 列表里这条目的 `delivered.deliver`（[`sidecar::DeliverCheck`]）
     /// 异步呈现。排队期间忙锁一直占着（网页显示"处理中"，删除 / 改名 / 再次加入都被拦下）。渲染自检、`mark_delivered` 全部在
     /// 作业内部完成，不劳 HTTP 层操心；渲染自检要等最多 10 分钟，另起线程跑，不占着队列。panic 由 `catch_unwind` 兜住，转成失败记录。
-    pub fn spawn_deliver(&self, name: &str, folder: &str, jobs: &Jobs, bus: Arc<rmsvc_core::events::EventBus>) -> Result<(), Error> {
+    pub fn spawn_deliver(&self, name: &str, folder: &[String], jobs: &Jobs, bus: Arc<rmsvc_core::events::EventBus>) -> Result<(), Error> {
         self.deliverable(name)?;
         let busy = self.busy_guard(name, "")?;
         let now = rmsvc_core::clock::now_secs();
         let _ = self.set_deliver_check(name, sidecar::DeliverCheck { status: DeliverStatus::Pending, message: String::new(), at: now });
-        let (this, owned_name, folder) = (self.clone(), name.to_string(), folder.to_string());
+        let (this, owned_name, folder) = (self.clone(), name.to_string(), folder.to_vec());
         let queued = jobs.run(Box::new(move || {
             let name = owned_name;
             // 落库本身的 panic 转成带原因的失败记录；外层再兜一次，保证无论如何都解锁、发事件。

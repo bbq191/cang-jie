@@ -223,10 +223,10 @@
 
 **为什么放在网关**：各服务是独立进程，进程内的锁天然不跨进程；网关是网页操作**唯一必经**的转发关口，在这里用一个进程内队列就能保证"同一时刻最多一本在投"，不需要跨进程锁或 IPC。状态放网关进程而不是浏览器里，关掉页面、换设备打开都能看、能中止。
 
-- **接口**：`POST /api/batch {action: "deliver", names?: [...], all?: true, folder?}` → `{queued, skipped}`；`GET /api/batch/status` → `{running, waitingService, action, total, done, current, queued, failed}`（`queued` 只给前 200 个，`failed` 是 `[{name, message}]`）；`POST /api/batch/stop` → `{cleared}`。`action` 只认 `deliver`，别的回 400"action 只能是 deliver"；`names` 与 `all` 都没给回 400。入队时取不到 book-serve 的母版库列表：没运行 / 连不上回 503，它自己回的 4xx 原样透传。
+- **接口**：`POST /api/batch {action: "deliver", names?: [...], all?: true, folderPath?: [...]}`（目标文件夹的各级名字；旧网页的 `folder` 当单段，旧 `batch.json` 里的单段任务照常读回） → `{queued, skipped}`；`GET /api/batch/status` → `{running, waitingService, action, total, done, current, queued, failed}`（`queued` 只给前 200 个，`failed` 是 `[{name, message}]`）；`POST /api/batch/stop` → `{cleared}`。`action` 只认 `deliver`，别的回 400"action 只能是 deliver"；`names` 与 `all` 都没给回 400。入队时取不到 book-serve 的母版库列表：没运行 / 连不上回 503，它自己回的 4xx 原样透传。
 - **资格**（和界面底部栏按钮同一套）：`rmsvc_core::formats::NATIVE_EXTS`（EPUB/PDF）。点名了但不合格的、已在队列或处理中的同名书计入 `skipped`（`all:true` 时不合格的是预期筛选，不计）。
 - **一轮的计数**：从空闲开始的一次入队开新一轮，`done`/`failed` 清零，`total` 按队列里**实际有多少本**算（含上一次恢复后没跑的遗留项）；已经在跑时再入队，累加进同一轮。`action` 由当前那本或队首推出，都没有但有上一轮结果时是 `deliver`，从没跑过是 `null`。
-- **执行**：后台 worker 线程**一次一本**。每本直连 book-serve 的 `POST /staging/deliver {name, folder}`，再 `poll_until_settled` 等到这本 `busy=false`（或已不在列表）：事件驱动（`books_wake` 唤醒，至多 30 秒兜底查一次）；两次 `GET /staging` 至少隔 5 秒（`MIN_REQUERY`）；**连续** 6 次查询失败才放弃等待（`MAX_POLL_FAILURES`，失败之间隔 5 秒）；最长 1 小时。然后从判定处理完的那份列表里读这本的 `delivered.deliver`。
+- **执行**：后台 worker 线程**一次一本**。每本直连 book-serve 的 `POST /staging/deliver {name, folderPath}`，再 `poll_until_settled` 等到这本 `busy=false`（或已不在列表）：事件驱动（`books_wake` 唤醒，至多 30 秒兜底查一次）；两次 `GET /staging` 至少隔 5 秒（`MIN_REQUERY`）；**连续** 6 次查询失败才放弃等待（`MAX_POLL_FAILURES`，失败之间隔 5 秒）；最长 1 小时。然后从判定处理完的那份列表里读这本的 `delivered.deliver`。
 - **成败只认 `ok`**：`delivered.deliver.status`（基座 `wire::DeliverStatus`）是 `ok` 才成功；`failed` 记失败、带 book-serve 写的原因；其余——等满 1 小时、连续 6 次查不到、条目途中消失、仍是 `pending`、认不出的旧值（`Unknown`）——一律记失败，原因写"没等到结果……请到 xochitl 书库里核对"。代价：书其实加进去了、只是没看到结果时会多一条"失败"，所以提示让人去书库核对而不是重加。worker 用 `catch_unwind` 兜住 panic，只让这一本失败（release 是 `panic="unwind"`）。
 - **落盘与续跑**：每次状态变化原子写 `~/.local/state/shelf/batch.json`（序列化与写盘在同一把锁里，旧快照不会后写）。网关启动时 `resume`：被打断的那本**放回队首**；先把队列装进内存，后台等 book-serve 注册（最长 30 分钟，等注册表变化、30 秒没动静兜底探一次），这期间 `waitingService=true`、网页显示"等 book-serve 就绪"；再按最新母版库剔除已不在的；等不到也**保留**队列，下次入队一起跑。文件损坏或格式不对 = 当作没有未完成的队列。
 - **全部中止**：清空还没开始的（总数同步扣掉）；已经交给 book-serve 的那本会跑完（整本上传、大文件通道都没有安全的中断点）；已出队但还没提交的那本——`stop` 同时打"中止当前"标记，worker 提交前看到就不提交，记失败"已全部中止"。
@@ -479,7 +479,7 @@
 | 09-30 第五轮审计（撤 KOReader/WeRead/appload、Basic 认证缓存、全部中止补漏、事件流断线退避） | 已部署（09-30），部署自检通过；功能待手测 |
 | 10-07 书架不再优化书、删闸门、代码审查修复（代理空闲超时、批量只认 `ok`、`waitingService`、`registry_wake`、`parse_maps` 共用） | 已部署（10-07 15:54 并整机重启，部署自检 36✓ 1⚠ 0✗）；功能未真机手测 |
 | 10-09 第六轮审计（确认框 Enter、配置锁 poison、`/api/services` 带 `seg`、`lowSpace`、页面隐藏不取数等）及同日审计后续（批量 `names` 改用 `opt_str_list`、网页发单价用 `inputPer1k`/`outputPer1k`） | 已部署（第六轮 10-09 13:48 `install-all`，整机重启后部署自检 38✓ 1⚠ 0✗；审计后续随之后的部署上机）；**功能未在真机手测** |
-| **10-10 重构**（网页脚本拆 8 个源文件；接口 DTO 化 + 线上格式快照；`TOGGLES` 与 `toggles`；`MODULES.tab` 路由事件；后端下发 `title`/`series`/`done`/`live`；清理失败项 `{name,message}` + `partial`；`format:"other"` 徽章；`EV`、`refreshGate`、`liveStream`；`FailureKind`） | **host**：`cargo test` 77 个、node 19 项通过（本次实跑），浏览器冒烟与 clippy 在 10-10 重构时通过；**未部署**，须与 book-serve、ink-serve 同批上机 |
+| **10-10 重构**（网页脚本拆 8 个源文件；接口 DTO 化 + 线上格式快照；`TOGGLES` 与 `toggles`；`MODULES.tab` 路由事件；后端下发 `title`/`series`/`done`/`live`；清理失败项 `{name,message}` + `partial`；`format:"other"` 徽章；`EV`、`refreshGate`、`liveStream`；`FailureKind`） | **host**：`cargo test` 77 个、node 19 项通过（本次实跑），浏览器冒烟与 clippy 在 10-10 重构时通过；10-12 约 08:38 已部署（10-13 核对设备上的文件得知，部署当时没记录），功能未在真机上手测（与各服务同批） |
 
 **待手测清单**（部署后逐批看；书架那边对应条目在书架白皮书 8.3 节）
 

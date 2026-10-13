@@ -101,6 +101,45 @@ pub fn list_folders(dir: &Path) -> Vec<String> {
         .collect()
 }
 
+/// 书库里所有**从根能走到**的活文件夹的完整路径（各级名字组成的数组，不用 `/` 拼——名字本身可能带 `/`，如《乱马1/2》），
+/// 按路径排序、同路径去重。网页「加入 xochitl → 文件夹」下拉用（2026-10-13 起列出所有层级，此前只列书库根下一层）。
+/// 某一级在回收站 / 已删 / 读不到 / 成环的整条不列（xochitl 里也看不到它）。整库只扫一遍。
+pub fn folder_paths(dir: &Path) -> Vec<Vec<String>> {
+    let folders: std::collections::HashMap<String, Metadata> = live_folders(dir).collect();
+    let mut out = std::collections::BTreeSet::new();
+    for m in folders.values() {
+        let mut names = vec![m.visible_name.clone()];
+        let mut cur = m.parent.as_str();
+        let reachable = loop {
+            if cur.is_empty() {
+                break true;
+            }
+            match folders.get(cur) {
+                Some(p) if names.len() < 64 => {
+                    names.push(p.visible_name.clone());
+                    cur = p.parent.as_str();
+                }
+                _ => break false,
+            }
+        };
+        if reachable {
+            names.reverse();
+            out.insert(names);
+        }
+    }
+    out.into_iter().collect()
+}
+
+/// 按完整路径（[`folder_paths`] 给出的那种数组）从书库根往下逐级找已有的活文件夹；空数组＝书库根。
+/// 某一级不在 → `None`。同一层有多个同名的按 [`child_folder`] 的规则取（uuid 最小）。
+pub fn folder_by_path<S: AsRef<str>>(dir: &Path, segments: &[S]) -> Option<Folder> {
+    let mut cur = Folder::Root;
+    for seg in segments {
+        cur = Folder::Id(child_folder(dir, &cur, seg.as_ref())?);
+    }
+    Some(cur)
+}
+
 /// 给定一份文档的 uuid，读它 `.metadata` 的 `parent` 字段——就是它当前所在的设备文件夹（空串＝书库根）。找不到 `.metadata`、
 /// 解析失败、或书在回收站（`parent=="trash"`），一律返回 `None`，调用方按 best-effort 落书库根处理（2026-09-09 补：`note-serve`
 /// 生成章节笔记本时不再新建/确保文件夹，改成直接复用书本自己已经在的文件夹）。`parent` 不校验 uuid 形状、原样当文件夹
@@ -414,6 +453,24 @@ mod tests {
         w("d.metadata", r#"{"type":"CollectionType","visibleName":"回收站里的","parent":"trash"}"#);
         w("e.metadata", r#"{"type":"DocumentType","visibleName":"这是本书不是文件夹","parent":""}"#);
         assert_eq!(list_folders(t.path()), vec!["批注".to_string(), "雪人".to_string()]);
+    }
+
+    #[test]
+    fn folder_paths_lists_every_level_and_skips_unreachable() {
+        let t = tempfile::tempdir().unwrap();
+        let (a, b, c, d) = ("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "cccccccc-cccc-4ccc-8ccc-cccccccccccc", "dddddddd-dddd-4ddd-8ddd-dddddddddddd");
+        let w = |u: &str, j: String| std::fs::write(t.path().join(format!("{u}.metadata")), j).unwrap();
+        w(a, r#"{"type":"CollectionType","visibleName":"漫画","parent":""}"#.into());
+        w(b, format!(r#"{{"type":"CollectionType","visibleName":"乱马1/2","parent":"{a}"}}"#));
+        w(c, r#"{"type":"CollectionType","visibleName":"回收站里的","parent":"trash"}"#.into());
+        w(d, format!(r#"{{"type":"CollectionType","visibleName":"上级在回收站","parent":"{c}"}}"#));
+        w("e", r#"{"type":"DocumentType","visibleName":"书","parent":""}"#.into());
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert_eq!(folder_paths(t.path()), vec![s(&["漫画"]), s(&["漫画", "乱马1/2"])]);
+        assert_eq!(folder_by_path(t.path(), &["漫画", "乱马1/2"]), Some(Folder::Id(FolderId::unchecked(b))), "名字带 / 也按段找");
+        assert_eq!(folder_by_path::<&str>(t.path(), &[]), Some(Folder::Root));
+        assert_eq!(folder_by_path(t.path(), &["漫画", "没有"]), None);
+        assert_eq!(folder_by_path(t.path(), &["回收站里的"]), None);
     }
 
     #[test]

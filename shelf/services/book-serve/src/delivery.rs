@@ -110,18 +110,17 @@ impl XochitlDelivery {
         }
     }
 
-    /// 网页「加入 xochitl → 文件夹」的目标（单段名字）→ [`Folder`]（空名＝书库根）。在**书库根正下方**按名字找，没有就经建文件夹队列请
-    /// `shelf-mkdir-agent.qmd` 在根下建、等它真建出来（[`Self::ensure_folder_path`] 的单段情形）；等不到就落书库根（2026-09-19 起的行为，
-    /// 不算错误）。名字里的 `/` 是普通字符（《乱马1/2》），不拆。
+    /// 网页「加入 xochitl → 文件夹」的目标（从书库根起的各级名字，空＝书库根）→ [`Folder`]。逐级在上一级正下方按名字找，没有就经建文件夹
+    /// 队列请 `shelf-mkdir-agent.qmd` 建、等它真建出来（[`Self::ensure_folder_path`]）；某一级等不到就停在已有的那一级（不算错误）。
+    /// 各段原样当名字，名字里的 `/` 是普通字符（《乱马1/2》）；首尾空白去掉、空段忽略。
     ///
-    /// 2026-10-10 改（审计 X-1）：此前按名字在**全库任意层**找（`Xochitl::find_folder`）再按名字上传，10-07 起直接导入会建出
-    /// 「漫画/卷01」「小说/卷01」这种不同上级下的同名子文件夹，网页选"卷01"时书可能落进某个子文件夹（取 `read_dir` 先扫到的）。
-    pub fn ensure_folder(&self, folder: &str) -> Folder {
-        let folder = folder.trim();
-        if folder.is_empty() {
+    /// 2026-10-13 起收多级路径（此前只收单段、只在书库根下找）；2026-10-10 前按名字在**全库任意层**找（审计 X-1）。
+    pub fn ensure_folder(&self, segments: &[String]) -> Folder {
+        let segs: Vec<&str> = segments.iter().map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+        if segs.is_empty() {
             return Folder::Root;
         }
-        self.ensure_folder_path(&[folder]).0
+        self.ensure_folder_path(&segs).0
     }
 
     /// 按层确保多级文件夹（2026-10-07，直接导入用）：从书库根往下，每一级在上一级正下方按名字找（[`Xochitl::child_folder`]），

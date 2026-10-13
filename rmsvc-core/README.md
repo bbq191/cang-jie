@@ -82,7 +82,7 @@ service::run_or_exit(&SPEC, &bind_addr, &paths, router, ServeOpts::default());
 ## 验证现状
 
 - 所有消费方都已部署在设备上运行（2026-09-11 起 `install-all.sh` 真机跑通，之后多次整轮重装）；大文件通道 2026-09-20 真机验证 154MB PDF、153MB EPUB；`epubindex` 10-09 真机跑通一次。
-- 2026-10-10 重构（`Folder` 上传入口、`upload_and_claim`、跨进程 flock、`http::Body`、`gateway` feature、rustls 0.23.45 等）**未部署、未在真机上验证**，只有开发机测试。逐项状态见[白皮书第 8 章](docs/reMarkable设备端Web服务基座白皮书.md#8-验证现状)。
+- 2026-10-10 重构（`Folder` 上传入口、`upload_and_claim`、跨进程 flock、`http::Body`、`gateway` feature、rustls 0.23.45 等）**10-12 约 08:38 已部署（10-13 核对设备上的文件得知，部署当时没记录），功能未在真机上手测**。逐项状态见[白皮书第 8 章](docs/reMarkable设备端Web服务基座白皮书.md#8-验证现状)。
 
 ## 注意
 
