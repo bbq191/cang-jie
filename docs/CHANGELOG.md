@@ -12,7 +12,7 @@
 
 ## 2026-10
 
-### 10-13（网页「加入位置」支持多级文件夹；分支 `feat/web-nested-folders`，未部署、未在真机上验证）
+### 10-13（网页「加入位置」支持多级文件夹；分支 `feat/web-nested-folders`，未部署、未在真机上验证）〔已合 master（668d857）；10-13 17:47 已部署 book-serve 与网关（`deploy.sh --only book,gateway`，USB），两个服务 md5 与本地一致、active、NRestarts=0；设备上 `GET /status` 的 `xochitlFolderPaths` 列出了真实的子文件夹（如 漫画 › 死亡筆記）；qmd 内容没变，不需要整机重启；往子文件夹里加书、在子文件夹里新建还没在真机上试〕
 
 - 母版库「加入 xochitl →」下拉列出 xochitl 书库里**所有层级**的文件夹（显示成 `漫画 › 乱马1/2`），此前只有书库根下一层；「＋新建文件夹」建在当前选中的位置里。选中的路径缺哪几级，加入时请 xochitl 自己逐级建（每级最多等 20 秒，等不到停在已有的那一级），与 sheng-ren 直接导入同一套逻辑。
 - 位置用各级名字的数组传（`folderPath`），不拼成字符串，名字里带 `/` 的文件夹（《乱马1/2》）不会被拆。接口：`GET /api/books/status` 多了 `xochitlFolderPaths`；`POST /api/batch`、`POST /staging/deliver` 收 `folderPath`（旧字段 `folder` 仍当单段）；`POST /mkdir/add` 收 `parentPath`（上级不在 404）。网关里旧的 `batch.json` 单段任务照常读回。
