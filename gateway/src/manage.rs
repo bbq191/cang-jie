@@ -36,14 +36,14 @@ pub struct Module {
 }
 
 pub const MODULES: &[Module] = &[
-    Module { seg: "books", service: "book-serve", only: "book", label: "母版库 / 落原生", events: true, wake: Some(crate::events::books_wake), tab: TAB_BOOKS },
-    Module { seg: "fonts", service: "font-serve", only: "font", label: "xochitl 字体", events: true, wake: None, tab: TAB_OTHER },
+    Module { seg: "books", service: "book-serve", only: "book", label: "书架（母版库 / 加入 xochitl）", events: true, wake: Some(crate::events::books_wake), tab: TAB_BOOKS },
+    Module { seg: "fonts", service: "font-serve", only: "font", label: "字体（阅读 / 界面）", events: true, wake: None, tab: TAB_OTHER },
     Module { seg: "wallpapers", service: "wallpaper-serve", only: "wallpaper", label: "壁纸", events: true, wake: None, tab: TAB_OTHER },
     // 笔记线（notes/）：矿 / 转写 / 脑 / 本，挂同一网关；网页只有 note-serve 注册「笔记」tab，前端组合四个 seg。
-    Module { seg: "ink", service: "ink-serve", only: "ink", label: "笔记·矿（条目库）", events: true, wake: None, tab: TAB_NOTES },
-    Module { seg: "transcribe", service: "transcribe-serve", only: "transcribe", label: "笔记·转写（手写→文字）", events: true, wake: None, tab: TAB_NOTES },
-    Module { seg: "mind", service: "mind-serve", only: "mind", label: "笔记·脑（问AI）", events: false, wake: None, tab: TAB_NOTES },
-    Module { seg: "notes", service: "note-serve", only: "note", label: "笔记·本（笔记本/导出）", events: true, wake: None, tab: TAB_NOTES },
+    Module { seg: "ink", service: "ink-serve", only: "ink", label: "笔记·条目库", events: true, wake: None, tab: TAB_NOTES },
+    Module { seg: "transcribe", service: "transcribe-serve", only: "transcribe", label: "笔记·转写", events: true, wake: None, tab: TAB_NOTES },
+    Module { seg: "mind", service: "mind-serve", only: "mind", label: "笔记·问 AI", events: false, wake: None, tab: TAB_NOTES },
+    Module { seg: "notes", service: "note-serve", only: "note", label: "笔记·笔记本 / 导出", events: true, wake: None, tab: TAB_NOTES },
 ];
 
 pub fn by_seg(seg: &str) -> Option<&'static Module> {
@@ -283,7 +283,7 @@ mod tests {
         let v = body(status(&paths));
         assert_eq!(v["gateway"], serde_json::json!({"running": true}));
         assert_eq!(v["modules"].as_array().unwrap().len(), MODULES.len());
-        assert_eq!(v["modules"][0], serde_json::json!({"seg": "books", "service": "book-serve", "only": "book", "label": "母版库 / 落原生", "installed": true, "running": false}));
+        assert_eq!(v["modules"][0], serde_json::json!({"seg": "books", "service": "book-serve", "only": "book", "label": "书架（母版库 / 加入 xochitl）", "installed": true, "running": false}));
         assert_eq!(v.as_object().unwrap().len(), 2);
         assert_eq!(body(foundation(&paths)), serde_json::json!({"xovi": false, "qrr": false}));
         let reg = registry::ServiceInfo { name: "font-serve".into(), port: 7, label: "字体".into(), version: "1".into(), pid: std::process::id(), ui: None };
