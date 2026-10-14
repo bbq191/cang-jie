@@ -12,21 +12,21 @@
 
 ## 2026-10
 
-### 10-14（笔记回顾；分支 `feat/note-review`，基于 `feat/selftest`，未部署）
+### 10-14（笔记回顾；分支 `feat/note-review`，基于 `feat/selftest`，未部署）〔已合 master（98e5ac2）；10-14 09:06 已部署 gateway、book-serve、ink-serve、note-serve（`deploy.sh --only book,ink,note`，USB），四个二进制 md5 与本地一致、active、NRestarts=0；qmd 内容没变，不需要整机重启〕〔设备上 `GET /review/due` 回 `{items:[],total:0}`：条目库里目前没有已校对的条目，所以没有到期项；回顾列表、生成笔记本都还没在真机上用过〕
 
 - 「管理 → 实验室」新开关「笔记回顾」（缺省关）。打开后「笔记」页多一个「回顾」子标签：已校对的条目在定稿一天后到期，列在这里，逐条点「记住了」（间隔依次拉长到 3、7、16、35、90 天）或「再看看」（回到 1 天）。
 - 「生成今日回顾笔记本」把到期最早的 5 条排成一页，放在 xochitl 书库根下，名字「今日回顾」；再生成时旧的那份进回收站。可以勾「合上书时自动生成」，每 20 小时最多一次，靠合书时的摄取事件触发，不另起定时器。回顾结果只在网页上记，在设备笔记本上写了不会回传。
 - 条目库新字段 `review`（没回顾过不写出，旧条目库照常读）；接口：ink-serve `GET /review/due`、`POST …/entries/{id}/review`，note-serve `GET /review`、`POST /review/generate`、`POST /review/auto`。部署时 ink-serve、note-serve、网关要一起换。
 - 测试：笔记线全部（notecore 78、ink-serve 33、note-serve 36 等）、网关 80、网页冒烟（回顾列表、书名按文本显示、「记住了」请求体）。
 
-### 10-14（一键自检；分支 `feat/selftest`，基于 `feat/deploy-fingerprint`，未部署）
+### 10-14（一键自检；分支 `feat/selftest`，基于 `feat/deploy-fingerprint`，未部署）〔已合 master（98e5ac2）；10-14 09:06 已部署 gateway、book-serve、ink-serve、note-serve（`deploy.sh --only book,ink,note`，USB），四个二进制 md5 与本地一致、active、NRestarts=0；qmd 内容没变，不需要整机重启〕〔设备上 `GET /selftest` 应答正常（`{running:null,runs:[]}`）；自检还没运行过〕
 
 - 网页「管理 → 设备健康」多了「自检」标签：点「运行自检」，书架在 xochitl 书库里实际走一遍它依赖的设备端操作——在根下建临时文件夹「书架自检 …」、在它里面建子文件夹、往子文件夹里放一本一页的测试书并等它排版、最后全部移进回收站，逐步显示 ✓ / ✗ 和耗时。约 1～3 分钟，期间网页上的「加入」排在它后面。最近 10 次结果留在设备上；没清掉的条目会列出来，不自动重试。
 - 用途：以前"在子文件夹里建文件夹""把文件夹移进回收站"只能在设备旁手测（书架白皮书待测 #24、#29），现在部署后点一下就知道。**自检本身还没在真机上跑过**，部署后第一次运行的结果就是这两项的首次真机结论。
 - 接口：book-serve `POST /selftest`（已在跑 409）、`GET /selftest`；经网关 `/api/books/selftest`。
 - 测试：book-serve 128（新增：代理都在时五步通过并存档、代理不在时第一步失败其余跳过、文件夹没进回收站时列为没清掉）、shelf-conv 新增测试书 EPUB 合法性、网页冒烟（自检逐步结果、历史，失败原因按文本显示）。
 
-### 10-14（部署记录；分支 `feat/deploy-fingerprint`，未部署）
+### 10-14（部署记录；分支 `feat/deploy-fingerprint`，未部署）〔已合 master（98e5ac2）；10-14 09:06 已部署 gateway、book-serve、ink-serve、note-serve（`deploy.sh --only book,ink,note`，USB），四个二进制 md5 与本地一致、active、NRestarts=0；qmd 内容没变，不需要整机重启〕〔这次部署本身已在设备上记下第一条记录（`label:shelf`、`commit:98e5ac2`、`via:usb`）；网页「部署版本」一行还没在浏览器里看过〕
 
 - 部署脚本（`install-all.sh`、`deploy.sh`、`deploy-hl-snap.sh`、`deploy-ui-font.sh`）每次装好文件后在设备上记一行部署记录：哪个提交、有没有未提交改动、什么时候、经 USB 还是 WiFi、装了什么，以及当时装好的二进制、xovi 扩展、qmd 各自的 sha256。只留最近 20 次。`install-all` 整轮只记一次，正常情况不多连一次设备。
 - 网页「管理 → 设备健康 → 概览」多了「部署版本」：显示最近一次部署，并核对这些文件现在还是不是那一版。之后单独换过文件、vellum 升级盖回、或部署没装完，会列出哪几个文件变了或不见了；扩展新版还在等整机重启换入的单独标出。「日志」标签下列出最近的部署。还没用新脚本部署过的设备显示"没有部署记录"。
