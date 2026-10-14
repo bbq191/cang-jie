@@ -123,7 +123,7 @@
 | `trash-pending.json`：uuid + name | `shelf-trash-agent.qmd`（MainView） | 长轮询 `GET /trash/pending?wait=290`（同样带 `cjWait` 自适应，10-10）；先 `Library.entryForId(uuid)` 取条目再取 `.id`，调 `LibraryController.moveEntriesToTrash(ids)`，与当前在看哪个文件夹无关 | 入队按 visibleName 核对 uuid，已进回收站或已删的拒绝；拉取时只把"`.metadata` 真没了、或已进回收站"的项移出，读不了 `.metadata` 先留着；调用方是网关「设备健康 → 清理」和笔记线 note-serve 旧版本软删 |
 | `comic-margins.json`：uuid → 页边距 | `shelf-comic-margins.qmd`（DocumentView） | 开书 1.5 秒后 `GET /margins/{uuid}` | §3 |
 
-**建文件夹按（上级, 名字）记**：队列项 `{name, parent, at}`，`parent` 是上级文件夹 uuid、空串＝书库根。入队去重和"已经建出来就剔除"都按（parent, name）判——只有那个上级正下方有同名活文件夹（`CollectionType`、没删、不在回收站）才算存在。`GET /mkdir/pending` 回 `{"items": [{"name", "parent"}, ...]}`。`POST /mkdir/add {name}` 建在根，名字里的 `/` 当普通字符。**`createCollection` 传非空 parent 还没真机验证**（依据是反编译里对话框传 `currentFolderId`，以及界面手工建的多级文件夹的 `.metadata`）。
+**建文件夹按（上级, 名字）记**：队列项 `{name, parent, at}`，`parent` 是上级文件夹 uuid、空串＝书库根。入队去重和"已经建出来就剔除"都按（parent, name）判——只有那个上级正下方有同名活文件夹（`CollectionType`、没删、不在回收站）才算存在。`GET /mkdir/pending` 回 `{"items": [{"name", "parent"}, ...]}`。`POST /mkdir/add {name}` 建在根，名字里的 `/` 当普通字符。**`createCollection` 传非空 parent 10-14 自检时在真机上通过**（依据是反编译里对话框传 `currentFolderId`，以及界面手工建的多级文件夹的 `.metadata`）。
 
 `XochitlDelivery::ensure_folder_path` 每一级最多等 20 秒；入队时文件夹刚好已经出现（`add_in` 回 0）就不等；某一级等不到就停在已经有的那一级（单段就是书库根）。
 
@@ -138,7 +138,9 @@
 
 放弃与退避路径平时难触发，没在真机专门走过。
 
-**一键自检**（2026-10-14，`selftest.rs`）：网关「管理 → 设备健康 → 自检」点一下，book-serve 在书库里真走一遍这两个代理：在根下建「书架自检 <时间戳>」、在它里面建「子文件夹」（带非空上级的 `createCollection`）、往子文件夹里上传一本一页的测试书（`shelf_conv::placeholder::text_epub`）并按字节认领、等 xochitl 排出页数，最后把测试书、子文件夹、临时文件夹一起交给回收站代理（**移文件夹进回收站**此前也没在真机上走过）并等它们都不再是活条目。前一步失败，依赖它的步骤记 `skip`，但已建出的条目照样交给回收站。等待上限：每级建文件夹 20 秒（投递层）、排版 120 秒、回收站 90 秒。排进与落库、直接导入共用的作业队列，不会和真实投递同时上传。结果存 `books/selftest.json`（最近 10 次），没清掉的条目（书库里名字以「书架自检」开头的活条目及其子项，含之前几次留下的）列进 `leftovers`，不自动重试、不碰别的条目。**10-14 已部署，自检本身还没在真机上跑过。**
+**看门狗**（10-14）：两个长轮询代理的在途请求挂在定时器属性 `cjXhr` 上（防长轮询期间被回收），另有一个 120 秒的看门狗定时器：请求超过「等待时长 + 40 秒」没回应就 `abort` 重发，代理定时器停了也重新启动，日志 `SHELF-TRASH / SHELF-MKDIR: watchdog …`；回调先核对 `cjXhr === x`，被丢掉的旧请求晚到不重复排下一轮。起因是 10-14 真机上回收站代理在一次开机里悄悄停了（原因未坐实）。
+
+**一键自检**（2026-10-14，`selftest.rs`）：网关「管理 → 设备健康 → 自检」点一下，book-serve 在书库里真走一遍这两个代理：在根下建「书架自检 <时间戳>」、在它里面建「子文件夹」（带非空上级的 `createCollection`）、往子文件夹里上传一本一页的测试书（`shelf_conv::placeholder::text_epub`）并按字节认领、等 xochitl 排出页数，最后把测试书、子文件夹、临时文件夹一起交给回收站代理（**移文件夹进回收站**此前也没在真机上走过）并等它们都不再是活条目。前一步失败，依赖它的步骤记 `skip`，但已建出的条目照样交给回收站。等待上限：每级建文件夹 20 秒（投递层）、排版 120 秒、回收站 90 秒。排进与落库、直接导入共用的作业队列，不会和真实投递同时上传。结果存 `books/selftest.json`（最近 10 次），没清掉的条目（书库里名字以「书架自检」开头的活条目及其子项，含之前几次留下的）列进 `leftovers`，不自动重试、不碰别的条目。**10-14 09:11 第一次真机运行：建文件夹、子文件夹、上传认领、排版都通过；回收站一步因回收站代理已停而失败（见下面的看门狗）。**
 
 ## 5｜内存安全设计
 
