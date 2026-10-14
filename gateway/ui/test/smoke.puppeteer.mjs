@@ -52,6 +52,11 @@ const routes = {
     toggles:[{key:'hlSnapCjk', on:true, kind:'extension', loaded:'on'}, {key:'tapPageTurn', on:false, kind:'patch', loaded:'pending'}, {key:'notesImportMdEnabled', on:false, kind:'web', loaded:null}]}),
   '/api/books/agent-failures': () => ({items: window.__fails}),
   '/api/device/wifi': () => ({ssid: evil, state:'portal', code:'302', at:1}),
+  // 部署记录（2026-10-14）：提交号/主机名里的 HTML 按文本显示；漂移逐个列出，待换入的单独措辞
+  '/api/device/health': () => ({units:[], xochitl:{}, soPending:[], firmware:{state:'pending'}, home:{}, at:1,
+    deploy:{current:{at:2, label:'install-all', commit:evil, dirty:true, via:'usb', host:'pc', only:'', failed:''}, files:12,
+      history:[{at:2, label:'install-all', commit:evil, via:'usb'}, {at:1, label:'shelf', only:'book,gateway', commit:'0000000', via:'wifi'}],
+      drift:[{path:'/home/root/.local/bin/book-serve', state:'changed'}, {path:'/home/root/xovi/extensions.d/ui-font.so', state:'pending'}]}}),
   '/api/device/cleanup': () => ({files:[{area:'books-done', name:'旧.epub', bytes:1, mtime:1}], library:[], trashAgent:true, xochitl:true}),
   '/api/device/cleanup/delete': () => ({deleted:[], failed:[{name:'旧.epub', message:'拒绝原因'}], partial:true}),
   '/api/manage': () => ({modules:[], gateway:{running:true}}),
@@ -235,6 +240,11 @@ out.cleanupPartial = await page.evaluate(async () => {
   await new Promise(r => setTimeout(r, 300));
   return document.querySelector('#toasthost').textContent;
 });
+out.deploy = await page.evaluate(() => {
+  const ov = document.querySelector('#healthBox [data-p="overview"]').textContent, lg = document.querySelector('#healthBox [data-p="log"]');
+  return {ov: ov.includes('<img src=x') && ov.includes('2 个文件与记录不一致') && ov.includes('book-serve') && ov.includes('新版待换入') && ov.includes('含未提交改动'),
+    hist: lg.querySelectorAll('li').length, histText: lg.textContent.includes('只装 book,gateway') && lg.textContent.includes('WiFi')};
+});
 // 加入位置（2026-10-13 多级）：下拉列出所有层级、按路径显示；选子文件夹后批量提交 folderPath 数组（名字里的 / 不拆）；
 // 「新建」建在当前选中的位置里，mkdir/add 带 parentPath，之后选中的是新路径
 out.folders = await page.evaluate(async () => {
@@ -259,6 +269,7 @@ await new Promise(r => setTimeout(r, 4000));
 out.idleHits = (await hits()) - h1;
 await browser.close();
 console.log(JSON.stringify({ ...out, errs }, null, 1));
+assert.deepEqual(out.deploy, {ov: true, hist: 2, histText: true}, '设备健康：部署版本与漂移、部署历史');
 assert.equal(out.xss, 0, '含 HTML 的文件名/错误文案不能执行脚本');
 assert.equal(out.imgInjected, 0, '不能注入 <img>');
 assert.deepEqual(out.fmtBadges, ['EPUB', 'CBZ'], 'format:"other" 不能显示成 EPUB');

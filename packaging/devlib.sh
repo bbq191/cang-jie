@@ -466,6 +466,45 @@ cj_so_commit() {
     return "$cj_rc"
 }
 
+# ── 部署记录（2026-10-14）──────────────────────────────────────────────────
+# 每次部署落盘后记一行到 deploy-log.jsonl（最近 CJ_DEPLOY_KEEP 条）：哪个提交、什么时候、经 USB 还是 WiFi、装了什么，
+# 外加当时装好的文件各自的 sha256。网关「设备健康」读它，显示当前部署版本，并在运行中的文件跟记录对不上时提示——
+# 不用再靠比对 md5 反推"那次到底部署了没有"（10-13 就是这么反推出 10-10 重构 10-12 已部署的）。
+# 记的文件：~/.local/bin/ 下全部、xovi 扩展 .so、qt-resource-rebuilder 的 .qmd。待换入区里有新版的 .so 记新版的哈希
+# （它要等整机重启才换进去；网关据此把"还没换入"和"被换掉了"分开显示）。
+# 元数据由电脑端拼好（packaging/lib.sh 的 stamp_meta，一串 JSON 字段）经环境变量 CJ_STAMP_META 传进来；没有就什么都不做
+# ——install-all 编排下各步骤不各记一条，由 install-all 在最后统一记一次；在设备上手动跑 install.sh 也不记。
+CJ_DEPLOY_LOG="${CJ_DEPLOY_LOG:-$CJ_HOME/.local/state/shelf/deploy-log.jsonl}"
+CJ_DEPLOY_KEEP="${CJ_DEPLOY_KEEP:-20}"
+cj_deploy_stamp() {
+    [ -n "${CJ_STAMP_META:-}" ] || return 0
+    cj_dsf=""
+    for cj_df in "$CJ_HOME"/.local/bin/* "$CJ_XOVI"/extensions.d/*.so "$CJ_XOVI"/exthome/qt-resource-rebuilder/*.qmd; do
+        [ -f "$cj_df" ] || continue
+        case "$cj_df" in *'"'*|*'\'*) continue ;; esac   # 路径要原样放进 JSON 字符串
+        cj_src="$cj_df"
+        case "$cj_df" in "$CJ_XOVI"/extensions.d/*) [ -f "$CJ_SO_PENDING_DIR/${cj_df##*/}" ] && cj_src="$CJ_SO_PENDING_DIR/${cj_df##*/}" ;; esac
+        cj_h="$(sha256sum "$cj_src" 2>/dev/null)" || continue
+        cj_dsf="$cj_dsf\"$cj_df\":\"${cj_h%% *}\","
+    done
+    # 待换入区里有、extensions.d 里还没有的（新扩展第一次装，xochitl 正好在跑别的）
+    for cj_sn in $(cj_so_pending_list); do
+        [ -e "$CJ_XOVI/extensions.d/$cj_sn" ] && continue
+        case "$cj_sn" in *'"'*|*'\'*) continue ;; esac
+        cj_h="$(sha256sum "$CJ_SO_PENDING_DIR/$cj_sn" 2>/dev/null)" || continue
+        cj_dsf="$cj_dsf\"$CJ_XOVI/extensions.d/$cj_sn\":\"${cj_h%% *}\","
+    done
+    mkdir -p "$(dirname "$CJ_DEPLOY_LOG")" || return 1
+    cj_tmp="$CJ_DEPLOY_LOG.new.$$"
+    if { if [ -f "$CJ_DEPLOY_LOG" ]; then tail -n "$((CJ_DEPLOY_KEEP - 1))" "$CJ_DEPLOY_LOG"; fi
+         printf '{"at":%s,%s,"files":{%s}}\n' "$(date +%s)" "$CJ_STAMP_META" "${cj_dsf%,}"; } > "$cj_tmp" && mv -f "$cj_tmp" "$CJ_DEPLOY_LOG"; then
+        echo "-- 已记部署记录（$CJ_DEPLOY_LOG）"
+    else
+        rm -f "$cj_tmp"; echo "⚠ 部署记录没写上（不影响安装本身）"
+    fi
+    return 0
+}
+
 # ── xochitl 重启与健康检查（H1）───────────────────────────────────────────
 cj_xochitl_pid() {
     cj_p=$(systemctl show xochitl -p MainPID --value 2>/dev/null) || cj_p=0

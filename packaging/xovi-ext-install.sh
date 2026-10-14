@@ -82,6 +82,8 @@ if [ -n "${RQOL_INIT:-}" ] && [ ! -s "$RQOL" ]; then
     printf '%s' "$RQOL_INIT" > "$RQOL"
 fi
 
+cj_deploy_stamp   # 部署记录：文件已落盘（新版若在待换入区，记的是新版）、还没重启——放在可能的整机重启之前
+
 # 有变化就记待生效标记（两种模式都记：单独跑时重启失败，标记留着，之后 deploy-xovi-apply.sh 还能补上）
 if [ "$EXT_CHANGED" = "1" ]; then cj_pending_mark "$EXT_NAME" || true; fi
 

@@ -62,5 +62,6 @@ if [ "${DEFER_XOVI_START:-0}" = "1" ]; then
     ARGS="--no-restart"
 fi
 # 比对暂存文件 md5 与安装同一次往返（lib.sh 的 pv_exec：没变化一次装完；有变化 scp 后"复核+安装"，复核不过不装）
-install_ext() { run_apply rssh "${CJ_PV_GUARD}sh $(shquote "$DEST/deploy/install.sh") $ARGS"; }
+STAMP="CJ_STAMP_META=$(shquote "$(stamp_meta "$NAME")")"   # 部署记录（见 devlib.sh 的 cj_deploy_stamp；install-all 编排下为空）
+install_ext() { run_apply rssh "${CJ_PV_GUARD}$STAMP sh $(shquote "$DEST/deploy/install.sh") $ARGS"; }
 pv_exec install_ext

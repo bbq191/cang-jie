@@ -340,9 +340,11 @@
 | `GET /api/device/cleanup` | 可清理的遗留文件 + xochitl 书库里的 EPUB/PDF + 回收站代理是否载入（只读） |
 | `POST /api/device/cleanup/delete {area, names}` | 逐个删除遗留文件 → `{deleted, failed:[{name,message}], partial}` |
 
-**页面**：「管理 → 设备健康」顶部一张卡（标题、刷新按钮、采集时刻），下面五个二级标签：概览（开机时长、xochitl、xovi、`/home` 空间、固件、OTA 判定）/ 服务（各单元状态、重启次数、内存、启动耗时）/ 扩展（映射的扩展、`(deleted)`、待换入区）/ 日志（上次开机 journal 尾部）/ 清理。进页或刷新时一次取 `health`+`ota` 分给前四个标签，切标签不重取；`cleanup` 只在清理标签在前台时取。上次停留的二级标签记在浏览器里（`shelf.healthSub`）。
+**页面**：「管理 → 设备健康」顶部一张卡（标题、刷新按钮、采集时刻），下面五个二级标签：概览（开机时长、xochitl、xovi、`/home` 空间、固件、OTA 判定、部署版本）/ 服务（各单元状态、重启次数、内存、启动耗时）/ 扩展（映射的扩展、`(deleted)`、待换入区）/ 日志（上次开机 journal 尾部、最近的部署）/ 清理。进页或刷新时一次取 `health`+`ota` 分给前四个标签，切标签不重取；`cleanup` 只在清理标签在前台时取。上次停留的二级标签记在浏览器里（`shelf.healthSub`）。
 
 **健康采集（`health.rs`）**：一次只 fork **两个**子进程——一个 `systemctl show -p … <全部单元>`（xochitl、`xovi-reenable`、gateway 加 `MODULES` 里的 7 个服务），一个 `journalctl -b -1 -n 20 --no-pager`（超时 10 秒；journal 没持久化时整块不显示）——其余都是读 `/proc` 和 `stat`：开机时长；各单元 `ActiveState`/`NRestarts`/`MainPID` 与 MainPID 的 `VmRSS`/`VmHWM`；启动耗时（`ActiveEnterTimestampMonotonic` 减 `InactiveExitTimestampMonotonic`）；xochitl 主进程（取 systemd 的 MainPID）的 `maps`——**每次现读**，因为 `(deleted)` 会在同一进程生命期里变化；待换入区 `~/.cangjie-stage/so-pending/`（换入途中的半成品 `.<名>.new.<pid>` 不列）；`/home` 剩余/总空间（基座 `fs::fs_space`，即 `statvfs`）。飞行记录仪日志在宿主机上，网关读不到。
+
+**部署版本（`deploy.rs`，2026-10-14）**：部署脚本每次把文件装好后，在设备上记一行 `~/.local/state/shelf/deploy-log.jsonl`（`packaging/devlib.sh` 的 `cj_deploy_stamp`，只留最近 20 行）：`{at, label, only, failed, commit, dirty, via, host, files:{路径: sha256}}`。`files` 是当时 `~/.local/bin/*`、`extensions.d/*.so`、qrr 目录下 `*.qmd` 的哈希；扩展 `.so` 的新版还在待换入区时记新版的。网关取最后一行显示为"部署版本"（提交号、时间、USB/WiFi、装了什么；`dirty` 标"含未提交改动"），并把它记的文件逐个现算 sha256 比对：内容变了（`changed`）、不见了（`missing`）、新版还在待换入区（`pending`，整机重启后自然消失）。`~` 之外的路径不读。哈希按 (大小, mtime) 记在进程里，文件没变不重读；跟健康数据同一个 15 秒缓存。`files` 不发给网页。没有记录（还没用 10-14 之后的脚本部署过）时这一行显示"没有部署记录"。
 
 **OTA 横幅（`ota.rs`）**：OTA 冲掉 `/usr/lib/systemd/system/` 下的单元和 `/etc` 里的 xovi 加载配置，`/home` 保留，所以"网关能打开"不代表装好了。
 

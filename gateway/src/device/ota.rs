@@ -77,25 +77,29 @@ pub fn firmware() -> Firmware {
     FIRMWARE.get().cloned().unwrap_or(Firmware::Pending)
 }
 
-/// 流式算 sha256（64KB 缓冲，不把几十 MB 读进内存），再查白名单。
-pub fn hash_firmware(bin: &Path, allow: &[(String, String)]) -> Firmware {
+/// 流式算 sha256（64KB 缓冲，不把几十 MB 读进内存），小写十六进制。部署记录的漂移核对（[`super::deploy`]）也用它。
+pub fn sha256_file(path: &Path) -> std::io::Result<String> {
     use sha2::Digest;
     use std::io::Read;
-    let t = std::time::Instant::now();
-    let mut f = match std::fs::File::open(bin) {
-        Ok(f) => f,
-        Err(e) => return Firmware::Error { message: format!("{}: {e}", bin.display()) },
-    };
+    let mut f = std::fs::File::open(path)?;
     let mut h = sha2::Sha256::new();
     let mut buf = vec![0u8; 64 * 1024];
     loop {
-        match f.read(&mut buf) {
-            Ok(0) => break,
-            Ok(n) => h.update(&buf[..n]),
-            Err(e) => return Firmware::Error { message: format!("{}: {e}", bin.display()) },
+        match f.read(&mut buf)? {
+            0 => break,
+            n => h.update(&buf[..n]),
         }
     }
-    let sha256: String = h.finalize().iter().map(|b| format!("{b:02x}")).collect();
+    Ok(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// 算 sha256 再查白名单。
+pub fn hash_firmware(bin: &Path, allow: &[(String, String)]) -> Firmware {
+    let t = std::time::Instant::now();
+    let sha256 = match sha256_file(bin) {
+        Ok(s) => s,
+        Err(e) => return Firmware::Error { message: format!("{}: {e}", bin.display()) },
+    };
     let hit = allow.iter().find(|(s, _)| *s == sha256);
     Firmware::Done { known: hit.is_some(), label: hit.map(|(_, l)| l.clone()).unwrap_or_default(), sha256, millis: t.elapsed().as_millis() as u64 }
 }

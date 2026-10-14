@@ -20,6 +20,8 @@
 # 用法：./deploy-xovi-apply.sh [host] [--force]      host 默认 10.11.99.1
 # 环境 CJ_AWAKE_RELEASE=1（install-all 给最后一步设）：上层持着部署唤醒锁时，不整机重启的路径在同一次往返里顺手放锁、
 # 打印 CJ-AWAKE-RELEASED，上层收尾就不再单独连一次（2026-10-10）。单独跑时没有上层锁，什么都不做。
+# 环境 CJ_APPLY_STAMP_META（install-all 给最后一步设，2026-10-14）：部署记录的元数据（lib.sh 的 stamp_meta），在同一次往返里
+# 先记一行部署记录（devlib.sh 的 cj_deploy_stamp）再判定要不要重启——不为它多连一次设备。
 set -eu
 cd "$(dirname "$0")"
 # shellcheck disable=SC1091
@@ -39,12 +41,13 @@ REL=-
 if [ "${CJ_AWAKE_RELEASE:-0}" = 1 ]; then REL="$(awake_release_arg)"; fi
 
 echo "== 设备端让 xovi 扩展 + qmd 生效（有待生效改动才整机重启一次，约 1 分钟，会打断设备上正在做的事）=="
-run_apply dev_script "$FORCE_RESTART" "$REL" <<'DEVICE_SCRIPT'
+run_apply dev_script "$FORCE_RESTART" "$REL" "${CJ_APPLY_STAMP_META:-}" <<'DEVICE_SCRIPT'
 set -eu
-FORCE_RESTART="$1"; REL="$2"
+FORCE_RESTART="$1"; REL="$2"; CJ_STAMP_META="$3"
 # 不整机重启的出口放掉上层（install-all）的部署唤醒锁；整机重启时锁随之消失，不用放
 rel() { if [ "$REL" != - ] && [ -w "$REL" ] && echo cangjie-deploy > "$REL" 2>/dev/null; then echo CJ-AWAKE-RELEASED; fi; return 0; }
 cj_require_root || exit 1
+cj_deploy_stamp   # 只在 install-all 传了元数据时记（见头注）；整机重启之前
 PENDING="$(cj_pending_list | tr '\n' ' ')"
 if [ "$FORCE_RESTART" != "1" ]; then
     if ! cj_apply_needed; then

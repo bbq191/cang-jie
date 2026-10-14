@@ -8,6 +8,21 @@ const fmtUptime=s=>{const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Mat
 // 两分钟以内按秒（开机时序要看到 0.01 s 级），更长的（服务开机后被重启过）换成"12 分钟"这类读法，不写 761.5 s。
 const fmtSec=ms=>ms>=120000?fmtUptime(Math.floor(ms/1000)):(ms/1000).toFixed(ms<10000?2:1)+' s';
 const fmtTime=secs=>secs?new Date(secs*1000).toLocaleString():'';
+/* 部署记录（2026-10-14，gateway/src/device/deploy.rs）：一次部署一句话——提交号、时间、USB/WiFi、装了什么。 */
+const deployWhat=s=>{const k='health.deploy.label.'+s.label,t=T(k);
+  return (t===k?s.label:t)+(s.only?' · '+T('health.deploy.only',{only:s.only}):'')};
+const deployDesc=s=>`<code>${esc(s.commit||'?')}</code>`
+  +(s.dirty?` <span class="badge" title="${T('health.deploy.dirtyTitle')}">${T('health.deploy.dirty')}</span>`:'')
+  +` <span class="small">${esc([fmtTime(s.at),(s.via||'').toUpperCase().replace('WIFI','WiFi'),deployWhat(s)].filter(Boolean).join(' · '))}</span>`
+  +(s.failed?`<br>${badge(esc(T('health.deploy.failed',{steps:s.failed})),false)}`:'');
+function deployBlock(dep){
+  if(!dep||!dep.current)return `<span class="small">${T('health.deploy.none')}</span>`;
+  const dr=dep.drift||[],bad=dr.filter(x=>x.state!=='pending').length;
+  const st=dr.length?`<br>${badge(esc(T('health.deploy.drift',{n:dr.length})),!bad)}<br><span class="small">${T('health.deploy.driftHint')}</span>`
+    +`<ul class="small" style="margin:.3em 0 0;padding-left:1.2em">${dr.map(x=>`<li><code>${esc(x.path.split('/').pop())}</code> ${esc(T('health.deploy.state.'+x.state))}</li>`).join('')}</ul>`
+    :`<br>${badge(esc(T('health.deploy.ok',{n:dep.files})),true)}`;
+  return deployDesc(dep.current)+st;
+}
 function mountHealth(box){
   const card=k=>`<div class="subpanel" data-p="${k}"><div class="card" data-body><p class="small">${T('health.loading')}</p></div></div>`;
   box.innerHTML=`<div class="card"><div class="row" style="justify-content:space-between;margin-top:0"><h2 style="margin:0">${T('health.title')}</h2><button class="btn" data-refresh>${T('health.refresh')}</button></div>
@@ -47,7 +62,8 @@ function mountHealth(box){
       <b>${T('health.xovi')}</b><span>${xoviTxt}</span>
       <b>${T('health.home')}</b><span>${home.freeBytes!=null?T('health.homeVal',{free:fmtB(home.freeBytes),total:fmtB(home.totalBytes||0)}):'—'}</span>
       <b>${T('health.firmware')}</b><span>${fwTxt}</span>
-      <b>${T('health.ota')}</b><span>${otaTxt}</span></div>`;
+      <b>${T('health.ota')}</b><span>${otaTxt}</span>
+      <b>${T('health.deploy')}</b><span>${deployBlock(d.deploy)}</span></div>`;
     body('services').innerHTML=`<h3 style="margin-top:0">${T('health.services')}</h3><p class="small">${T('health.servicesHint')}</p>`
       +(d.systemctlError?`<p class="small">${esc(T('health.systemctlError',{msg:d.systemctlError}))}</p>`:'')+'<ul class="list" data-units></ul>';
     const ul=body('services').querySelector('[data-units]');
@@ -71,7 +87,9 @@ function mountHealth(box){
       :`<p class="small">${T('health.extClean')}</p>`}`;
     // 上次开机最后几行 journal（设备冻死/意外重启的线索）；journal 没持久化时后端给 null。
     body('log').innerHTML=`<h3 style="margin-top:0">${T('health.prevBoot')}</h3>`
-      +(d.prevBoot&&d.prevBoot.length?`<pre class="hlog">${esc(d.prevBoot.join('\n'))}</pre>`:`<p class="small">${T('health.prevBootNone')}</p>`);
+      +(d.prevBoot&&d.prevBoot.length?`<pre class="hlog">${esc(d.prevBoot.join('\n'))}</pre>`:`<p class="small">${T('health.prevBootNone')}</p>`)
+      +`<h3>${T('health.deploy.history')}</h3>`
+      +((d.deploy&&d.deploy.history||[]).length?`<ul class="list">${d.deploy.history.map(s=>`<li class="stack"><span>${deployDesc(s)}</span></li>`).join('')}</ul>`:`<p class="small">${T('health.deploy.historyNone')}</p>`);
   };
   /* 进这一屏（fresh=false）或点刷新（fresh=true）：健康数据现取；清理只在它正在前台时取，否则等第一次切过去。 */
   const load=async fresh=>{cleanupStale=true;await Promise.all([loadHealth(fresh),cleanupIfShown()])};

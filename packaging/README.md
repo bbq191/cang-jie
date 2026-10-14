@@ -221,6 +221,15 @@ dm-verity 激活、但单元早已装好且内容没变时，如实报"已是最
 - **你自己 `reboot` 也会换入**：`xovi-reenable.service` 的 `ExecStartPre` 在跑 `xovi/start` 之前把待换入区的普通文件挪进 `extensions.d`（此刻 `ExecCondition` 已确认 xochitl 没带 xovi、没映射扩展，换文件安全）。
 - 卸载 `hl-snap` / `ui-font`（以及清理已移除的 `handwriting-stroke`）时一并撤掉待换入区里的同名版本，否则下次开机会被装回来。
 
+### 部署记录（2026-10-14）
+
+每次部署把文件装好后，在设备上记一行 `~/.local/state/shelf/deploy-log.jsonl`（只留最近 20 行），网关「管理 → 设备健康」据此显示部署版本、核对文件有没有在部署之后被换过。
+
+- **谁记**：设备端 `devlib.sh` 的 `cj_deploy_stamp`。元数据（提交号、工作区有没有未提交改动、USB/WiFi、哪台电脑、`--only`、失败步骤）由电脑端 `lib.sh` 的 `stamp_meta` 拼好，经环境变量 `CJ_STAMP_META` 交过去；没有这个变量就不记（在设备上手动跑 `install.sh` 不记）。
+- **什么时候记**：`deploy.sh` 由 `shelf/install.sh` 在 qmd 落盘之后记；`deploy-xovi-ext.sh`（hl-snap、ui-font）在扩展落盘之后、可能的整机重启之前记。`install-all` 导出 `CJ_STAMP_DEFER=1`，各步骤不各记一条，在最后一步之前统一记一次（`label` 为 `install-all`）：正常情况并进 `xovi-apply` 那一次往返（`CJ_APPLY_STAMP_META`），不多连设备；`xovi-apply` 被 `--skip` 或前面有步骤失败时单独连一次记，并写上失败步骤。
+- **记哪些文件**：`~/.local/bin/*`、`~/xovi/extensions.d/*.so`、`~/xovi/exthome/qt-resource-rebuilder/*.qmd` 的 sha256。扩展新版还在待换入区时记新版的哈希；网关把这种情况标成"新版待换入"，不算异常。
+- 写失败只警告，不影响安装本身。模拟测试 `tree_sig` 不比这个文件（每次部署都会多一行）。
+
 ## 部署后核对：`verify-on-device.sh`（2026-09-25）
 
 ```sh
