@@ -10,6 +10,8 @@
 //! 原生回收站队列：`POST /trash/add {uuid, name}`（name 必须与书库 visibleName 相符）· `GET /trash/pending?wait=` → `{uuids}`（MainView 代理 qmd 长轮询拉取执行）· `GET /trash`（只供调试：ssh 上 curl 看队列）。
 //! 原生建文件夹队列：`POST /mkdir/add {name, parentPath?: [各级名字]}`（建在 `parentPath` 那个已有文件夹里，缺省书库根；上级不在 → 404）· `GET /mkdir/pending?wait=` → `{items: [{name, parent}]}`（MainView 代理
 //! shelf-mkdir-agent.qmd 长轮询拉取执行；`parent` 是上级文件夹 uuid，空串＝书库根）· `GET /mkdir`（只供调试）。
+//! 设备端一键自检（2026-10-14，selftest.rs）：`POST /selftest` → `202`（已在跑 → 409）· `GET /selftest` → `{running: Run|null, runs: [最近 10 次]}`，
+//! `Run = {at, current?, done, ok, steps:[{key, state: ok|fail|skip, ms, detail?}], leftovers}`。
 //! 代理放弃记录：`GET /agent-failures` → `{items:[{kind,name,uuid?,at}]}` · `POST /agent-failures/clear`（两个队列交满次数仍没做成的项）。
 //! 2026-09-05 起规则统一"所有书只落母版库"：旧 `POST /?target=` 直投路已删（`/staging*` 是网页的唯一入口）。
 //! 直接导入 xochitl、不进母版库（2026-10-07，电脑上的 sheng-ren `booklib sync` 经 SSH 端口转发直连 8790 调，见 import.rs）。
@@ -120,6 +122,12 @@ pub fn router(st: Arc<State>) -> Router {
             Ok(Reply::ok(&serde_json::json!({"uuids": uuids})))
         }))
         .get("/trash", bind(&st, |s, _| Ok(Reply::ok(&serde_json::json!({"items": s.trash.list()})))))
+        // ── 设备端一键自检（selftest.rs）：POST 排进作业队列（已在跑 → 409），GET 看进行中的那次与最近几次 ──
+        .post("/selftest", bind(&st, |s, _| {
+            s.selftest.start(&s.jobs).map_err(api_error)?;
+            Ok(Reply::json(202, &serde_json::json!({"ok": true})))
+        }))
+        .get("/selftest", bind(&st, |s, _| Ok(Reply::ok(&s.selftest.status()))))
         // ── 原生书库建文件夹队列（真正的建夹由 xochitl 自己的 Library.createCollection 执行，见 mkdir.rs / shelf-mkdir-agent.qmd）──
         .post("/mkdir/add", bind(&st, |s, r| {
             let j = r.json()?;

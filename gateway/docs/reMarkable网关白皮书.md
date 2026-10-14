@@ -340,7 +340,7 @@
 | `GET /api/device/cleanup` | 可清理的遗留文件 + xochitl 书库里的 EPUB/PDF + 回收站代理是否载入（只读） |
 | `POST /api/device/cleanup/delete {area, names}` | 逐个删除遗留文件 → `{deleted, failed:[{name,message}], partial}` |
 
-**页面**：「管理 → 设备健康」顶部一张卡（标题、刷新按钮、采集时刻），下面五个二级标签：概览（开机时长、xochitl、xovi、`/home` 空间、固件、OTA 判定、部署版本）/ 服务（各单元状态、重启次数、内存、启动耗时）/ 扩展（映射的扩展、`(deleted)`、待换入区）/ 日志（上次开机 journal 尾部、最近的部署）/ 清理。进页或刷新时一次取 `health`+`ota` 分给前四个标签，切标签不重取；`cleanup` 只在清理标签在前台时取。上次停留的二级标签记在浏览器里（`shelf.healthSub`）。
+**页面**：「管理 → 设备健康」顶部一张卡（标题、刷新按钮、采集时刻），下面六个二级标签：概览（开机时长、xochitl、xovi、`/home` 空间、固件、OTA 判定、部署版本）/ 服务（各单元状态、重启次数、内存、启动耗时）/ 扩展（映射的扩展、`(deleted)`、待换入区）/ 日志（上次开机 journal 尾部、最近的部署）/ 清理 / 自检（10-14：book-serve 的一键自检，`GET`/`POST /api/books/selftest`，跑着时每 2 秒取一次进度，这一屏不在前台或跑完就停；接口与步骤见[传书链路技术细节](../../shelf/docs/传书EPUB线架构.md) §4）。进页或刷新时一次取 `health`+`ota` 分给前四个标签，切标签不重取；`cleanup`、自检只在各自的标签在前台时取。上次停留的二级标签记在浏览器里（`shelf.healthSub`）。
 
 **健康采集（`health.rs`）**：一次只 fork **两个**子进程——一个 `systemctl show -p … <全部单元>`（xochitl、`xovi-reenable`、gateway 加 `MODULES` 里的 7 个服务），一个 `journalctl -b -1 -n 20 --no-pager`（超时 10 秒；journal 没持久化时整块不显示）——其余都是读 `/proc` 和 `stat`：开机时长；各单元 `ActiveState`/`NRestarts`/`MainPID` 与 MainPID 的 `VmRSS`/`VmHWM`；启动耗时（`ActiveEnterTimestampMonotonic` 减 `InactiveExitTimestampMonotonic`）；xochitl 主进程（取 systemd 的 MainPID）的 `maps`——**每次现读**，因为 `(deleted)` 会在同一进程生命期里变化；待换入区 `~/.cangjie-stage/so-pending/`（换入途中的半成品 `.<名>.new.<pid>` 不列）；`/home` 剩余/总空间（基座 `fs::fs_space`，即 `statvfs`）。飞行记录仪日志在宿主机上，网关读不到。
 

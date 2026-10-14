@@ -138,6 +138,8 @@
 
 放弃与退避路径平时难触发，没在真机专门走过。
 
+**一键自检**（2026-10-14，`selftest.rs`）：网关「管理 → 设备健康 → 自检」点一下，book-serve 在书库里真走一遍这两个代理：在根下建「书架自检 <时间戳>」、在它里面建「子文件夹」（带非空上级的 `createCollection`）、往子文件夹里上传一本一页的测试书（`shelf_conv::placeholder::text_epub`）并按字节认领、等 xochitl 排出页数，最后把测试书、子文件夹、临时文件夹一起交给回收站代理（**移文件夹进回收站**此前也没在真机上走过）并等它们都不再是活条目。前一步失败，依赖它的步骤记 `skip`，但已建出的条目照样交给回收站。等待上限：每级建文件夹 20 秒（投递层）、排版 120 秒、回收站 90 秒。排进与落库、直接导入共用的作业队列，不会和真实投递同时上传。结果存 `books/selftest.json`（最近 10 次），没清掉的条目（书库里名字以「书架自检」开头的活条目及其子项，含之前几次留下的）列进 `leftovers`，不自动重试、不碰别的条目。**自检本身还没在真机上跑过。**
+
 ## 5｜内存安全设计
 
 设备只有约 2GB 内存，systemd 的 `MemoryMax` 在设备上不生效。原则：任何一步都不把整本书读进内存。
@@ -247,6 +249,7 @@ GET  /events                         SSE 事件流
 POST /trash/add {uuid, name} · GET /trash/pending[?wait=秒] · GET /trash   回收站代理队列（GET /trash 只供调试）
 POST /mkdir/add {name, parentPath?}（建在 parentPath 那个已有文件夹里，缺省根；上级不在 404）· GET /mkdir/pending[?wait=秒] → {items:[{name, parent}]} · GET /mkdir   建文件夹代理队列（GET /mkdir 只供调试）
 GET  /agent-failures · POST /agent-failures/clear      两个代理交满次数放弃的记录
+POST /selftest → 202（已在跑 409）· GET /selftest → {running: Run|null, runs: [最近 10 次]}   一键自检（§4）；Run = {at, current?, done, ok, steps:[{key, state: ok|fail|skip, ms, detail?}], leftovers}
 POST /import?name=&folder=           直接导入、不进母版库（体＝EPUB 原始字节；folder 是 / 分隔的多级路径）→ 202 {job}
 POST /import?uuid=&name=             原地替换已有文档内容、uuid 不变 → 202 {job}；不在 / 已删 / 回收站 / 非 EPUB → 404；同一 uuid 正在替换 → 409
 GET  /import/jobs/{id}               → {job, state: running|done|failed, stage, uuid?, name?, folder?, message?}；不存在 404

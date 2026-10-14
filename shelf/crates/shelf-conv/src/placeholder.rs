@@ -31,9 +31,22 @@ pub fn epub_placeholder(book: &mut Book) -> Result<Vec<u8>, String> {
         None => (String::new(), String::new(), format!("<p>{t}</p>")),
     };
     let creator_xml = if creator.is_empty() { String::new() } else { format!("<dc:creator>{creator}</dc:creator>") };
+    let cover = cover.as_ref().map(|(ext, data)| (ext.as_str(), data.as_slice()));
+    minimal_epub(&t, &format!("{creator_xml}<dc:language>{lang}</dc:language>"), &format!("urn:cangjie:placeholder:{}", title.len()), (cover_item, cover_meta), &page_body, cover)
+}
+
+/// 一页纯文字的小 EPUB（2026-10-14，书架自检的测试书用）：显示名＝`title`，正文一段 `text`。两者按原文给，这里转义。
+pub fn text_epub(title: &str, text: &str) -> Result<Vec<u8>, String> {
+    let t = epub::xml_escape(title);
+    minimal_epub(&t, "<dc:language>zh</dc:language>", "urn:cangjie:selftest", (String::new(), String::new()), &format!("<p>{}</p>", epub::xml_escape(text)), None)
+}
+
+/// 单章 EPUB 骨架（OPF + NCX + 一页 XHTML，可带封面图）。`t` 已转义；`meta` 是 `dc:title` 之后、`dc:identifier` 之前的元数据片段；
+/// `cover_parts` 是（manifest 里的封面项, `<meta name="cover">`），没有封面时两者为空。
+fn minimal_epub(t: &str, meta: &str, id: &str, cover_parts: (String, String), page_body: &str, cover: Option<(&str, &[u8])>) -> Result<Vec<u8>, String> {
+    let (cover_item, cover_meta) = cover_parts;
     let opf_out = format!(
-        r#"<?xml version="1.0" encoding="utf-8"?><package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf"><dc:title>{t}</dc:title>{creator_xml}<dc:language>{lang}</dc:language><dc:identifier id="id">urn:cangjie:placeholder:{}</dc:identifier>{cover_meta}</metadata><manifest><item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>{cover_item}</manifest><spine toc="ncx"><itemref idref="c1"/></spine></package>"#,
-        title.len()
+        r#"<?xml version="1.0" encoding="utf-8"?><package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf"><dc:title>{t}</dc:title>{meta}<dc:identifier id="id">{id}</dc:identifier>{cover_meta}</metadata><manifest><item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>{cover_item}</manifest><spine toc="ncx"><itemref idref="c1"/></spine></package>"#
     );
     let ncx = format!(
         r#"<?xml version="1.0"?><ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1"><head/><docTitle><text>{t}</text></docTitle><navMap><navPoint id="n1" playOrder="1"><navLabel><text>{t}</text></navLabel><content src="c1.xhtml"/></navPoint></navMap></ncx>"#
@@ -48,7 +61,7 @@ pub fn epub_placeholder(book: &mut Book) -> Result<Vec<u8>, String> {
         z.put("content.opf", opf_out.as_bytes())?;
         z.put("toc.ncx", ncx.as_bytes())?;
         z.put("c1.xhtml", page.as_bytes())?;
-        if let Some((ext, data)) = &cover {
+        if let Some((ext, data)) = cover {
             z.put(&format!("cover.{ext}"), data)?;
         }
         z.finish()?;
@@ -168,6 +181,18 @@ mod tests {
         assert_eq!(e["cover.jpg"], b"\xFF\xD8COVERBYTES\xFF\xD9", "封面字节必须是真书的封面");
         assert!(out.len() < 5000, "占位应很小: {}", out.len());
         assert_valid_epub(&out);
+    }
+
+    #[test]
+    fn text_epub_is_valid_and_escapes_title_and_text() {
+        let out = text_epub("书架自检 A&B <1>", "测试 & <正文>").unwrap();
+        assert_valid_epub(&out);
+        let e = entries_of(&out);
+        assert!(String::from_utf8_lossy(&e["content.opf"]).contains("<dc:title>书架自检 A&amp;B &lt;1&gt;</dc:title>"));
+        assert!(String::from_utf8_lossy(&e["c1.xhtml"]).contains("<p>测试 &amp; &lt;正文&gt;</p>"));
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("t.epub"), &out).unwrap();
+        assert_eq!(Book::open(&d.path().join("t.epub")).unwrap().title().as_deref(), Some("书架自检 A&B <1>"), "读回来是原文书名");
     }
 
     #[test]

@@ -57,6 +57,11 @@ const routes = {
     deploy:{current:{at:2, label:'install-all', commit:evil, dirty:true, via:'usb', host:'pc', only:'', failed:''}, files:12,
       history:[{at:2, label:'install-all', commit:evil, via:'usb'}, {at:1, label:'shelf', only:'book,gateway', commit:'0000000', via:'wifi'}],
       drift:[{path:'/home/root/.local/bin/book-serve', state:'changed'}, {path:'/home/root/xovi/extensions.d/ui-font.so', state:'pending'}]}}),
+  // 一键自检（2026-10-14）：最近一次没通过（子文件夹失败、后面跳过、有没清掉的），之前一次通过；失败原因与条目名按文本显示
+  '/api/books/selftest': () => ({running:null, runs:[
+    {at:2, done:true, ok:false, leftovers:[evil], steps:[{key:'mkdir-root',state:'ok',ms:4200},{key:'mkdir-child',state:'fail',ms:20000,detail:evil},
+      {key:'upload-claim',state:'skip',ms:0},{key:'render',state:'skip',ms:0},{key:'trash',state:'ok',ms:3000,detail:'1 项'}]},
+    {at:1, done:true, ok:true, leftovers:[], steps:[]}]}),
   '/api/device/cleanup': () => ({files:[{area:'books-done', name:'旧.epub', bytes:1, mtime:1}], library:[], trashAgent:true, xochitl:true}),
   '/api/device/cleanup/delete': () => ({deleted:[], failed:[{name:'旧.epub', message:'拒绝原因'}], partial:true}),
   '/api/manage': () => ({modules:[], gateway:{running:true}}),
@@ -240,6 +245,13 @@ out.cleanupPartial = await page.evaluate(async () => {
   await new Promise(r => setTimeout(r, 300));
   return document.querySelector('#toasthost').textContent;
 });
+out.selftest = await page.evaluate(async () => {
+  document.querySelectorAll('#healthBox > .subnav button')[5].click();
+  await new Promise(r => setTimeout(r, 300));
+  const p = document.querySelector('#healthBox [data-p="selftest"]'), t = p.textContent;
+  return {marks: [...p.querySelectorAll('[data-now] li')].map(li => li.textContent.trim()[0]).join(''), evil: t.includes('<img src=x'),
+    verdicts: [...p.querySelectorAll('.badge')].map(b => b.textContent).filter(x => x === '通过' || x === '没通过'), runDisabled: p.querySelector('[data-run]').disabled};
+});
 out.deploy = await page.evaluate(() => {
   const ov = document.querySelector('#healthBox [data-p="overview"]').textContent, lg = document.querySelector('#healthBox [data-p="log"]');
   return {ov: ov.includes('<img src=x') && ov.includes('2 个文件与记录不一致') && ov.includes('book-serve') && ov.includes('新版待换入') && ov.includes('含未提交改动'),
@@ -269,6 +281,7 @@ await new Promise(r => setTimeout(r, 4000));
 out.idleHits = (await hits()) - h1;
 await browser.close();
 console.log(JSON.stringify({ ...out, errs }, null, 1));
+assert.deepEqual(out.selftest, {marks: '✓✗––✓', evil: true, verdicts: ['没通过', '通过'], runDisabled: false}, '设备健康 → 自检：逐步结果、历史');
 assert.deepEqual(out.deploy, {ov: true, hist: 2, histText: true}, '设备健康：部署版本与漂移、部署历史');
 assert.equal(out.xss, 0, '含 HTML 的文件名/错误文案不能执行脚本');
 assert.equal(out.imgInjected, 0, '不能注入 <img>');
