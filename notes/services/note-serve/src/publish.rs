@@ -151,7 +151,7 @@ pub fn import_markdown(c: &Ctx, book: &Book, title: &str, markdown: &str) -> Res
 
 /// 一页段落 → 单页 `.rmdoc` → 上传进 `folder` → 认领设备新分配的 uuid。章节生成与 markdown 导入共用
 /// （此前两处各写一遍逐行相同的"建页/打包/上传/认领"四步）。
-fn upload_page(c: &Ctx, paragraphs: &[Paragraph], folder: &Folder, visible_name: &str) -> Result<String, String> {
+pub(crate) fn upload_page(c: &Ctx, paragraphs: &[Paragraph], folder: &Folder, visible_name: &str) -> Result<String, String> {
     let rm = build_page_rm(rmdoc::TEMPLATE, paragraphs)?;
     let doc_uuid = uuid::Uuid::new_v4().to_string();
     let page = Page { uuid: uuid::Uuid::new_v4().to_string(), rm_bytes: rm };
@@ -272,7 +272,7 @@ mod tests {
     }
 
     fn entry(id: &str, chapter: usize, text: &str) -> Entry {
-        Entry { id: id.into(), page: "p".into(), page_index: 0, chapter: Some(chapter), chapter_title: String::new(), subhead: None, quote: None, ink: None, drafts: vec![], text: Some(text.into()), style: Style::Body, ask_ai: false, question: None, answer: None, status: Status::Reviewed, destination: Default::default(), source: Default::default(), created: 0, updated: 0 }
+        Entry { id: id.into(), page: "p".into(), page_index: 0, chapter: Some(chapter), chapter_title: String::new(), subhead: None, quote: None, ink: None, drafts: vec![], text: Some(text.into()), style: Style::Body, ask_ai: false, question: None, answer: None, status: Status::Reviewed, destination: Default::default(), source: Default::default(), review: None, created: 0, updated: 0 }
     }
 
     fn book() -> Book {

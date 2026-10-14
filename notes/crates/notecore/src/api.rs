@@ -83,6 +83,47 @@ impl AnswerPost {
     }
 }
 
+/// `POST /books/{uuid}/entries/{id}/review`（网页「笔记 → 回顾」）：这条回顾的结果。时间由 ink-serve 盖。
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ReviewPost {
+    pub result: ReviewResult,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ReviewResult {
+    /// 记住了：间隔往后挪一格。
+    Remembered,
+    /// 再看看：回到 1 天。
+    Again,
+}
+
+/// `GET /review/due` 每一项：到期的已校对条目，带它所在的书（网页卡片、note-serve 生成「今日回顾」笔记本用）。
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DueItem {
+    pub book: String,
+    pub book_title: String,
+    pub entry: Entry,
+}
+
+/// `GET /review/due?limit=` 应答：`items` 按到期先后取前 `limit` 条；`total` 是现在一共到期多少条。
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub struct DueList {
+    pub items: Vec<DueItem>,
+    pub total: usize,
+}
+
+/// 从一批书里挑到期的已校对条目（到期早的在前；同一时刻按书名、页序），取前 `limit` 条。纯函数，ink-serve 与测试共用。
+pub fn due_reviews(books: &[std::sync::Arc<Book>], now: u64, limit: usize) -> DueList {
+    let mut all: Vec<(u64, &Book, &Entry)> = books.iter().flat_map(|b| b.entries.iter().filter(|e| e.reviewable() && e.review_due() <= now).map(move |e| (e.review_due(), b.as_ref(), e))).collect();
+    all.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.title.cmp(&b.1.title)).then_with(|| a.2.page_index.cmp(&b.2.page_index)));
+    let total = all.len();
+    let items = all.into_iter().take(limit).map(|(_, b, e)| DueItem { book: b.uuid.clone(), book_title: b.title.clone(), entry: e.clone() }).collect();
+    DueList { items, total }
+}
+
 /// `GET /books` 每一项（网页书下拉、transcribe-serve 挑有待转写的书）。`entries` 不计 `Revoked`。
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct BookBrief {
@@ -149,6 +190,31 @@ impl<'a> BookView<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn due_reviews_picks_earliest_reviewed_entries_across_books() {
+        let mk = |id: &str, status: &str, text: Option<&str>, updated: u64, idx: usize| {
+            let mut e: Entry = serde_json::from_value(serde_json::json!({"id": id, "page": "p", "page_index": idx, "created": 0, "updated": updated, "status": status})).unwrap();
+            e.text = text.map(str::to_string);
+            e
+        };
+        let day = crate::model::DAY;
+        let a = Book { uuid: "a".into(), title: "A".into(), entries: vec![mk("a1", "reviewed", Some("x"), 0, 2), mk("a2", "reviewed", Some("y"), 5 * day, 1), mk("a3", "draft", Some("z"), 0, 0)], ..Default::default() };
+        let mut late = mk("b2", "reviewed", Some("w"), 0, 9);
+        late.record_review(true, 10).unwrap(); // 3 天后才到期
+        let b = Book { uuid: "b".into(), title: "B".into(), entries: vec![mk("b1", "reviewed", Some("v"), 0, 0), late, mk("b3", "archived", Some("u"), 0, 0)], ..Default::default() };
+        let books = vec![std::sync::Arc::new(b), std::sync::Arc::new(a)];
+        let d = due_reviews(&books, 2 * day, 10);
+        assert_eq!(d.items.iter().map(|i| i.entry.id.as_str()).collect::<Vec<_>>(), ["a1", "b1"], "同时到期按书名；未到期/草稿/归档不算");
+        assert_eq!(d.total, 2);
+        let d = due_reviews(&books, 10 * day, 2);
+        assert_eq!((d.items.len(), d.total), (2, 4), "limit 只截 items");
+        assert_eq!(d.items[0].book_title, "A");
+        let v = serde_json::to_value(&d).unwrap();
+        assert!(v["items"][0]["bookTitle"].is_string() && v["items"][0]["entry"]["id"].is_string());
+        assert_eq!(serde_json::from_value::<ReviewPost>(serde_json::json!({"result": "again"})).unwrap().result, ReviewResult::Again);
+        assert!(serde_json::from_value::<ReviewPost>(serde_json::json!({"result": "x"})).is_err());
+    }
     use crate::model::Status;
 
     fn entry(status: &str) -> Entry {

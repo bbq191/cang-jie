@@ -95,6 +95,7 @@ const TOGGLE_UI={
   hlSnapCjk:{panel:'enhance',title:'manage.enhance.hlSnap.title',desc:'manage.enhance.hlSnap.desc',label:'manage.enhance.hlSnap.toggle'},
   tapPageTurn:{panel:'enhance',title:'manage.enhance.pageTurn.title',desc:'manage.enhance.pageTurn.desc',label:'manage.enhance.pageTurn.tapToggle',hint:'manage.enhance.pageTurn.tapHint'},
   notesImportMdEnabled:{panel:'lab',title:'manage.lab.importMd.title',desc:'manage.lab.importMd.desc',label:'manage.lab.importMd.toggle'},
+  notesReviewEnabled:{panel:'lab',title:'manage.lab.review.title',desc:'manage.lab.review.desc',label:'manage.lab.review.toggle'},
 };
 /* 开关旁的加载状态徽章：`kind`（extension 扩展 / patch qmd 补丁 / web 纯网页功能）只决定说明文字，状态由网关判定（`loaded`）。 */
 const LOADED_TITLE={extension:{on:'manage.loaded.onTitle',off:'manage.loaded.offTitle'},patch:{on:'manage.loaded.qmdOnTitle',off:'manage.loaded.qmdOffTitle'}};

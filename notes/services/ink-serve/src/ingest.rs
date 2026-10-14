@@ -316,7 +316,7 @@ mod tests {
     }
 
     fn seeded_entry(id: &str, status: Status) -> notecore::model::Entry {
-        notecore::model::Entry { id: id.into(), page: "p".into(), page_index: 0, chapter: None, chapter_title: String::new(), subhead: None, quote: None, ink: None, drafts: vec![], text: None, style: Default::default(), ask_ai: false, question: None, answer: None, status, destination: Default::default(), source: Default::default(), created: 0, updated: 0 }
+        notecore::model::Entry { id: id.into(), page: "p".into(), page_index: 0, chapter: None, chapter_title: String::new(), subhead: None, quote: None, ink: None, drafts: vec![], text: None, style: Default::default(), ask_ai: false, question: None, answer: None, status, destination: Default::default(), source: Default::default(), review: None, created: 0, updated: 0 }
     }
 
     fn ink_entry(id: &str, hash: &str, crop: &str, status: Status) -> notecore::model::Entry {

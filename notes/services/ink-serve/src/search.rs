@@ -100,7 +100,7 @@ mod tests {
     use notecore::model::{Answer, Quote};
 
     fn entry(id: &str, status: Status) -> Entry {
-        Entry { id: id.into(), page: "p".into(), page_index: 3, chapter: None, chapter_title: "第一章".into(), subhead: None, quote: None, ink: None, drafts: vec![], text: None, style: Default::default(), ask_ai: false, question: None, answer: None, status, destination: Default::default(), source: Default::default(), created: 0, updated: 0 }
+        Entry { id: id.into(), page: "p".into(), page_index: 3, chapter: None, chapter_title: "第一章".into(), subhead: None, quote: None, ink: None, drafts: vec![], text: None, style: Default::default(), ask_ai: false, question: None, answer: None, status, destination: Default::default(), source: Default::default(), review: None, created: 0, updated: 0 }
     }
 
     fn book() -> Book {

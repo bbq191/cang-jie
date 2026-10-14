@@ -320,6 +320,7 @@
   | `hlSnapCjk` | 开 | `hl-snap.so`（xovi 扩展，每次划线时读） | `extension` | 管理 → 系统增强 |
   | `tapPageTurn` | 关（= xochitl 原生行为） | `reader-page-turn.qmd`（每次打开书时读，切换后下次打开书生效） | `patch` | 管理 → 系统增强 |
   | `notesImportMdEnabled` | 关 | 无（只影响网页「导入 md」子标签） | `web` | 管理 → 实验室 |
+  | `notesReviewEnabled` | 关 | 无（只影响网页「笔记 → 回顾」子标签，2026-10-14） | `web` | 管理 → 实验室 |
 
 - **`loaded` 怎么判**（`enhance::load_state`）：找不到 xochitl 主进程 → `unknown`；扩展映射了 → `on`，否则 `off`；补丁已载入 → `on`，文件比进程新 → `pending`（待整机重启），否则 `off`；`web` 为 `null`。网页按 `kind` 选徽章说明、按 `loaded` 选徽章。
 - **扩展加载检测**（`enhance/loaded.rs`）：直接读 xochitl 主进程（`comm==xochitl` 且父进程是 1，排除渲染用的同名子进程）的 `/proc/<pid>/maps`，映射了哪个 `extensions.d/*.so` 就是真加载了；maps 解析与设备健康共用 `device::health::parse_maps`，行尾带 ` (deleted)` 的映射照样算已加载。qmd 不是 `.so`，按"qt-resource-rebuilder 在进程里 + 补丁文件早于 xochitl 启动"推断为已载入——这是按加载机制推断，看不到 qmd 里的定位是否全部命中。

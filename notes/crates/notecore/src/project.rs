@@ -113,9 +113,40 @@ pub fn fingerprint_chapter(book: &Book, chapter_idx: usize) -> Option<String> {
     fingerprint_entries(title, &live_entries(book, chapter_idx))
 }
 
+/// 「今日回顾」笔记本（2026-10-14）的页面：每条一个小标题「书名 · 章名」，下面是定稿（保留条目自己的样式）、原文，
+/// 末尾一行提示去网页上标记。`items` 由 ink-serve `GET /review/due` 给出，顺序即到期先后。
+pub fn project_review(items: &[crate::api::DueItem]) -> Vec<Paragraph> {
+    let mut out = vec![Paragraph::subheading1("今日回顾")];
+    for it in items {
+        let e = &it.entry;
+        let place = if e.chapter_title.trim().is_empty() { it.book_title.clone() } else { format!("{} · {}", it.book_title, e.chapter_title.trim()) };
+        out.push(Paragraph::new(ParagraphStyle::BOLD, place));
+        out.push(paragraph(e.style, e.display_text().unwrap_or("").to_string()));
+        if let Some(q) = e.quote.as_ref().filter(|q| !q.text.trim().is_empty()) {
+            out.push(Paragraph::new(ParagraphStyle::PLAIN, format!("〔原文〕{}", q.text)));
+        }
+    }
+    out.push(Paragraph::new(ParagraphStyle::PLAIN, "看完到网页「笔记 → 回顾」里逐条标记「记住了 / 再看看」。".to_string()));
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn review_page_lists_place_text_and_quote() {
+        let mut e: Entry = serde_json::from_value(serde_json::json!({"id": "e", "page": "p", "page_index": 0, "created": 0, "updated": 0, "status": "reviewed", "chapter_title": "第三章", "style": "bullet", "text": "定稿", "quote": {"id": "q", "text": "原文一句", "color": "y", "rects": []}})).unwrap();
+        let it = crate::api::DueItem { book: "b".into(), book_title: "白夜行".into(), entry: e.clone() };
+        let p = project_review(std::slice::from_ref(&it));
+        let texts: Vec<&str> = p.iter().map(|x| x.text.as_str()).collect();
+        assert_eq!(texts[..4], ["今日回顾", "白夜行 · 第三章", "定稿", "〔原文〕原文一句"]);
+        assert!(p[0].is_subheading1() && p[2].style == ParagraphStyle::BULLET);
+        e.chapter_title.clear();
+        e.quote = None;
+        let p = project_review(&[crate::api::DueItem { entry: e, ..it }]);
+        assert_eq!((p[1].text.as_str(), p.len()), ("白夜行", 4));
+    }
     use crate::model::{Answer, Draft, Quote, Status, Style};
 
     fn entry(id: &str, chapter: usize, page_index: usize, style: Style, text: &str) -> Entry {
@@ -137,6 +168,7 @@ mod tests {
             status: Status::Reviewed,
             destination: Default::default(),
             source: Default::default(),
+            review: None,
             created: 0,
             updated: 0,
         }

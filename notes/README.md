@@ -37,6 +37,7 @@
 
 服务之间怎么调用见白皮书 4.1；完整接口表见白皮书 5.1。几条要点：
 
+- 笔记回顾（2026-10-14，实验室开关）：已校对条目按 1/3/7/16/35/90 天间隔到期，`GET /api/ink/review/due`、`POST …/entries/{id}/review`；note-serve 把到期的前 5 条生成书库根下的「今日回顾」笔记本（`POST /api/notes/review/generate`，可设合书后自动生成）。详见白皮书 4.12b。
 - 网页改字 `POST /api/ink/books/{uuid}/entries/{id}`；转写写草稿、问 AI 写回答走各自的命令端点 `…/draft`、`…/answer`。请求体类型在 `notecore::api`，收发两端共用，未知字段或形状不对回 400。
 - `GET /api/ink/books/{uuid}` 每条条目带 `live`（是否进投影），只在应答里、不落盘。
 - 其他服务读条目库都经 `notesvc::InkClient`：ink-serve 回 404 原样透传，ink-serve 没运行回 503。

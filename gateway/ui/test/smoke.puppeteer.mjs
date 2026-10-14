@@ -49,7 +49,10 @@ const routes = {
   '/api/batch/status': () => ({running:false,total:0,done:0,queued:[],failed:[]}),
   '/api/foundation': () => ({}),
   '/api/enhance/status': () => ({hlSnapCjk:true, notesImportMdEnabled:false, tapPageTurn:false, loaded:{xochitl:true, xovi:true, extensions:[], qmds:[], qmdsPending:[]},
-    toggles:[{key:'hlSnapCjk', on:true, kind:'extension', loaded:'on'}, {key:'tapPageTurn', on:false, kind:'patch', loaded:'pending'}, {key:'notesImportMdEnabled', on:false, kind:'web', loaded:null}]}),
+    toggles:[{key:'hlSnapCjk', on:true, kind:'extension', loaded:'on'}, {key:'tapPageTurn', on:false, kind:'patch', loaded:'pending'}, {key:'notesImportMdEnabled', on:false, kind:'web', loaded:null}, {key:'notesReviewEnabled', on:true, kind:'web', loaded:null}]}),
+  // 笔记回顾（2026-10-14）：到期条目跨书，书名按文本显示
+  '/api/ink/review/due': () => ({total:3, items:[{book:'u1', bookTitle:evil, entry:{id:'e1', chapter_title:'第一章', text:'定稿一句', quote:{text:'原文一句'}}}]}),
+  '/api/notes/review': () => ({auto:true, generatedAt:0, count:0}),
   '/api/books/agent-failures': () => ({items: window.__fails}),
   '/api/device/wifi': () => ({ssid: evil, state:'portal', code:'302', at:1}),
   // 部署记录（2026-10-14）：提交号/主机名里的 HTML 按文本显示；漂移逐个列出，待换入的单独措辞
@@ -215,6 +218,17 @@ out.noteEventEnhance = (await hits('/api/enhance/status')) - e0;
   out.askFail = await page.evaluate(async () => { const b = document.querySelector('[data-askbtn]'); if (!b) return null; b.click();
     await new Promise(r => setTimeout(r, 300)); return {stat: document.querySelector('[data-askstat]').textContent, disabled: b.disabled}; });
   out.askFailReload = (await hits('/api/ink/books/u1')) - b0; }
+// 「回顾」子标签（实验室开关开着才显示）：列到期条目，「记住了」POST {result:'remembered'} 到该条目的 review
+out.review = await page.evaluate(async () => {
+  const nav = document.querySelector('#nsubnav').children[4]; if (nav.hidden) return 'hidden';
+  nav.click(); await new Promise(r => setTimeout(r, 300));
+  const p = document.querySelector('#nreview'), li = p.querySelector('#nreviewlist li');
+  const info = {text: li ? li.textContent : '', img: p.querySelectorAll('img').length, auto: p.querySelector('#nreviewauto').checked, stat: p.querySelector('#nreviewstat').textContent};
+  li.querySelector('.btn.pri').click(); await new Promise(r => setTimeout(r, 200));
+  info.post = (window.__posts.find(([u]) => u.endsWith('/review')) || [])[0] + ' ' + JSON.stringify((window.__posts.find(([u]) => u.endsWith('/review')) || [])[1]);
+  document.querySelector('#nsubnav').children[0].click();
+  return info;
+});
 // 「其他」tab：壁纸服务的事件只刷壁纸子面板，不连带重取字体
 await page.evaluate(() => document.querySelectorAll('#tabs button')[2].click()); // 传书 / 笔记 / 其他 / 管理
 await new Promise(r => setTimeout(r, 500));
@@ -301,6 +315,7 @@ assert.ok(out.afterBurst >= 1 && out.afterBurst <= 2, `事件突发应合并，�
 assert.equal(out.burstFolders, 0, 'book-serve 的 staging 事件只重取母版库列表与排队状态，不重取 xochitl 文件夹列表');
 assert.equal(out.koreaderHits, 0, 'KOReader 已卸载：网页不该再请求 /api/koreader/*');
 assert.deepEqual(out.dialogs, [true, false, 'abc', null, 0, false], '对话框行为');
+assert.deepEqual(out.review, {text: '<img src=x onerror=window.__xss=1>.epub · 第一章定稿一句原文：原文一句记住了再看看', img: 0, auto: true, stat: '现在到期 3 条', post: '/api/ink/books/u1/entries/e1/review {"result":"remembered"}'}, '笔记 → 回顾');
 assert.equal(out.noteTa, true, '笔记 tab 应渲染出条目文本框');
 assert.equal(out.noteWhileTyping, 0, '正在输入时事件不该触发重画');
 assert.equal(out.noteFocusKept, true, '输入框焦点不该被重画冲掉');
@@ -329,7 +344,7 @@ assert.equal(out.reopenSvc, 1, '重连成功应补查一次服务集合（断线
 assert.deepEqual(out.svcCheck, [0, 1], '隐藏时 manage 事件不取 /api/services，可见后补查一次');
 assert.deepEqual(out.closedRecovery, [1, 1, true], 'EventSource 进 CLOSED：关掉旧的、查一次会话、退避后新开一条');
 assert.equal(out.connectingUntouched, 1, '浏览器自己在重连（CONNECTING）时不另开连接');
-assert.deepEqual(out.toggles, [[[true, '已加载'], [false, '待重启']], [[false, '网页功能']]], '系统增强/实验室开关按 toggles 渲染');
+assert.deepEqual(out.toggles, [[[true, '已加载'], [false, '待重启']], [[false, '网页功能'], [true, '网页功能']]], '系统增强/实验室开关按 toggles 渲染');
 assert.ok(out.cleanupPartial.includes('旧.epub') && out.cleanupPartial.includes('拒绝原因'), `清理部分失败应列出 {name,message}：${out.cleanupPartial}`);
 assert.equal(out.idleHits, 0, '空闲时不该有轮询');
 assert.deepEqual(out.folders.labels, ['根目录', '漫画', '漫画 › 乱马1/2', '＋ 新建文件夹…'], '加入位置列出所有层级');
