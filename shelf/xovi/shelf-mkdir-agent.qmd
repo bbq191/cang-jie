@@ -80,6 +80,12 @@
 ;   用界面手工建的三层文件夹 Folder → Folder 2 → Folder 3，各自 `.metadata` 的 parent 依次是 ""、上一级
 ;   的 uuid（只读看到的）——嵌套就是 parent 指向上一级 uuid，与本调用的参数含义一致。部署后要真机看一次。
 ;
+; 【2026-10-14 看门狗】真机：回收站代理在一次开机里悄无声息地停了（xochitl 到 8790 只剩建夹代理一条长轮询、本代理
+;   既无在途请求也没在等下一轮，日志零报错），一键自检的回收站步骤因此失败。原因没坐实，两个推测：①在途的 XHR 只挂在
+;   局部变量上，290 秒长轮询期间被 QML 垃圾回收，回调永不触发、定时器不再启动；②book-serve 重启时那次长轮询没正常结束。
+;   两条都堵上：在途请求挂在定时器的 `cjXhr` 属性上（不被回收），另起一个 120 秒一次的看门狗——请求超过
+;   「等待时长 + 40 秒」没回应就丢掉重发，定时器意外停了也拉起来，各打一行 `SHELF-MKDIR: watchdog …` 日志。
+;   回调先核对 `cjXhr === x`：被看门狗丢掉的旧请求晚到的回调不再重复排下一轮。
 ; 【qmldiff 纪律】INSERT{} 内注释只能 //；handler 一律 `{ … }` 块、不写 `({})`；只 INSERT 不 REPLACE。
 ; ─────────────────────────────────────────────────────────────────────────
 
@@ -98,11 +104,19 @@ AFFECT /qml/device/view/main/MainView.qml
                 property int cjErrs: 0
                 // 长轮询等待秒数；见文件头"等待时长"。命中 30s 客户端超时窗口时降为 25。
                 property int cjWait: 290
+                // 在途请求与发出时刻（看门狗 shelfMkdirAgentWatchdog 读）；挂在属性上也防止长轮询中途被 GC 回收。
+                property var cjXhr: null
+                property double cjSent: 0
                 onTriggered: {
                     var t0 = Date.now();
                     var x = new XMLHttpRequest();
+                    shelfMkdirAgent.cjXhr = x;
+                    shelfMkdirAgent.cjSent = t0;
                     x.onreadystatechange = function() {
                         if (x.readyState !== XMLHttpRequest.DONE) { return; }
+                        // 已被看门狗丢掉的旧请求：不再排下一轮（看门狗已经排过）
+                        if (shelfMkdirAgent.cjXhr !== x) { return; }
+                        shelfMkdirAgent.cjXhr = null;
                         // 出错（书架服务停了/重启中）退避 15s→30s→60s→120s 封顶，成功一次即复位：
                         // 此前固定 15s，book-serve 长时间不在时每小时白醒 240 次。
                         var next = Math.min(15000 * Math.pow(2, shelfMkdirAgent.cjErrs), 120000);
@@ -142,6 +156,28 @@ AFFECT /qml/device/view/main/MainView.qml
                     };
                     x.open("GET", "http://127.0.0.1:8790/mkdir/pending?wait=" + shelfMkdirAgent.cjWait);
                     x.send();
+                }
+            }
+            // 看门狗（2026-10-14，见文件头）：120 秒看一次，不发请求、不碰书库。
+            Timer {
+                id: shelfMkdirAgentWatchdog
+                interval: 120000
+                running: true
+                repeat: true
+                onTriggered: {
+                    var a = shelfMkdirAgent;
+                    if (a.cjXhr !== null && Date.now() - a.cjSent > (a.cjWait + 40) * 1000) {
+                        console.warn("SHELF-MKDIR: watchdog: request stuck " + Math.round((Date.now() - a.cjSent) / 1000) + "s, restarting");
+                        var old = a.cjXhr;
+                        a.cjXhr = null;
+                        try { old.abort(); } catch (e) {}
+                        a.interval = 1000;
+                        a.restart();
+                    } else if (a.cjXhr === null && !a.running) {
+                        console.warn("SHELF-MKDIR: watchdog: agent stopped, restarting");
+                        a.interval = 1000;
+                        a.restart();
+                    }
                 }
             }
         }
