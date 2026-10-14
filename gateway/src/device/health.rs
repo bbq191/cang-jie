@@ -178,6 +178,8 @@ pub struct Health {
     prev_boot: Option<Vec<String>>,
     home: Space,
     firmware: super::ota::Firmware,
+    /// 部署记录与漂移（[`super::deploy`]）。
+    deploy: super::deploy::Deploy,
     at: u64,
 }
 
@@ -209,6 +211,7 @@ pub fn collect(paths: &Paths, proc_root: &Path, show: Result<String, String>, pr
         prev_boot,
         home: Space { free_bytes: space.map(|s| s.0), total_bytes: space.map(|s| s.1) },
         firmware: super::ota::firmware(),
+        deploy: super::deploy::collect(paths),
         at: rmsvc_core::clock::now_secs(),
     }
 }
@@ -297,7 +300,8 @@ Id=book-serve.service\nLoadState=not-found\nActiveState=inactive\nSubState=dead\
                 "units": {"unit": "xochitl.service", "load": "", "active": "", "sub": "", "nRestarts": null, "pid": null, "rssKb": null, "hwmKb": null, "startedAtMs": null, "startMs": null},
                 "xochitl": {"readable": false, "xovi": false, "extensions": [], "deleted": []},
                 "soPending": [], "prevBoot": null, "home": {"freeBytes": 0, "totalBytes": 0},
-                "firmware": {"state": "pending"}, "at": 0,
+                "firmware": {"state": "pending"},
+                "deploy": {"current": null, "history": [], "files": 0, "drift": []}, "at": 0,
             })
         );
     }

@@ -117,3 +117,28 @@ check "remove_usr_unit：只剩写到一半的 .z.service.new → 也删掉（�
 echo unit > "$CJ_SYSD/z.service"; echo half > "$CJ_SYSD/.z.service.new"
 ( . "$PKG/devlib.sh"; export PATH="$STUBS:$PATH"; cj_remove_usr_unit z.service multi-user.target.wants ) >/dev/null 2>&1
 check "remove_usr_unit：单元本体与 .z.service.new 一起删" test ! -e "$CJ_SYSD/z.service" -a ! -e "$CJ_SYSD/.z.service.new"
+
+section "部署记录（10-14）：cj_deploy_stamp"
+DS="$TMPBASE/deploystamp"; rm -rf "$DS"
+mkdir -p "$DS/h/.local/bin" "$DS/h/xovi/extensions.d" "$DS/h/xovi/exthome/qt-resource-rebuilder" "$DS/h/.cangjie-stage/so-pending"
+echo g > "$DS/h/.local/bin/gateway"; echo old > "$DS/h/xovi/extensions.d/a.so"
+echo new > "$DS/h/.cangjie-stage/so-pending/a.so"; echo fresh > "$DS/h/.cangjie-stage/so-pending/b.so"
+echo q > "$DS/h/xovi/exthome/qt-resource-rebuilder/x.qmd"; echo t > "$DS/h/xovi/exthome/qt-resource-rebuilder/hashtab"
+ds_run() { ( CJ_HOME="$DS/h"; CJ_XOVI="$DS/h/xovi"; CJ_SO_PENDING_DIR="$DS/h/.cangjie-stage/so-pending"; CJ_DEPLOY_LOG="$DS/log.jsonl"; CJ_DEPLOY_KEEP=2
+           CJ_STAMP_META="$1"; . "$PKG/devlib.sh"; cj_deploy_stamp ) >/dev/null 2>&1; }
+ds_run ""
+check "deploy_stamp：没有元数据（install-all 编排下 / 设备上手动跑）→ 不记" test ! -e "$DS/log.jsonl"
+for i in 1 2 3; do ds_run "\"label\":\"t$i\",\"commit\":\"c$i\",\"dirty\":false"; done
+ds_ok="$(python3 -I -c '
+import json,sys,hashlib
+ls=[json.loads(l) for l in open(sys.argv[1])]
+h=lambda s:hashlib.sha256(s.encode()).hexdigest()
+f=ls[-1]["files"]; d=sys.argv[2]
+ok=[len(ls)==2, ls[-1]["label"]=="t3", ls[0]["label"]=="t2",
+    f[d+"/.local/bin/gateway"]==h("g\n"),
+    f[d+"/xovi/extensions.d/a.so"]==h("new\n"),
+    f[d+"/xovi/extensions.d/b.so"]==h("fresh\n"),
+    f[d+"/xovi/exthome/qt-resource-rebuilder/x.qmd"]==h("q\n"),
+    not any(k.endswith("hashtab") for k in f)]
+print("ok" if all(ok) else ok)' "$DS/log.jsonl" "$DS/h" 2>&1)"
+check "deploy_stamp：只留最近 CJ_DEPLOY_KEEP 条、合法 JSON、待换入的 .so 记新版哈希、只记 qmd 不记 hashtab（$ds_ok）" test "$ds_ok" = ok

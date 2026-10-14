@@ -207,6 +207,9 @@ n1="$(count_log '^ssh')"; s1="$(count_log '^scp')"
 : > "$CJ_SIM_LOG"
 ( cd "$PKG" && hrun sh install-all.sh 127.0.0.1 $IA_SKIP ) >/dev/null 2>&1; rc2=$?
 n2="$(count_log '^ssh')"; s2="$(count_log '^scp')"
+DL="$R/home/root/.local/state/shelf/deploy-log.jsonl"
+check "install-all 两遍：部署记录各记一条、都是 install-all（编排下各步骤不各记），文件表含网关" \
+    test "$(wc -l < "$DL" 2>/dev/null)" = 2 -a "$(grep -c '"label":"install-all"' "$DL" 2>/dev/null)" = 2 -a "$(grep -c '/.local/bin/gateway"' "$DL" 2>/dev/null)" = 2
 : > "$CJ_SIM_LOG"
 ( cd "$PKG" && hrun sh uninstall-all.sh 127.0.0.1 ) >/dev/null 2>&1; rc3=$?
 n3="$(count_log '^ssh')"

@@ -175,6 +175,7 @@ mod tests {
             status: Status::Reviewed,
             destination: Default::default(),
             source: Default::default(),
+            review: None,
             created: 0,
             updated: 0,
         }

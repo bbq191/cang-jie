@@ -79,6 +79,7 @@ else
     cj_traps   # 退出/被打断时：放唤醒锁、删本机临时文件（lib.sh）
     require_device
     export CJ_DEVICE_OK="$HOST"   # 各步骤脚本不再各自重复做连通检查（见 lib.sh 的 require_device）
+    export CJ_STAMP_DEFER=1       # 部署记录：各步骤不各记一条，最后一步之前统一记一次（见下面与 lib.sh 的 deploy_stamp）
     # 固件安全门 + 只读预检 + 整轮唤醒锁（别让设备在两次 ssh 之间自动休眠；带超时，最后一步整机重启时锁随之消失）
     # 同一次往返（lib.sh 的 preflight_device）
     preflight_device "$FORCE" || exit 1
@@ -101,6 +102,13 @@ for step in $STEP_ORDER; do
             fi
             run_step "清理已移除:$rstep" "uninstall_$(echo "$rstep" | tr '-' '_')"
         done
+        # 部署记录（2026-10-14）：所有文件都落盘了、整机重启之前记一次——「设备健康」据此显示部署版本。正常情况并进
+        # xovi-apply 那一次往返（CJ_APPLY_STAMP_META）；这一步不跑（--skip / 前面有步骤失败）时单独连一次记（含失败步骤名）
+        STAMP_INLINE=0
+        if [ "$DRY" = "0" ] && [ "$CJ_DEVICE_LOST" = 0 ]; then
+            if [ -z "$FAILED" ] && ! skip_has xovi-apply; then STAMP_INLINE=1
+            else echo; deploy_stamp install-all "" "$FAILED"; fi
+        fi
         if [ -n "$FAILED" ] && ! skip_has xovi-apply && [ "$CJ_DEVICE_LOST" = 0 ]; then
             # 有步骤失败时不整机重启：已落盘的改动留着待生效（标记在 /run、待换入 .so 在 /home），修好后重跑一起生效
             echo; echo "═══ $step ═══"
@@ -115,10 +123,11 @@ for step in $STEP_ORDER; do
             echo "⚠ 下一步会检查是否需要让改动生效（有待生效改动才整机重启，约 1 分钟：打断阅读/书写）。完全不想重启：Ctrl-C，或重跑时加 --skip xovi-apply。"
         fi
         # CJ_AWAKE_RELEASE=1：最后一步不整机重启时由它在同一次往返里放掉唤醒锁（省收尾那一次 ssh）
+        SM=""; if [ "$STAMP_INLINE" = 1 ]; then SM="$(CJ_STAMP_DEFER=0 stamp_meta install-all)"; fi
         if [ "$FORCE_APPLY" = "1" ]; then
-            run_step "$step" env CJ_AWAKE_RELEASE=1 sh "$script" "$HOST" --force
+            run_step "$step" env CJ_AWAKE_RELEASE=1 CJ_APPLY_STAMP_META="$SM" sh "$script" "$HOST" --force
         else
-            run_step "$step" env CJ_AWAKE_RELEASE=1 sh "$script" "$HOST"
+            run_step "$step" env CJ_AWAKE_RELEASE=1 CJ_APPLY_STAMP_META="$SM" sh "$script" "$HOST"
         fi
     else
         run_step "$step" sh "$script" "$HOST"

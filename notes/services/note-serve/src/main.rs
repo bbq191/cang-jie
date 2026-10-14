@@ -9,6 +9,7 @@
 //! 白皮书 §03af）·
 //! `POST /books/{uuid}/chapters/{idx}/export`（单章导出 md 落设备盘，指纹没变就跳过；响应带 `status`：written/unchanged/empty）·
 //! `GET /books/{uuid}/chapters/{idx}/export.md`（单章同一份内容当浏览器下载吐回去，`Content-Disposition`，见 `export.rs`）·
+//! `GET /review` · `POST /review/generate` · `POST /review/auto {on}`（「今日回顾」笔记本，2026-10-14，见 `review.rs`）·
 //! `GET /books/{uuid}/sync`（每章设备笔记本/Obsidian md 是否跟当前条目内容同步，见白皮书 §03x）。
 //! 网页从没调过的整本 generate/export、`GET /books`、`…/notebooks`、`…/exports`、`…/vault.json` 2026-10-09 删掉。
 mod chapter_store;
@@ -18,6 +19,7 @@ mod export_state;
 mod ink;
 mod notebooks;
 mod publish;
+mod review;
 mod rmdoc;
 mod trash;
 
@@ -51,6 +53,8 @@ struct State {
     trash: Box<dyn TrashSink>,
     notebooks: NotebookState,
     exports: ExportState,
+    /// 「今日回顾」笔记本的状态（review.rs）。
+    review: review::ReviewState,
     bus: Arc<EventBus>,
     /// 生成/导入/导出串行化：同一章两次「推送本章」并发（双击、两个浏览器页）时，两边都看到指纹变了、各传一份，
     /// 再按同一个 visibleName 认领到同一个 uuid——另一份成了追踪不到的孤儿笔记本；导入撞名去重同理（2026-09-24）。
@@ -64,6 +68,41 @@ impl State {
     fn ctx(&self, now_ms: u64) -> Ctx<'_> {
         Ctx { uploader: self.uploader.as_ref(), trash: self.trash.as_ref(), state: &self.notebooks, now_ms }
     }
+    /// 取到期条目、生成「今日回顾」（与章节生成同一把发布锁）。ink-serve 读不到 → 透传它的错误。
+    fn generate_review(&self) -> Result<review::Generated, ApiError> {
+        let _g = self.publishing();
+        let due = self.store.due_reviews(review::LIMIT)?;
+        let g = review::generate(&self.ctx(rmsvc_core::clock::now_ms()), &self.review, &due).map_err(ApiError::internal)?;
+        if g.count > 0 {
+            self.bus.publish(EVENT_AREA, EVENT_NOTEBOOKS);
+        }
+        Ok(g)
+    }
+}
+
+/// 自动生成「今日回顾」：订阅 ink-serve 的 `entries` 事件（合书摄取完成时发），开了自动且离上次生成够久才生成。
+/// 事件来得密（摄取、改字、回顾都会发），所以先只看本地状态文件、不碰网络；生成本身放到单独线程，`busy` 防重入。
+fn watch_ink(st: Arc<State>) {
+    let busy = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    rmsvc_core::events::follow(&st.paths.clone(), "ink-serve", |json| {
+        use std::sync::atomic::Ordering;
+        if !rmsvc_core::events::Event::parse(json).is_some_and(|e| e.is("notes", "entries")) || !st.review.auto_due(rmsvc_core::clock::now_ms()) {
+            return;
+        }
+        if busy.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let (st, busy) = (st.clone(), busy.clone());
+        std::thread::spawn(move || {
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| st.generate_review())) {
+                Ok(Ok(g)) if g.count > 0 => println!("[note-serve] 自动生成「今日回顾」：{} 条（共到期 {}）", g.count, g.total),
+                Ok(Ok(_)) => {}
+                Ok(Err(e)) => eprintln!("[note-serve] 自动生成「今日回顾」失败: {}", e.message),
+                Err(_) => eprintln!("[note-serve] 自动生成「今日回顾」panic（已兜住）"),
+            }
+            busy.store(false, Ordering::Release);
+        });
+    });
 }
 
 /// 路径参数 `{idx}` → 章序号（非数字 400）。
@@ -111,6 +150,16 @@ fn router(st: &Arc<State>) -> Router {
             let result = generate_chapter(&s.ctx(rmsvc_core::clock::now_ms()), &book, idx);
             s.bus.publish(EVENT_AREA, EVENT_NOTEBOOKS);
             results_reply(std::slice::from_ref(&result))
+        }))
+        // 笔记回顾（2026-10-14，review.rs）：状态 / 立即生成「今日回顾」/ 开关自动生成。
+        .get("/review", bind(st, |s, _| Ok(Reply::ok(&s.review.get()))))
+        .post("/review/generate", bind(st, |s, _| Ok(Reply::ok(&s.generate_review()?))))
+        .post("/review/auto", bind(st, |s, r| {
+            let on = r.json()?.bool_or("on", false);
+            let mut rec = s.review.get();
+            rec.auto = on;
+            s.review.set(&rec).map_err(ApiError::internal)?;
+            Ok(Reply::ok(&rec))
         }))
         // 单篇 markdown → 一个新的设备笔记本文档，独立于条目库（不经章节投影/指纹追踪，见
         // `publish::import_markdown` 文档）。body：`{title, markdown}`，两者都必填。
@@ -182,12 +231,17 @@ fn main() {
         trash: Box::new(BookServeTrash::new(paths.clone())),
         notebooks,
         exports,
+        review: review::ReviewState::new(paths.app_state_dir(APP).join("review.json")),
         cfg,
         paths: paths.clone(),
         bus: Arc::new(EventBus::new()),
         publish_lock: std::sync::Mutex::new(()),
     });
     let router = router(&st);
+    {
+        let st = st.clone();
+        std::thread::spawn(move || watch_ink(st));
+    }
     println!("[note-serve] 状态 {}；xochitl {}", st.notebooks.dir().display(), st.cfg.xochitl_host);
     service::run_or_exit(&SPEC, &bind_addr, &paths, router, ServeOpts::default())
 }
@@ -200,7 +254,7 @@ mod tests {
     use rmsvc_core::registry::SvcError;
 
     fn entry(id: &str, chapter: usize, dest: notecore::model::Destination) -> Entry {
-        Entry { id: id.into(), page: "p".into(), page_index: 0, chapter: Some(chapter), chapter_title: String::new(), subhead: None, quote: None, ink: None, drafts: vec![], text: Some("正文".into()), style: Style::Body, ask_ai: false, question: None, answer: None, status: Status::Reviewed, destination: dest, source: Default::default(), created: 0, updated: 0 }
+        Entry { id: id.into(), page: "p".into(), page_index: 0, chapter: Some(chapter), chapter_title: String::new(), subhead: None, quote: None, ink: None, drafts: vec![], text: Some("正文".into()), style: Style::Body, ask_ai: false, question: None, answer: None, status: Status::Reviewed, destination: dest, source: Default::default(), review: None, created: 0, updated: 0 }
     }
 
     #[test]
@@ -270,7 +324,23 @@ mod tests {
         let (notebooks, exports) = (NotebookState::new(t.path().join("nb")), ExportState::new(t.path().join("ex")));
         notebooks.ensure().unwrap();
         exports.ensure().unwrap();
-        Arc::new(State { paths, cfg: NoteConfig::default(), store, uploader, trash: Box::new(NoTrash), notebooks, exports, bus: Arc::new(EventBus::new()), publish_lock: std::sync::Mutex::new(()) })
+        Arc::new(State { paths, cfg: NoteConfig::default(), store, uploader, trash: Box::new(NoTrash), notebooks, exports, review: review::ReviewState::new(t.path().join("review.json")), bus: Arc::new(EventBus::new()), publish_lock: std::sync::Mutex::new(()) })
+    }
+
+    /// 回顾接口：开关自动落盘；条目库不支持/读不到时 generate 透传错误（ErrStore 回 404）。
+    #[test]
+    fn review_endpoints_toggle_auto_and_pass_through_ink_errors() {
+        let t = tempfile::tempdir().unwrap();
+        let st = state(&t, Box::new(ErrStore(SvcError { status: Some(404), message: "没有".into() })), Box::new(CountingUploader::default()));
+        let r = router(&st);
+        let call = |m: Method, p: &str, b: &str| {
+            let rep = TestRequest::new(m, p).content_type("application/json").body(b).dispatch(&r);
+            (rep.status, serde_json::from_slice::<serde_json::Value>(rep.body.as_bytes()).unwrap_or_default())
+        };
+        assert_eq!(call(Method::Get, "/review", "").1["auto"], false);
+        assert_eq!(call(Method::Post, "/review/auto", r#"{"on":true}"#).1["auto"], true);
+        assert!(st.review.get().auto);
+        assert_eq!(call(Method::Post, "/review/generate", "").0, 503, "ErrStore 没实现 due_reviews：缺省实现报不支持（无状态码）→ 503");
     }
 
     /// CORE-1：ink-serve 的 404 原样透传、没运行回 503（此前一律 400）；书都找不到时不碰上传。

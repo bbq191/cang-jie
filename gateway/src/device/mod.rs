@@ -1,6 +1,7 @@
 //! 设备健康 / OTA 提示 / 遗留清理（2026-09-25）：网关自身固定能力，跟 `manage`、`enhance` 一样不经注册表、不代理。
 //!
 //! - [`health`]：「管理 → 设备健康」卡片，`GET /api/device/health`（用户打开/点刷新才采集，结果缓存 [`HEALTH_TTL`]；`?fresh=1` 跳过缓存）。
+//!   卡片里的"部署版本"与部署历史来自 [`deploy`]（读部署脚本写的记录、核对文件有没有被换过，2026-10-14）。
 //! - [`ota`]：页头"需要重新安装"横幅，`GET /api/device/ota`（固件哈希启动后后台只算一次；其余判据现查、缓存 [`ota::CHECK_TTL`]）。
 //! - [`wifi`]：页头"这个 WiFi 上不了外网"横幅，`GET /api/device/wifi`（读 `packaging/wifi-watch` 连上新网络时探测写下的
 //!   状态文件，2026-09-28）。
@@ -9,6 +10,7 @@
 //!
 //! 全都**不轮询**：没有定时器、没有后台采样，只有网关启动时那一次固件哈希。
 pub mod cleanup;
+pub mod deploy;
 pub mod health;
 pub mod ota;
 

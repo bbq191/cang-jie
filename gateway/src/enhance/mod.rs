@@ -54,6 +54,8 @@ pub const TOGGLES: &[Toggle] = &[
     Toggle { key: "tapPageTurn", default: false, artifact: Artifact::Patch("reader-page-turn.qmd") },
     // 「导入 md 文档」子标签可见性：缺省关——新功能第一次上线，不想让用户点开笔记 tab 就撞见一个半成品。
     Toggle { key: "notesImportMdEnabled", default: false, artifact: Artifact::Web },
+    // 「笔记 → 回顾」子标签可见性（2026-10-14）：缺省关，新功能先放实验室。
+    Toggle { key: "notesReviewEnabled", default: false, artifact: Artifact::Web },
 ];
 
 #[cfg(test)]
@@ -209,6 +211,7 @@ mod tests {
                     {"key": "hlSnapCjk", "on": true, "kind": "extension", "loaded": "unknown"},
                     {"key": "tapPageTurn", "on": false, "kind": "patch", "loaded": "unknown"},
                     {"key": "notesImportMdEnabled", "on": false, "kind": "web", "loaded": null},
+                    {"key": "notesReviewEnabled", "on": false, "kind": "web", "loaded": null},
                 ],
                 "loaded": {"xochitl": false, "xovi": false, "extensions": [], "qmds": [], "qmdsPending": []},
             })

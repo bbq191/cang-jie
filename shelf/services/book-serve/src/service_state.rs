@@ -25,7 +25,7 @@ pub struct State {
     /// 事件总线：母版库/inbox 每次变更发一条，网关汇聚推给网页（零轮询）。
     pub bus: Arc<EventBus>,
     /// 原生书库「移进回收站」队列（QML 代理 shelf-trash-agent.qmd 拉取执行）。
-    pub trash: TrashQueue,
+    pub trash: Arc<TrashQueue>,
     /// 漫画「页边距」待办（QML 代理 shelf-comic-margins.qmd 在书打开时查、设完销账，见 comic_margins.rs）。
     pub comic_margins: Arc<ComicMargins>,
     /// 原地替换后找回阅读位置的快照（QML 代理 shelf-keep-progress.qmd 在书打开时查、跳完销账，见 progress.rs）。
@@ -37,6 +37,8 @@ pub struct State {
     pub agent_failures: Arc<AgentFailures>,
     /// 直接导入 xochitl（不进母版库，sheng-ren 经 SSH 端口转发调，见 import.rs）。
     pub import: crate::import::Importer,
+    /// 设备端一键自检（真走一遍建文件夹 / 上传认领 / 渲染 / 回收站代理，见 selftest.rs）。
+    pub selftest: Arc<crate::selftest::SelfTest>,
     /// 投进 xochitl 的后台作业队列：直接导入与母版库落库共用，一次一个（导入任务的结果在内存里留 1 小时，见 jobs.rs）。
     pub jobs: crate::jobs::Jobs,
     /// `GET /status` 的结果缓存（[`STATUS_TTL`]）。网页全量刷新时打这个接口，里面要读全部 `.metadata` 列文件夹。
@@ -79,15 +81,16 @@ impl State {
         let progress = Arc::new(crate::progress::Progress::new(&books_state, &paths.xochitl_dir()));
         let bus = Arc::new(EventBus::new());
         let agent_failures = Arc::new(AgentFailures::new(&books_state, Some(bus.clone())));
-        let trash = TrashQueue::new(&books_state, &paths.xochitl_dir()).with_failures(agent_failures.clone());
+        let trash = Arc::new(TrashQueue::new(&books_state, &paths.xochitl_dir()).with_failures(agent_failures.clone()));
         let mkdir = Arc::new(MkdirQueue::new(&books_state, &paths.xochitl_dir()).with_failures(agent_failures.clone()));
         // 投进 xochitl 那一层只组装这一份，母版库落库与直接导入共用（见 delivery.rs）。
         let delivery = Arc::new(XochitlDelivery::new(xochitl.clone(), mkdir.clone(), cfg.native_upload_limit_bytes()).with_comic_margins(comic_margins.clone()));
         // 母版库（中间层暂存池）：所有内容源先原样落这里，用户再加入 xochitl。与 spool 同根，在 /home 分区，重启 / OTA 不丢；
         // 不套 spool done/ 的 LRU 淘汰——留住用户还没落库的书。路径 2026-10-10 前由基座 `Paths::staging_dir` 给（只有本服务用，审计 CORE-3），取值不变。
         let staging = Staging::new(books_state.join("staging"), delivery.clone());
+        let selftest = Arc::new(crate::selftest::SelfTest::new(&books_state, delivery.clone(), trash.clone()));
         let import = crate::import::Importer::new(delivery, books_state.join("import-tmp")).with_progress(progress.clone());
-        State { cfg, spool, staging, xochitl, bus, trash, comic_margins, progress, mkdir, agent_failures, import, jobs: crate::jobs::Jobs::default(), status_cache: Arc::new(TtlCache::new(STATUS_TTL)), inbox_settle: INBOX_SETTLE }
+        State { cfg, spool, staging, xochitl, bus, trash, comic_margins, progress, mkdir, agent_failures, import, selftest, jobs: crate::jobs::Jobs::default(), status_cache: Arc::new(TtlCache::new(STATUS_TTL)), inbox_settle: INBOX_SETTLE }
     }
 
     pub fn ensure_dirs(&self) -> std::io::Result<()> {

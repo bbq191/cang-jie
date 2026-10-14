@@ -154,6 +154,11 @@ fn router(st: &Arc<State>) -> Router {
             let limit = r.q_parse::<usize>("limit").unwrap_or(50).clamp(1, 200);
             Ok(Reply::ok(&serde_json::json!({"items": search::search(&s.db.list(), q, limit)})))
         }))
+        // 笔记回顾（2026-10-14）：跨书取到期的已校对条目，到期早的在前（见 `notecore::api::due_reviews`）。`limit` 缺省 5、上限 50。
+        .get("/review/due", bind(st, |s, r| {
+            let limit = r.q_parse::<usize>("limit").unwrap_or(5).clamp(1, 50);
+            Ok(Reply::ok(&notecore::api::due_reviews(&s.db.list_active(), rmsvc_core::clock::now_secs(), limit)))
+        }))
         .get("/books/{uuid}", bind(st, |s, r| {
             let b = s.db.read(r.param("uuid")).map_err(ApiError::internal)?.ok_or_else(|| ApiError::not_found("没有这本书的条目"))?;
             // 每条条目带上 `live`（只在应答里，不落盘），网页不再自己抄一份"哪些状态算活"的判据。
@@ -185,6 +190,13 @@ fn router(st: &Arc<State>) -> Router {
             let a: AnswerPost = decode(r)?;
             let now = rmsvc_core::clock::now_secs();
             edit_entry(s, &uuid, &id, |e| e.accept_answer(a.into_answer(now), now))
+        }))
+        // 记一次回顾：`{result: "remembered" | "again"}`；只有已校对的条目能回顾（否则 400）。
+        .post("/books/{uuid}/entries/{id}/review", bind(st, |s, r| {
+            let (uuid, id) = (r.param("uuid").to_string(), r.param("id").to_string());
+            let p: notecore::api::ReviewPost = decode(r)?;
+            let now = rmsvc_core::clock::now_secs();
+            edit_entry(s, &uuid, &id, |e| e.record_review(p.result == notecore::api::ReviewResult::Remembered, now))
         }))
         .post("/books/{uuid}/entries/{id}/request", bind(st, |s, r| triage(s, r, Status::Pending)))
         .post("/books/{uuid}/entries/{id}/skip", bind(st, |s, r| triage(s, r, Status::Skipped)))
@@ -284,6 +296,23 @@ mod tests {
         assert!(!disk.contains("\"live\""), "live 不落盘: {disk}");
         let (_, list) = call(&r, Method::Get, "/books", "");
         assert_eq!(list["items"][0]["uuid"], "u");
+    }
+
+    /// 笔记回顾：只有已校对的条目能记；记过之后不再到期（间隔 3 天）；到期列表跨书。
+    #[test]
+    fn review_endpoints() {
+        let (_t, st, r) = setup();
+        assert_eq!(call(&r, Method::Post, "/books/u/entries/e/review", r#"{"result":"remembered"}"#).0, 400, "待转写的不能回顾");
+        assert_eq!(call(&r, Method::Post, "/books/u/entries/e", r#"{"text":"定稿"}"#).0, 200);
+        assert_eq!(call(&r, Method::Get, "/review/due", "").1["total"], 0, "刚定稿的要过一天才到期");
+        st.db.update_existing("u", |b| b.entries[0].updated = 0).unwrap(); // 当作很早以前定稿的
+        let (code, v) = call(&r, Method::Get, "/review/due", "");
+        assert_eq!((code, v["total"].as_u64(), v["items"][0]["bookTitle"].as_str()), (200, Some(1), Some("书")));
+        assert_eq!(call(&r, Method::Post, "/books/u/entries/e/review", r#"{"result":"later"}"#).0, 400);
+        assert_eq!(call(&r, Method::Post, "/books/u/entries/nope/review", r#"{"result":"again"}"#).0, 404);
+        assert_eq!(call(&r, Method::Post, "/books/u/entries/e/review", r#"{"result":"remembered"}"#).0, 200);
+        assert_eq!(entry_of(&st).review.unwrap().interval_days, 3);
+        assert_eq!(call(&r, Method::Get, "/review/due", "").1["total"], 0);
     }
 
     /// 条目库坏了：rescan 报 500，不再吞掉错误回 ok。

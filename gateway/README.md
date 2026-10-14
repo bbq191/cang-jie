@@ -20,7 +20,7 @@
 | 批量队列 | `src/batch.rs` | 勾选多本后网关后台一本一本「加入 xochitl」，状态落盘、重启续跑、可全部中止；只有书架回报 `ok` 才算成功 |
 | 管理台 | `src/manage.rs` | 各服务"未装 / 已装未开 / 已开"三态、启停、卸载；探测 xovi 与 qt-resource-rebuilder |
 | 系统增强开关 | `src/enhance/` | 开关表 `TOGGLES`（荧光笔汉字吸附、单击翻页、导入 md），并告诉网页扩展是否真的加载进 xochitl（`toggles[].loaded`） |
-| 设备健康 / OTA / 清理 | `src/device/` | 「管理 → 设备健康」五个二级标签，只在打开或刷新时采集；OTA 后页头提示重装；清理早期遗留文件与书库同名副本（失败项 `{name,message}`，部分失败标 `partial`） |
+| 设备健康 / OTA / 清理 | `src/device/` | 「管理 → 设备健康」六个二级标签（含调 book-serve 的一键自检），只在打开或刷新时采集；概览显示部署版本并核对文件有没有被换过（读部署脚本写的 `deploy-log.jsonl`）；OTA 后页头提示重装；清理早期遗留文件与书库同名副本（失败项 `{name,message}`，部分失败标 `partial`） |
 
 ## 对外接口
 
@@ -81,7 +81,7 @@ src/
   ui.rs        拼装单页 UI、登录页、改密页
   failed.rs    几个接口共用的失败项 {name,message}
   enhance/     系统增强开关（TOGGLES 表、reading-qol.json、扩展加载检测）
-  device/      设备健康（health）、OTA 横幅（ota）、遗留清理（cleanup）
+  device/      设备健康（health）、部署记录（deploy）、OTA 横幅（ota）、遗留清理（cleanup）
 ui/            index.html、style.css、auth.css、locales/、test/；
                脚本 core / dom / transfer / notes / assets / manage / health / app.js（编译期按此顺序拼回一个 <script>）
 systemd/gateway.service

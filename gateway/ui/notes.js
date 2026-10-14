@@ -29,7 +29,7 @@ function renderNotes(sec){sec.innerHTML=`
     <div class="row"><input type="search" id="nq" placeholder="${T('notes.search.placeholder')}" aria-label="${T('notes.search.placeholder')}" style="flex:1;min-width:10em"><button class="btn" id="nqgo">${T('notes.search.btn')}</button></div>
     <div id="nqres"></div>
   </div>
-  <div class="subnav" id="nsubnav"><button class="on">${T('notes.subnav.browse')}</button><button>${T('notes.subnav.organize')}</button><button>${T('notes.subnav.trash')}</button><button hidden>${T('notes.subnav.import')}</button></div>
+  <div class="subnav" id="nsubnav"><button class="on">${T('notes.subnav.browse')}</button><button>${T('notes.subnav.organize')}</button><button>${T('notes.subnav.trash')}</button><button hidden>${T('notes.subnav.import')}</button><button hidden>${T('notes.subnav.review')}</button></div>
   <div class="subpanel on" id="nbrowse"></div>
   <div class="subpanel" id="norganize">
     <div class="subnav" id="nexporttabs"><button class="on" data-etab="pending">${T('notes.export.pending')}</button><button data-etab="synced">${T('notes.export.synced')}</button></div>
@@ -50,6 +50,14 @@ function renderNotes(sec){sec.innerHTML=`
       <div class="row"><input type="file" id="nimportfile" accept=".md,.markdown"></div>
       <div class="row small" id="nimportfilename"></div>
       <div class="row"><button class="btn" id="nimportbtn">${T('notes.import.btn')}</button><span class="small" id="nimportstat"></span></div>
+    </div>
+  </div>
+  <div class="subpanel" id="nreview" hidden>
+    <div class="card">
+      <p class="lead">${T('notes.review.lead')}</p>
+      <div class="row"><button class="btn" id="nreviewgen">${T('notes.review.generate')}</button><label class="small"><input type="checkbox" id="nreviewauto"> ${T('notes.review.auto')}</label></div>
+      <p class="small" id="nreviewstat"></p>
+      <ul class="list" id="nreviewlist"></ul>
     </div>
   </div>`;
   // 当前书的后端路径：`bookApi('ink')` → `/api/ink/books/<uuid>`，`bookApi('ink',`/entries/${id}`)` 带后缀（读 `book`，调用时求值）。
@@ -434,13 +442,39 @@ function renderNotes(sec){sec.innerHTML=`
      没有 SSE 推送这个开关的变化，靠 sec.refresh（笔记 tab 每次从别的 tab 切回来都会调，见文件
      末尾 IIFE 里 addTab 的点击处理）顺带每次重新拉一次状态，跟这个 app 里"tab 记脏、切回时刷新"
      的既有设计一致。 */
-  const importNavBtn=$('#nsubnav',sec).children[3],importPanel=$('#nimport',sec);
+  /* 「回顾」子标签（2026-10-14）同理，跟着实验室的 notesReviewEnabled 走（读 toggles 列表，不另加顶层字段）。 */
+  const labTabs=[[3,$('#nimport',sec),r=>!!r.notesImportMdEnabled],[4,$('#nreview',sec),r=>(r.toggles||[]).some(t=>t.key==='notesReviewEnabled'&&t.on)]];
   const syncImportVisible=async()=>{
     const r=await j('/api/enhance/status');
-    const show=r.ok!==false&&!!r.notesImportMdEnabled;
-    if(!show&&importNavBtn.classList.contains('on'))$('#nsubnav',sec).children[0].click(); // 正停在「导入」时先切回「浏览」，避免 hidden+on 类同时存在
-    importNavBtn.hidden=!show;importPanel.hidden=!show;
+    for(const [i,panel,on] of labTabs){const nav=$('#nsubnav',sec).children[i],show=r.ok!==false&&on(r);
+      if(!show&&nav.classList.contains('on'))$('#nsubnav',sec).children[0].click(); // 正停在这个子标签时先切回「浏览」，避免 hidden+on 类同时存在
+      nav.hidden=!show;panel.hidden=!show}
   };
+  /* 「回顾」：到期的已校对条目（ink-serve /review/due，跨书），每条「记住了 / 再看看」；「生成今日回顾笔记本」把前 5 条
+     投成书库根下的一份设备笔记本（note-serve /review/generate，旧的进回收站）；勾「自动」则合书摄取后每天最多自动生成一次。
+     只在这个子标签在前台时取数（切过来、或它在前台时收到事件刷新）。 */
+  const reviewPanel=$('#nreview',sec),reviewList=$('#nreviewlist',sec),reviewStat=$('#nreviewstat',sec),reviewAuto=$('#nreviewauto',sec);
+  const reviewShown=()=>!reviewPanel.hidden&&reviewPanel.classList.contains('on');
+  const loadReview=async()=>{
+    const [d,st]=await Promise.all([j('/api/ink/review/due?limit=20'),j('/api/notes/review')]);
+    if(d.ok===false){reviewStat.textContent=d.message||T('common.failed');reviewList.innerHTML='';return}
+    reviewAuto.checked=!!(st&&st.auto);
+    reviewStat.textContent=[T('notes.review.dueCount',{n:d.total||0}),st&&st.generatedAt?T('notes.review.lastGen',{time:new Date(st.generatedAt).toLocaleString(),n:st.count||0}):''].filter(Boolean).join(' · ');
+    reviewList.innerHTML='';
+    if(!(d.items||[]).length){reviewList.appendChild(el('li',{class:'small',text:T('notes.review.empty')}));return}
+    for(const it of d.items){const e=it.entry,api=`/api/ink/books/${encodeURIComponent(it.book)}/entries/${encodeURIComponent(e.id)}/review`;
+      const grade=result=>async()=>{if((await postJ(api,{result})).ok!==false)await loadReview()};
+      const place=[it.bookTitle,(e.chapter_title||'').trim()].filter(Boolean).join(' · ');
+      reviewList.appendChild(el('li',{class:'stack'},[
+        el('span',{class:'small',text:place}),
+        el('span',{text:e.text||''}),
+        ...(e.quote&&e.quote.text?[el('span',{class:'small',text:T('notes.review.quote',{text:e.quote.text})})]:[]),
+        el('div',{class:'row'},[btn(T('notes.review.remembered'),grade('remembered'),'btn pri'),btn(T('notes.review.again'),grade('again'))])]))}
+  };
+  guardClick($('#nreviewgen',sec),async()=>{const r=await postJ('/api/notes/review/generate',{});
+    if(r.ok!==false)toast(r.count?T('notes.review.generated',{n:r.count}):T('notes.review.nothing'),'ok');await loadReview()});
+  reviewAuto.onchange=async()=>{reviewAuto.disabled=true;const r=await postJ('/api/notes/review/auto',{on:reviewAuto.checked});
+    if(r.ok===false)reviewAuto.checked=!reviewAuto.checked;reviewAuto.disabled=false};
   /* 全部刷新入口走同一个 coalesce（切 tab、事件、换书、搜索跳转、清空回收站…）：此前切 tab 和事件各有一个合并器，
      两份 loadBook 可以并发跑。`checkImport`：只有切回本 tab 的刷新重查「导入 md」开关（那个开关在「管理」页改）——
      自动转写期间每转完一条都有事件，原来每次都连带让网关扫一遍 xochitl 扩展状态。 */
@@ -449,7 +483,7 @@ function renderNotes(sec){sec.innerHTML=`
     const {checkImport,list}=want;
     if(list){const d=await j('/api/ink/books');const cur=sel.value;sel.innerHTML=(d.items||[]).map(b=>`<option value="${esc(b.uuid)}">${esc(T('common.paren',{text:b.title,inner:b.entries}))}</option>`).join('')||`<option value="">${T('notes.noBooks')}</option>`;
       if(cur&&[...sel.options].some(o=>o.value===cur))sel.value=cur}
-    await loadBook();if(checkImport)await syncImportVisible()};
+    await loadBook();if(checkImport)await syncImportVisible();if(reviewShown())await loadReview()};
   const runCoalesced=coalesce(doRefresh);
   const runRefresh=(list=true,checkImport=false,force=false)=>{gate.request(list,checkImport,force);return runCoalesced()};
   const refresh=()=>runRefresh(true,true);
@@ -461,4 +495,5 @@ function renderNotes(sec){sec.innerHTML=`
   sec.onEvent=ev=>{const act=gate.event(ev.kind,editing());
     if(act==='sync')syncOnly();else if(act==='refresh')runRefresh()}; // 'defer'/'quiet'：不刷（见 refreshGate）
   sec.addEventListener('focusout',()=>setTimeout(()=>{if(gate.blurred(editing()))runRefresh()},0));
-  refresh();sec.refresh=refresh;subtabs(sec)}
+  refresh();sec.refresh=refresh;subtabs(sec);
+  {const b=$('#nsubnav',sec).children[4],sw=b.onclick;b.onclick=()=>{sw();loadReview()}}}

@@ -327,6 +327,8 @@ if [ "$QMD_CHANGED" = "1" ]; then
     echo "-- ⚠ qmd 生效需整机重启（会打断阅读）：电脑上跑 packaging/deploy-xovi-apply.sh <设备>，或在设备上 reboot"
 fi
 
+cj_deploy_stamp   # 部署记录（电脑端 deploy.sh 经 CJ_STAMP_META 传元数据；没有就不记，见 devlib.sh）
+
 # ── 3d. xovi 持久化诊断（不引用/不安装外层单元——那是 xovi 层的事）──
 if [ -x "$HOME_DIR/xovi/start" ] && [ ! -f "$SYSD/xovi-reenable.service" ] && [ ! -f "$SYSD/cangjie-xovi-reenable.service" ]; then
     echo "═══════════════════════════════════════════════════"

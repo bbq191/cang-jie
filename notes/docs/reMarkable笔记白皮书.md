@@ -285,6 +285,18 @@ reMarkable 的强项是“荧光笔勾书，再在勾出来的地方旁边手写
 
 映射：`#` → Title，`##` → Subheading 1，`###` 及以下 → Subheading 2，`-` / `*` / `+` → 无序，`1.` / `1)` → 有序，`- [ ]` / `- [x]` → 待办（已勾选降级为未勾选），其余 → Body。行内加粗、斜体、代码只剥掉**成对**的符号（样式是按段落的，做不到半句加粗）。用户明确要求这个入口不放进「整理」，也不做 Obsidian 双向同步。
 
+### 4.12b 笔记回顾（2026-10-14，实验室开关，未部署）
+
+已校对的条目隔一段时间再拿出来看一次，免得定稿之后再也不看。
+
+- **数据**：`Entry.review: Option<Review{due, interval_days, streak, last}>`，`#[serde(default)]`、没回顾过不写出，旧条目库照常读。没回顾过的条目在**定稿（`updated`）后一天**到期；每次只取到期最早的几条，第一次上线时已有的大量定稿不会一下子全堆出来。
+- **间隔**（`notecore::model::Review::advance`，纯函数）：「记住了」连续次数 +1，间隔取阶梯 1 → 3 → 7 → 16 → 35 → 90 天（封顶）；「再看看」归零回到 1 天。只有 `Reviewed` 且定稿非空的条目能回顾，终态拒绝。**回顾不改 `updated`**（`updated` 表示内容新旧，回顾不改内容）。
+- **ink-serve**：`GET /review/due?limit=`（缺省 5、上限 50）跨书取到期条目，到期早的在前，同时到期按书名、页序；`POST …/entries/{id}/review {result: remembered|again}`，记完发 `entries` 事件。
+- **note-serve「今日回顾」笔记本**（`review.rs`）：取前 5 条，排成一页（`notecore::project::project_review`：大标题「今日回顾」，每条一行「书名 · 章名」小标题 + 定稿（保留条目样式）+ 原文，末尾一行提示去网页标记），放**书库根下**、名字「今日回顾」（第一次撞名才加后缀，之后沿用）；每次换一份新文档，旧的交 book-serve 回收站队列。没有到期条目就不生成、旧的也不动。状态 `~/.local/state/notes/review.json`（`{auto, generatedAt, docUuid, visibleName, count}`）。
+- **触发**：网页点「生成今日回顾笔记本」（`POST /review/generate`）；或勾「自动生成」（`POST /review/auto {on}`）后，note-serve 订阅 ink-serve 的 `entries` 事件（合书摄取完成时会发），离上次生成满 20 小时才生成。不按日历日算：设备上的进程拿不到本地时区。不另起定时器。
+- **网页**：「笔记 → 回顾」子标签，跟着「管理 → 实验室 → 笔记回顾」开关（`notesReviewEnabled`，缺省关）显示。列到期条目（最多 20 条），每条「记住了 / 再看看」；回顾结果只在网页上记——设备笔记本是只读投影，在设备上写了不会回传。
+- **已知取舍**：看完设备笔记本还得到网页上点，摩擦是真实的；书库根下每天会出现一份"新"文档，xochitl 会把它排到最近列表前面。
+
 ### 4.13 数据保护与后台韧性
 
 - **读失败 ≠ 不存在**：条目库、两份 AI 配置、两份用量账本、两类“每章推送记录”解析失败时，都先在同目录另存一份 `*.json.corrupt`（**只留第一份**：已有就不再覆盖；用 rmsvc-core 的 `config::backup_corrupt`），再按各自规则处理——条目库最严格，拒绝一切写入；AI 配置按缺省运行但不落盘；账本从零记起；章记录按空记录处理（下次推送会当首次生成，旧笔记本不会自动进回收站）。`ink.json` / `note.json` 经基座 `config::load_or_seed` 读：只在文件不存在时写缺省值，坏了按缺省运行、不覆盖原文件，并打日志、留 `.corrupt`（2026-10-10 起，此前坏了不留痕）。
@@ -304,10 +316,10 @@ reMarkable 的强项是“荧光笔勾书，再在勾出来的地方旁边手写
 
 | 服务 | 路由 |
 |---|---|
-| ink（`/api/ink`） | `GET /books`（只列还有活条目的书；每项 `{uuid,title,chapters,entries,pending}`）· `GET /books/{uuid}`（整本书，每条条目带 `live`）· `GET /books/{uuid}/crops/{file}` · `POST /books/{uuid}/entries/{id}`（网页改 `text` / `destination` / `askAi` / `question`；未知字段、形状不对回 400；终态条目拒改）· `POST …/entries/{id}/draft`（transcribe 写草稿：`{text,backend,hash}`，原文）· `POST …/entries/{id}/answer`（mind 写回答：`{text,backend,brief}`）· `POST …/entries/{id}/request`（转入笔记）· `…/skip`（不需要）· `…/archive`（不要了）· `…/restore`（恢复）· `POST /books/{uuid}/purge`（清空回收站，不可恢复）· `POST /books/{uuid}/rescan`（清掉页 mtime 记录再摄取；只对条目库里已有的书）· `GET /search?q=&limit=` · `GET /events` |
+| ink（`/api/ink`） | `GET /books`（只列还有活条目的书；每项 `{uuid,title,chapters,entries,pending}`）· `GET /books/{uuid}`（整本书，每条条目带 `live`）· `GET /books/{uuid}/crops/{file}` · `POST /books/{uuid}/entries/{id}`（网页改 `text` / `destination` / `askAi` / `question`；未知字段、形状不对回 400；终态条目拒改）· `POST …/entries/{id}/draft`（transcribe 写草稿：`{text,backend,hash}`，原文）· `POST …/entries/{id}/answer`（mind 写回答：`{text,backend,brief}`）· `POST …/entries/{id}/request`（转入笔记）· `…/skip`（不需要）· `…/archive`（不要了）· `…/restore`（恢复）· `POST /books/{uuid}/purge`（清空回收站，不可恢复）· `POST /books/{uuid}/rescan`（清掉页 mtime 记录再摄取；只对条目库里已有的书）· `GET /search?q=&limit=` · `GET /review/due?limit=`（到期的回顾条目 `{items:[{book, bookTitle, entry}], total}`）· `POST …/entries/{id}/review {result: remembered\|again}`（只收已校对的）· `GET /events` |
 | transcribe（`/api/transcribe`） | `GET /status`（配置、按模型用量、失败清单、ink 是否可达、待转写数）· `GET /config` · `PUT /config`（`preset` / `apiKey`（只写）/ `clearKey` / `price`（`{inputPer1k,outputPer1k}`，老写法 `{input,output}` 也认）/ 自定义 `model` + `baseUrl` / `auto` / `maxPerRun` / `pauseMs` / `timeoutSecs` / `maxAttempts` / `prompt`）· `POST /books/{uuid}/entries/{id}`（强制转写一条，返回 token 用量）· `GET /events` |
 | mind（`/api/mind`） | `GET /status` · `GET /config` · `PUT /config`（同上，但只有 `timeoutSecs` / `prompt`，没有节流字段）· `POST /books/{uuid}/entries/{id}/ask`（要求已勾「问 AI」且问题非空） |
-| notes（`/api/notes`） | `GET /status` · `GET /books/{uuid}/sync` · `POST /books/{uuid}/chapters/{idx}/generate` · `POST /books/{uuid}/chapters/{idx}/export`（`status`：`written` / `unchanged` / `empty`）· `GET /books/{uuid}/chapters/{idx}/export.md` · `POST /books/{uuid}/import-md {title, markdown}`（两者必填）· `GET /events` |
+| notes（`/api/notes`） | `GET /status` · `GET /books/{uuid}/sync` · `POST /books/{uuid}/chapters/{idx}/generate` · `POST /books/{uuid}/chapters/{idx}/export`（`status`：`written` / `unchanged` / `empty`）· `GET /books/{uuid}/chapters/{idx}/export.md` · `POST /books/{uuid}/import-md {title, markdown}`（两者必填）· `GET /review` · `POST /review/generate` → `{count, total, docUuid?}` · `POST /review/auto {on}`（4.12b）· `GET /events` |
 
 **错误码约定**（2026-10-10 统一）：请求体不合法 400；书 / 条目不存在 404（经 InkClient 透传 ink-serve 的 404）；ink-serve 没运行 503；调模型失败、写回 ink 失败 502；上传 / 认领失败、存盘失败 500；请求体超限 413。
 
@@ -319,7 +331,7 @@ reMarkable 的强项是“荧光笔勾书，再在勾出来的地方旁边手写
 |---|---|---|
 | `notes` / `entries` | ink-serve | 条目库变了（摄取有改动、改字段、清空回收站） |
 | `notes` / `transcribe` | transcribe-serve | 一轮转写有变化、改了配置（空跑且与上一轮相同的轮次不发） |
-| `notes` / `notebooks` | note-serve | 「推送本章」的生成请求处理完后（md 导出、导入不发） |
+| `notes` / `notebooks` | note-serve | 「推送本章」的生成请求处理完后、生成了「今日回顾」后（md 导出、导入不发） |
 
 经网关汇聚到 `/api/events`，网页据此刷新。值是线上约定，前端和 transcribe-serve 按字面量认，服务内收成常量。
 
@@ -343,7 +355,7 @@ XDG 规范，设备 HOME=/home/root。
 | 二进制 | `~/.local/bin/{ink-serve,transcribe-serve,mind-serve,note-serve}` |
 | 配置 | `~/.config/notes/{ink,transcribe,mind,note}.json`（5.3） |
 | 数据 | `~/.local/share/notes/crops/`（裁图 PNG）· `~/.local/share/notes/vault/`（md 导出） |
-| 状态 | `~/.local/state/notes/books/<uuid>.json`（**条目库**）· `notebooks/`、`exports/`（每章生成 / 导出记录）· `transcribe.json`、`mind.json`（用量账本，只记数不记内容）。任何一份 JSON 解析失败时的副本 `*.json.corrupt` 放在原文件旁边 |
+| 状态 | `~/.local/state/notes/books/<uuid>.json`（**条目库**）· `notebooks/`、`exports/`（每章生成 / 导出记录）· `transcribe.json`、`mind.json`（用量账本，只记数不记内容）· `review.json`（「今日回顾」笔记本状态，4.12b）。任何一份 JSON 解析失败时的副本 `*.json.corrupt` 放在原文件旁边 |
 | 运行时 | 与书架共用注册表 `$XDG_RUNTIME_DIR/shelf/services/` |
 | 只读外部 | xochitl 书库 `~/.local/share/remarkable/xochitl/`——**绝不写** |
 
@@ -523,6 +535,7 @@ cd notes && cargo test --workspace
 | 7i | **10-10 重构第二阶段：10-12 已部署，未手测** | 可核：书在某个文件夹里，「推送本章」后笔记本仍落进同一个文件夹、网页显示 ✓；同名旧笔记本在时推送，认领到新的那份、旧的进回收站；「导入 md 文档」落进书的文件夹、返回的名字带去重后缀；停掉 ink-serve（`systemctl stop`）后在笔记页推送 / 提问，提示“ink-serve 未运行”（浏览器开发者工具看 503，不是 400）；断网时提问提示模型调用失败（502）；推送失败时提示里有原因（不是 `undefined`）；ink 摄取照常（合书后勾画入库、页号对得上）；把 `ink.json` 改坏后重启 ink-serve，日志有一行“读不出”、旁边多一份 `.corrupt` |
 | 8 | “改去处后对应导出指纹立刻变”只有离线单测 | 当时测试书状态在漂移，真机没能单变量复现 |
 | 9 | **书的小节名插行** | 09-25 真机验证用的《13 級階梯》目录是平铺的，条目 `subhead` 全空，这一项只有单测；找一本目录有二级小节的书再验 |
+| R1 | **10-14 笔记回顾（未部署）** | 实验室打开「笔记回顾」后「笔记」页出现「回顾」；定稿满一天的条目出现在列表里，「记住了」后消失、条目库里有 `review`；点「生成今日回顾笔记本」书库根下出现「今日回顾」、页面排版正常、再生成一次旧的进回收站；勾「自动」后合一本书，离上次生成满 20 小时才自动生成；note-serve 日志无报错 |
 
 ### 8.3 已在真机闭环
 

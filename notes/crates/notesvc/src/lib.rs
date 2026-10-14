@@ -5,7 +5,7 @@
 //!   单测换内存桩的接缝，不合并。
 //!
 //! 曾经还有 `load_or_seed_logged`（配置损坏时打日志 + 另存 `.corrupt` 副本），2026-10-10 下沉进基座 `rmsvc_core::config::load_or_seed`。
-use notecore::api::{AnswerPost, BookBrief, BookList, DraftPost};
+use notecore::api::{AnswerPost, BookBrief, BookList, DraftPost, DueList};
 use notecore::model::Book;
 use rmsvc_core::paths::Paths;
 use rmsvc_core::registry::{enc, SvcClient, SvcError};
@@ -33,6 +33,10 @@ impl InkClient {
     /// 整本书（应答里每条条目多一个 `live`，`Entry` 反序列化时忽略）。错误同 [`Self::list_books`]。
     pub fn book(&self, uuid: &str) -> Result<Book, SvcError> {
         self.0.try_get_typed(&format!("/books/{}", enc(uuid)))
+    }
+    /// 到期的回顾条目（ink-serve `GET /review/due`，2026-10-14）。错误同 [`Self::list_books`]。
+    pub fn due_reviews(&self, limit: usize) -> Result<DueList, SvcError> {
+        self.0.try_get_typed(&format!("/review/due?limit={limit}"))
     }
     pub fn crop(&self, uuid: &str, file: &str) -> Result<Vec<u8>, String> {
         self.0.get_bytes(&format!("/books/{}/crops/{}", enc(uuid), enc(file)), CROP_MAX_BYTES).map_err(|e| format!("取裁图 {file}: {e}"))

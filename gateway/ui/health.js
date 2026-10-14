@@ -8,22 +8,40 @@ const fmtUptime=s=>{const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Mat
 // 两分钟以内按秒（开机时序要看到 0.01 s 级），更长的（服务开机后被重启过）换成"12 分钟"这类读法，不写 761.5 s。
 const fmtSec=ms=>ms>=120000?fmtUptime(Math.floor(ms/1000)):(ms/1000).toFixed(ms<10000?2:1)+' s';
 const fmtTime=secs=>secs?new Date(secs*1000).toLocaleString():'';
+/* 部署记录（2026-10-14，gateway/src/device/deploy.rs）：一次部署一句话——提交号、时间、USB/WiFi、装了什么。 */
+const deployWhat=s=>{const k='health.deploy.label.'+s.label,t=T(k);
+  return (t===k?s.label:t)+(s.only?' · '+T('health.deploy.only',{only:s.only}):'')};
+const deployDesc=s=>`<code>${esc(s.commit||'?')}</code>`
+  +(s.dirty?` <span class="badge" title="${T('health.deploy.dirtyTitle')}">${T('health.deploy.dirty')}</span>`:'')
+  +` <span class="small">${esc([fmtTime(s.at),(s.via||'').toUpperCase().replace('WIFI','WiFi'),deployWhat(s)].filter(Boolean).join(' · '))}</span>`
+  +(s.failed?`<br>${badge(esc(T('health.deploy.failed',{steps:s.failed})),false)}`:'');
+function deployBlock(dep){
+  if(!dep||!dep.current)return `<span class="small">${T('health.deploy.none')}</span>`;
+  const dr=dep.drift||[],bad=dr.filter(x=>x.state!=='pending').length;
+  const st=dr.length?`<br>${badge(esc(T('health.deploy.drift',{n:dr.length})),!bad)}<br><span class="small">${T('health.deploy.driftHint')}</span>`
+    +`<ul class="small" style="margin:.3em 0 0;padding-left:1.2em">${dr.map(x=>`<li><code>${esc(x.path.split('/').pop())}</code> ${esc(T('health.deploy.state.'+x.state))}</li>`).join('')}</ul>`
+    :`<br>${badge(esc(T('health.deploy.ok',{n:dep.files})),true)}`;
+  return deployDesc(dep.current)+st;
+}
 function mountHealth(box){
   const card=k=>`<div class="subpanel" data-p="${k}"><div class="card" data-body><p class="small">${T('health.loading')}</p></div></div>`;
   box.innerHTML=`<div class="card"><div class="row" style="justify-content:space-between;margin-top:0"><h2 style="margin:0">${T('health.title')}</h2><button class="btn" data-refresh>${T('health.refresh')}</button></div>
     <p class="lead">${T('health.lead')}</p><p class="small" data-at></p></div>
-    <div class="subnav"><button>${T('health.tab.overview')}</button><button>${T('health.tab.services')}</button><button>${T('health.tab.extensions')}</button><button>${T('health.tab.log')}</button><button>${T('health.tab.cleanup')}</button></div>
+    <div class="subnav"><button>${T('health.tab.overview')}</button><button>${T('health.tab.services')}</button><button>${T('health.tab.extensions')}</button><button>${T('health.tab.log')}</button><button>${T('health.tab.cleanup')}</button><button>${T('health.tab.selftest')}</button></div>
     ${card('overview')}${card('services')}${card('extensions')}${card('log')}
-    <div class="subpanel" data-p="cleanup"><div class="card" data-cleanup></div></div>`;
+    <div class="subpanel" data-p="cleanup"><div class="card" data-cleanup></div></div>
+    <div class="subpanel" data-p="selftest"><div class="card" data-selftest></div></div>`;
   const q=s=>box.querySelector(s),body=k=>q(`[data-p="${k}"] [data-body]`),refreshBtn=q('[data-refresh]');
   const cleanupLoad=mountCleanup(q('[data-cleanup]'));
-  const CLEANUP=4;let cleanupStale=true;
+  const selftestLoad=mountSelftest(q('[data-selftest]'),()=>q('[data-p="selftest"]').classList.contains('on'));
+  const CLEANUP=4,SELFTEST=5;let cleanupStale=true,selftestStale=true;
   const cleanupIfShown=()=>{if(cleanupStale&&q('[data-p="cleanup"]').classList.contains('on')){cleanupStale=false;return cleanupLoad()}};
+  const selftestIfShown=()=>{if(selftestStale&&q('[data-p="selftest"]').classList.contains('on')){selftestStale=false;return selftestLoad()}};
   subtabs(box);
   const btns=[...q('.subnav').children],saved=+LS.get('healthSub','0');
   // 恢复上次的二级 tab：先调 subtabs 装的原始切换，再包记忆/取数那层——挂载管理页时不该去取清理数据。
   btns[saved>=0&&saved<btns.length?saved:0].onclick();
-  btns.forEach((b,i)=>{const sw=b.onclick;b.onclick=()=>{sw();LS.set('healthSub',String(i));if(i===CLEANUP)cleanupIfShown()}});
+  btns.forEach((b,i)=>{const sw=b.onclick;b.onclick=()=>{sw();LS.set('healthSub',String(i));if(i===CLEANUP)cleanupIfShown();if(i===SELFTEST)selftestIfShown()}});
   const loadHealth=async fresh=>{
     const [d,o]=await Promise.all([j('/api/device/health'+(fresh?'?fresh=1':'')),j('/api/device/ota'+(fresh?'?fresh=1':''))]);
     if(d.ok===false){const m=`<p class="small">${esc(d.message)}</p>`;['overview','services','extensions','log'].forEach(k=>body(k).innerHTML=m);return}
@@ -47,7 +65,8 @@ function mountHealth(box){
       <b>${T('health.xovi')}</b><span>${xoviTxt}</span>
       <b>${T('health.home')}</b><span>${home.freeBytes!=null?T('health.homeVal',{free:fmtB(home.freeBytes),total:fmtB(home.totalBytes||0)}):'—'}</span>
       <b>${T('health.firmware')}</b><span>${fwTxt}</span>
-      <b>${T('health.ota')}</b><span>${otaTxt}</span></div>`;
+      <b>${T('health.ota')}</b><span>${otaTxt}</span>
+      <b>${T('health.deploy')}</b><span>${deployBlock(d.deploy)}</span></div>`;
     body('services').innerHTML=`<h3 style="margin-top:0">${T('health.services')}</h3><p class="small">${T('health.servicesHint')}</p>`
       +(d.systemctlError?`<p class="small">${esc(T('health.systemctlError',{msg:d.systemctlError}))}</p>`:'')+'<ul class="list" data-units></ul>';
     const ul=body('services').querySelector('[data-units]');
@@ -71,11 +90,37 @@ function mountHealth(box){
       :`<p class="small">${T('health.extClean')}</p>`}`;
     // 上次开机最后几行 journal（设备冻死/意外重启的线索）；journal 没持久化时后端给 null。
     body('log').innerHTML=`<h3 style="margin-top:0">${T('health.prevBoot')}</h3>`
-      +(d.prevBoot&&d.prevBoot.length?`<pre class="hlog">${esc(d.prevBoot.join('\n'))}</pre>`:`<p class="small">${T('health.prevBootNone')}</p>`);
+      +(d.prevBoot&&d.prevBoot.length?`<pre class="hlog">${esc(d.prevBoot.join('\n'))}</pre>`:`<p class="small">${T('health.prevBootNone')}</p>`)
+      +`<h3>${T('health.deploy.history')}</h3>`
+      +((d.deploy&&d.deploy.history||[]).length?`<ul class="list">${d.deploy.history.map(s=>`<li class="stack"><span>${deployDesc(s)}</span></li>`).join('')}</ul>`:`<p class="small">${T('health.deploy.historyNone')}</p>`);
   };
   /* 进这一屏（fresh=false）或点刷新（fresh=true）：健康数据现取；清理只在它正在前台时取，否则等第一次切过去。 */
-  const load=async fresh=>{cleanupStale=true;await Promise.all([loadHealth(fresh),cleanupIfShown()])};
+  const load=async fresh=>{cleanupStale=selftestStale=true;await Promise.all([loadHealth(fresh),cleanupIfShown(),selftestIfShown()])};
   guardClick(refreshBtn,()=>load(true));
+  return load;
+}
+/* 「设备健康 → 自检」（2026-10-14，book-serve selftest.rs）：在书库里临时建文件夹、子文件夹、放一本测试书，再全部移进回收站，
+   逐步显示结果。只在用户点「运行自检」时跑；跑着的时候每 2 秒取一次进度，这一屏不在前台或跑完就停。 */
+const SELFTEST_STEPS=['mkdir-root','mkdir-child','upload-claim','render','trash'];
+function mountSelftest(box,shown){
+  box.innerHTML=`<div class="row" style="justify-content:space-between;margin-top:0"><h2 style="margin:0">${T('selftest.title')}</h2><button class="btn pri" data-run>${T('selftest.run')}</button></div>
+    <p class="lead">${T('selftest.lead')}</p><div data-now></div><h3>${T('selftest.history')}</h3><ul class="list" data-runs></ul>`;
+  const q=s=>box.querySelector(s),runBtn=q('[data-run]');let timer=0;
+  const mark={ok:'✓',fail:'✗',skip:'–'};
+  const stepsHtml=r=>`<ul class="list">${SELFTEST_STEPS.map(k=>{const st=(r.steps||[]).find(x=>x.key===k);
+    const state=st?st.state:r.current===k?'run':'wait';
+    const tail=st?[st.ms?(st.ms/1000).toFixed(1)+' s':'',st.detail||''].filter(Boolean).join(' · '):'';
+    return `<li class="stack"><span>${state==='run'?'…':mark[state]||'·'} ${esc(T('selftest.step.'+k))}${state==='fail'?' '+badge(T('selftest.state.fail'),false):''}</span>${tail?`<span class="small">${esc(tail)}</span>`:''}</li>`}).join('')}</ul>`
+    +(r.leftovers&&r.leftovers.length?`<p class="small">${badge(T('selftest.leftovers'),false)} ${esc(r.leftovers.join(' · '))}</p>`:'');
+  const verdict=r=>r.ok?badge(T('selftest.pass'),true):badge(T('selftest.failRun'),false);
+  const load=async()=>{clearTimeout(timer);const d=await j('/api/books/selftest');
+    if(d.ok===false){q('[data-now]').innerHTML=`<p class="small">${esc(d.message)}</p>`;q('[data-runs]').innerHTML='';runBtn.disabled=true;return}
+    const cur=d.running,runs=d.runs||[];runBtn.disabled=!!cur;
+    q('[data-now]').innerHTML=cur?`<p>${T('selftest.running')}</p>${stepsHtml(cur)}`:runs.length?`<p>${verdict(runs[0])} <span class="small">${esc(fmtTime(runs[0].at))}</span></p>${stepsHtml(runs[0])}`:`<p class="small">${T('selftest.never')}</p>`;
+    q('[data-runs]').innerHTML=runs.length>1?runs.slice(1).map(r=>`<li><span>${verdict(r)} <span class="small">${esc(fmtTime(r.at))}</span></span><span class="small">${esc((r.steps||[]).filter(s=>s.state==='fail').map(s=>T('selftest.step.'+s.key)).join(' · '))}</span></li>`).join(''):`<li class="small">${T('list.empty')}</li>`;
+    if(cur&&box.isConnected&&shown())timer=setTimeout(load,2000)};
+  runBtn.onclick=async()=>{if(runBtn.disabled||!await confirmDialog(T('selftest.confirm')))return;runBtn.disabled=true;
+    const r=await jsend('/api/books/selftest','POST');if(r.ok===false)toast(r.message||T('common.failed'));await load()};
   return load;
 }
 function mountCleanup(box){

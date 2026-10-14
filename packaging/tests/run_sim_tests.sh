@@ -91,7 +91,7 @@ run() { PATH="$STUBS:$PATH" "$@"; }
 count_log() { grep -c -- "$1" "$CJ_SIM_LOG" 2>/dev/null; }
 # 设备文件树签名：只看常规文件与符号链接（路径 + 内容 md5 / 链接目标），排除 proc/日志/备份/用户数据
 tree_sig() {
-    ( cd "$R" && find ./home ./usr \( -type f -o -type l \) 2>/dev/null | sort | grep -v -e '^./home/root/cangjie-backups/' | while read -r f; do
+    ( cd "$R" && find ./home ./usr \( -type f -o -type l \) 2>/dev/null | sort | grep -v -e '^./home/root/cangjie-backups/' -e '/deploy-log.jsonl$' | while read -r f; do
         if [ -L "$f" ]; then echo "L $f -> $(readlink "$f")"; else echo "F $f $(md5sum < "$f" | cut -c1-32)"; fi
       done )
 }

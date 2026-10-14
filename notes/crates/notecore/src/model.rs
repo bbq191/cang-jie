@@ -157,6 +157,36 @@ pub struct Answer {
     pub brief: String,
 }
 
+/// 一天（秒）。
+pub const DAY: u64 = 86_400;
+/// 回顾间隔阶梯（天）：记住了往后挪一格，没记住回到第一格。
+pub const REVIEW_LADDER: [u32; 6] = [1, 3, 7, 16, 35, 90];
+
+/// 笔记回顾（2026-10-14）：已校对的条目隔一段时间再拿出来看一次。`None` ＝还没回顾过——这时按
+/// `updated + 1 天` 算到期（见 [`Entry::review_due`]），每次只取到期最早的几条，第一次上线时不会一下子全堆出来。
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct Review {
+    /// 下次到期（Unix 秒）。
+    pub due: u64,
+    /// 当前间隔（天，取自 [`REVIEW_LADDER`]）。
+    pub interval_days: u32,
+    /// 连续"记住了"几次。
+    pub streak: u32,
+    /// 上次回顾的时刻。
+    #[serde(default)]
+    pub last: Option<u64>,
+}
+
+impl Review {
+    /// 记一次回顾：记住了 → 连续次数 +1、间隔往后挪一格；没记住 → 归零、回到 1 天。
+    pub fn advance(&mut self, remembered: bool, now: u64) {
+        self.streak = if remembered { self.streak + 1 } else { 0 };
+        self.interval_days = REVIEW_LADDER[(self.streak as usize).min(REVIEW_LADDER.len() - 1)];
+        self.due = now + self.interval_days as u64 * DAY;
+        self.last = Some(now);
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Entry {
     /// 稳定 id：创建时按 (书, 页, 首笔 id) 生成，之后**永不重算**（簇变了靠笔画重叠认领同一条目）。
@@ -198,6 +228,9 @@ pub struct Entry {
     /// 兼容这个字段加之前落盘的旧条目库。
     #[serde(default)]
     pub source: Source,
+    /// 笔记回顾的进度（2026-10-14，见 [`Review`]）。旧条目库没有这个字段，读进来是 `None`。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review: Option<Review>,
     pub created: u64,
     pub updated: u64,
 }
@@ -358,6 +391,26 @@ impl Entry {
         true
     }
 
+    /// 回顾到期的时刻：回顾过就是记下的 `due`；没回顾过按定稿（最后改动）后一天。
+    pub fn review_due(&self) -> u64 {
+        self.review.as_ref().map_or(self.updated + DAY, |r| r.due)
+    }
+
+    /// 能不能回顾：只有已校对（有定稿文字）的条目。
+    pub fn reviewable(&self) -> bool {
+        self.status == Status::Reviewed && self.text.as_deref().is_some_and(|t| !t.trim().is_empty())
+    }
+
+    /// 记一次回顾（`remembered`：记住了 / 再看看）。不改 `updated`——回顾不改内容，`updated` 用于判断条目内容新旧。
+    pub fn record_review(&mut self, remembered: bool, now: u64) -> Result<(), String> {
+        self.refuse_terminal()?;
+        if !self.reviewable() {
+            return Err("只有已校对的条目能回顾".to_string());
+        }
+        self.review.get_or_insert_with(Review::default).advance(remembered, now);
+        Ok(())
+    }
+
     fn refuse_terminal(&self) -> Result<(), String> {
         if self.is_terminal() {
             return Err("这条已跳过/撤销/删除，不能再改，请先在回收站里恢复".to_string());
@@ -429,9 +482,44 @@ impl Book {
 mod tests {
     use super::*;
 
+    fn reviewed(text: &str, updated: u64) -> Entry {
+        let mut e: Entry = serde_json::from_str(r#"{"id":"e","page":"p","page_index":0,"created":0,"updated":0}"#).unwrap();
+        e.text = Some(text.into());
+        e.status = Status::Reviewed;
+        e.updated = updated;
+        e
+    }
+
+    #[test]
+    fn review_ladder_and_record() {
+        let mut e = reviewed("定稿", 100);
+        assert_eq!(e.review_due(), 100 + DAY, "没回顾过：定稿后一天到期");
+        e.record_review(true, 1000).unwrap();
+        let r = e.review.clone().unwrap();
+        assert_eq!((r.streak, r.interval_days, r.due, r.last), (1, 3, 1000 + 3 * DAY, Some(1000)));
+        for _ in 0..10 {
+            e.record_review(true, 1000).unwrap();
+        }
+        assert_eq!(e.review.as_ref().unwrap().interval_days, 90, "阶梯封顶");
+        e.record_review(false, 2000).unwrap();
+        assert_eq!((e.review.as_ref().unwrap().streak, e.review_due()), (0, 2000 + DAY), "没记住回到 1 天");
+        assert_eq!(e.updated, 100, "回顾不改 updated");
+        let mut d = reviewed("x", 0);
+        d.status = Status::Draft;
+        assert!(d.record_review(true, 1).is_err(), "只有已校对的能回顾");
+        d.status = Status::Archived;
+        assert!(d.record_review(true, 1).is_err());
+        let mut blank = reviewed("  ", 0);
+        assert!(blank.record_review(true, 1).is_err(), "定稿是空白的不算");
+        // 旧条目库没有 review 字段；没回顾过的不写出这个字段
+        let j = serde_json::to_string(&reviewed("a", 0)).unwrap();
+        assert!(!j.contains(r#""review":"#));
+        assert_eq!(serde_json::from_str::<Entry>(&serde_json::to_string(&e).unwrap()).unwrap(), e);
+    }
+
     #[test]
     fn roundtrip_and_defaults() {
-        let e = Entry { id: "e1".into(), page: "p".into(), page_index: 3, chapter: Some(1), chapter_title: "一".into(), subhead: None, quote: None, ink: Some(Ink { strokes: vec!["1:2".into()], bbox: (0.0, 0.0, 1.0, 1.0), hash: "h".into(), crop: String::new() }), drafts: vec![], text: None, style: Style::Checkbox, ask_ai: false, question: None, answer: None, status: Status::Pending, destination: Default::default(), source: Default::default(), created: 1, updated: 1 };
+        let e = Entry { id: "e1".into(), page: "p".into(), page_index: 3, chapter: Some(1), chapter_title: "一".into(), subhead: None, quote: None, ink: Some(Ink { strokes: vec!["1:2".into()], bbox: (0.0, 0.0, 1.0, 1.0), hash: "h".into(), crop: String::new() }), drafts: vec![], text: None, style: Style::Checkbox, ask_ai: false, question: None, answer: None, status: Status::Pending, destination: Default::default(), source: Default::default(), review: None, created: 1, updated: 1 };
         let j = serde_json::to_string(&e).unwrap();
         assert!(j.contains(r#""style":"checkbox""#) && j.contains(r#""status":"pending""#));
         let back: Entry = serde_json::from_str(&j).unwrap();

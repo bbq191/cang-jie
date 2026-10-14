@@ -121,11 +121,13 @@ CJ_FORCE_PUSH="${SHELF_FORCE_PUSH:-0}" push_tar_verified "$STAGE/shelf-pkg.tar" 
 # 不让密码明文留在设备上。兜底清理与安装同一次连接（设备端 install.sh 退出后无论成败都 rm；省一次 ssh）。
 # 有 --password 时连写密码文件也并进这一次（2026-10-10）：密码经标准输入写进 0600 文件（子 shell 里 umask 077，
 # 不影响随后 install.sh 的 umask），写失败就不装
+# 部署记录的元数据经环境变量交给设备端 install.sh（文件落盘后记一行 deploy-log.jsonl；install-all 编排下为空、不记）
+STAMP="CJ_STAMP_META=$(shquote "$(stamp_meta shelf "$ONLY")")"
 rc=0
 if [ "$HAVE_PW" = "1" ]; then
-    printf '%s' "$PASSWORD" | rssh_in "if (umask 077; cat > $REMOTE/.pw); then sh $REMOTE/shelf/install.sh$REMOTE_ARGS --password-file $REMOTE/.pw; rc=\$?; else echo '!! 写密码临时文件失败'; rc=1; fi; rm -f $REMOTE/.pw; exit \$rc" || rc=$?
+    printf '%s' "$PASSWORD" | rssh_in "if (umask 077; cat > $REMOTE/.pw); then $STAMP sh $REMOTE/shelf/install.sh$REMOTE_ARGS --password-file $REMOTE/.pw; rc=\$?; else echo '!! 写密码临时文件失败'; rc=1; fi; rm -f $REMOTE/.pw; exit \$rc" || rc=$?
 else
-    rssh "sh $REMOTE/shelf/install.sh$REMOTE_ARGS; rc=\$?; rm -f $REMOTE/.pw; exit \$rc" || rc=$?
+    rssh "$STAMP sh $REMOTE/shelf/install.sh$REMOTE_ARGS; rc=\$?; rm -f $REMOTE/.pw; exit \$rc" || rc=$?
 fi
 [ "$rc" -eq 0 ] || { echo "!! 设备端 install.sh 退出码 $rc（见上面的输出；载荷仍在 $REMOTE，可 ssh 上去重跑 sh $REMOTE/shelf/install.sh）"; exit "$rc"; }
 # host 侧 HTTPS 探测（设备 busybox wget 做不了自签）：无密码应 401

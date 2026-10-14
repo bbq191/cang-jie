@@ -112,6 +112,25 @@ dev_pipe() {
 # dev_script [ARG…]  ← stdin 是脚本体。devlib.sh + 脚本体经 dev_pipe 在设备上执行。
 dev_script() { { cat "$CJ_PKG_DIR/devlib.sh"; cat; } | dev_pipe "$@"; }
 
+# stamp_meta LABEL [ONLY] [FAILED]：部署记录的元数据（一串 JSON 字段，交给设备端 devlib.sh 的 cj_deploy_stamp，见那里）。
+# install-all 编排下（它导出 CJ_STAMP_DEFER=1）输出空串——各步骤不各记一条，由 install-all 最后统一记一次。
+# 字段值去掉引号/反斜杠/控制字符再放进 JSON（都是提交号、主机名、服务名这类，正常不含这些）。
+stamp_meta() {
+    [ "${CJ_STAMP_DEFER:-0}" != 1 ] || return 0
+    sm_q() { printf '%s' "$1" | tr -d '"\\' | tr -d '\000-\037'; }
+    sm_c="$(git -C "$CJ_PKG_DIR/.." rev-parse --short HEAD 2>/dev/null || echo unknown)"
+    sm_d=false; [ -z "$(git -C "$CJ_PKG_DIR/.." status --porcelain 2>/dev/null)" ] || sm_d=true
+    sm_v=wifi; case "$HOST" in 10.11.99.*) sm_v=usb ;; esac
+    printf '"label":"%s","only":"%s","failed":"%s","commit":"%s","dirty":%s,"via":"%s","host":"%s"' \
+        "$(sm_q "$1")" "$(sm_q "${2:-}")" "$(sm_q "$(echo "${3:-}" | sed 's/^ *//')")" "$(sm_q "$sm_c")" "$sm_d" "$sm_v" "$(sm_q "$(hostname 2>/dev/null || echo ?)")"
+}
+# deploy_stamp LABEL [ONLY] [FAILED]：单独连一次设备记部署记录（install-all 在最后一步之前用；失败只警告）
+deploy_stamp() {
+    ds_m="$(CJ_STAMP_DEFER=0 stamp_meta "$@")"
+    # shellcheck disable=SC2016  # 设备端代码
+    printf '%s\n' 'CJ_STAMP_META=$1; cj_deploy_stamp' | dev_script "$ds_m" || echo "⚠ 部署记录没写上（不影响安装本身）"
+}
+
 # run_apply CMD…：跑一段可能让设备主动整机重启的设备端命令（内部调了 devlib.sh 的 cj_xochitl_apply）。输出照常
 # 打到终端并留一份；见到设备端打印的 CJ-APPLY-REBOOTING 就按成功处理——ssh 随重启断开（退出码 255）不算失败——
 # 并提示设备回来后跑 verify-on-device.sh；见到 CJ-APPLY-REBOOT-FAILED（systemctl reboot 本身失败）则不空等、按失败返回。
