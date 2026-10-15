@@ -407,7 +407,10 @@ fw_gate() { # $1=FORCE(0/1) [$2=SHA]
 
 # ── 步骤表（install-all / uninstall-all 共用；两边清单靠它对称）──────────────
 # 顺序：先与 xovi/vellum 无关的独立项，再 wifi-watch，再依赖 xovi 的，shelf 最重，xovi-apply 放最后统一重启一次。
-STEP_ORDER="chrony-cn chrony-boot-wakelock timezone-cn wifi-watch xovi-persist hl-snap ui-font shelf xovi-apply"
+STEP_ORDER="chrony-cn chrony-boot-wakelock timezone-cn wifi-watch xovi-persist xochitl-watchdog hl-snap ui-font shelf xovi-apply"
+# xochitl-watchdog 的时限（秒）：deploy-xochitl-watchdog.sh 写进 drop-in，verify-on-device.sh 按它判定（同一个值）
+# shellcheck disable=SC2034  # 由 deploy-xochitl-watchdog.sh / verify-on-device.sh 使用
+XOCHITL_WATCHDOG_SEC=300
 # 只落盘、不各自重启 xochitl 的步骤（install-all 给它们传 DEFER_XOVI_START=1，最后由 xovi-apply 统一重启）
 # shellcheck disable=SC2034  # 由 install-all.sh 使用
 STEP_DEFER="hl-snap ui-font"
@@ -437,6 +440,7 @@ step_script() {
         timezone-cn) echo ./deploy-timezone-cn.sh ;;
         wifi-watch) echo ./deploy-wifi-watch.sh ;;
         xovi-persist) echo ./deploy-xovi-persist.sh ;;
+        xochitl-watchdog) echo ./deploy-xochitl-watchdog.sh ;;
         hl-snap) echo ./deploy-hl-snap.sh ;;
         ui-font) echo ./deploy-ui-font.sh ;;
         shelf) echo ./deploy.sh ;;

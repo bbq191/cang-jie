@@ -168,6 +168,8 @@ emit X_ACTIVE "$(systemctl is-active xochitl 2>/dev/null)"
 emit X_PID "$XP"
 emit X_NRESTARTS "$(sprop xochitl NRestarts)"
 emit X_START_MONO "$(sprop xochitl ExecMainStartTimestampMonotonic)"
+emit X_WATCHDOG_USEC "$(sprop xochitl WatchdogUSec)"
+emit X_WATCHDOG_DROPIN "$(yn [ -f "$CJ_XOVI/services/xochitl.service/xochitl-watchdog.conf" ])"
 XM="$CJ_PROC/$XP/maps"
 if [ "$XP" != "0" ] && [ -r "$XM" ]; then
     emit X_XOVI "$(yn grep -q 'xovi\.so' "$XM")"
@@ -249,6 +251,7 @@ if command -v journalctl >/dev/null 2>&1; then
         index($0, "SHELF-MKDIR: transfer timeout") { hit("mkdir-timeout") }
         index($0, "hook 未安装") { hit("hook-missing") }
         index($0, "processed more than once") { hit("dup-ext") }
+        index($0, "xochitl.service: Watchdog timeout") { hit("xochitl-watchdog") }
         /Out of memory|oom-kill|invoked oom-killer|killed by the OOM killer/ { hit("oom") }
         END { for (k in c) print "ALERT" T P T k T c[k] T s[k] }'
     if [ "$XP" != "0" ]; then
@@ -389,6 +392,19 @@ judge_xochitl() {
         item ok "$S" "待换入区 so-pending" "空"
     fi
     [ -z "$mk" ] || item warn "$S" "待生效标记" "$mk——落盘了还没重启 xochitl 生效（sh deploy-xovi-apply.sh）"
+
+    # 看门狗时限：systemd 把 WatchdogSec=300 显示成 "5min"，这里统一折成秒比较
+    wu="$(dget X_WATCHDOG_USEC)"; wd="$(dget X_WATCHDOG_DROPIN)"
+    ws="$(echo "$wu" | awk '{ t = 0; n = split($0, p, " "); for (i = 1; i <= n; i++) { v = p[i] + 0; u = p[i]; sub(/^[0-9.]+/, "", u)
+            if (u == "min") t += v * 60; else if (u == "h") t += v * 3600; else if (u == "ms") t += v / 1000; else if (u == "us") t += v / 1000000; else t += v }
+            print int(t) }')"
+    if [ "$ws" = "$XOCHITL_WATCHDOG_SEC" ]; then
+        item ok "$S" "xochitl 看门狗" "WatchdogUSec=$wu（已放宽；几万页的书打开时主线程要算 60 秒以上）"
+    elif [ "$wd" = 1 ]; then
+        item warn "$S" "xochitl 看门狗" "drop-in 已落盘但当前是 WatchdogUSec=$wu——整机重启后才生效（sh deploy-xovi-apply.sh）"
+    else
+        item warn "$S" "xochitl 看门狗" "WatchdogUSec=$wu（官方默认；几万页的书打开时会被杀掉重启）——sh deploy-xochitl-watchdog.sh 后整机重启"
+    fi
 }
 
 judge_qmd() {
@@ -467,7 +483,7 @@ judge_services() {
 judge_alerts() {
     S="5. 本次开机以来的关键告警"
     if [ "$(dget JOURNAL)" != 1 ]; then item warn "$S" "journal" "设备上没有 journalctl，只看了 dmesg"; fi
-    for key in panic oom hook-missing dup-ext mkdir-timeout; do
+    for key in panic oom hook-missing dup-ext mkdir-timeout xochitl-watchdog; do
         # journal 与 dmesg 可能同一事件各一份：取较大计数，样例优先 journal
         r="$(awk -F'\t' -v k="$key" '$1 == "ALERT" && $3 == k { if ($4 + 0 > c) c = $4 + 0; if (s == "" || $2 == "J") s = $5 } END { if (c) print c "\t" s }' "$DUMP")"
         case "$key" in
@@ -476,6 +492,7 @@ judge_alerts() {
             hook-missing) t="hook 未安装"; lvl=fail; zero="无「hook 未安装」" ;;
             dup-ext) t="扩展重复注册"; lvl=fail; zero="无「processed more than once」" ;;
             mkdir-timeout) t="SHELF-MKDIR 超时"; lvl=warn; zero="无「SHELF-MKDIR: transfer timeout」" ;;
+            xochitl-watchdog) t="xochitl 看门狗超时"; lvl=warn; zero="无「xochitl.service: Watchdog timeout」（主线程没有卡到被 systemd 杀）" ;;
         esac
         if [ -n "$r" ]; then
             item "$lvl" "$S" "$t" "$(echo "$r" | cut -f1) 条相关日志；最近一条：$(echo "$r" | cut -f2-)"

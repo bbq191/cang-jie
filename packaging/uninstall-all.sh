@@ -14,6 +14,7 @@
 #   ui-font                        从 extensions.d 摘除 .so（不碰 ~/.local/share/shelf/ui-font.json 与界面字体文件——那是 shelf 的数据）
 #   handwriting-stroke（已移除）    手写优化：摘除 extensions.d/hw-stroke.so 与待换入区副本（2026-09-30 起不再安装；
 #                                  install-all 重新部署时也会自动清，函数在 removal.sh）
+#   xochitl-watchdog               删 xovi/services/xochitl.service/xochitl-watchdog.conf（整机重启后回到官方 60 秒看门狗）
 #   chrony-boot-wakelock / xovi-persist / wifi-watch   停用 + 删 /usr 单元（dm-verity 门，跟安装时同一套 devlib 写法）；
 #                                  wifi-watch 另删 ~/.local/bin/wifi-watch.sh 与它写的上网探测状态文件（单元删不掉时都保留，
 #                                  否则服务反复起不来）
@@ -89,6 +90,13 @@ DEVICE_SCRIPT
 uninstall_chrony_boot_wakelock() { uninstall_usr_step chrony-boot-wakelock.service $(step_payload chrony-boot-wakelock); }
 # shellcheck disable=SC2046
 uninstall_xovi_persist() { uninstall_usr_step xovi-reenable.service $(step_payload xovi-persist); }
+# xochitl 看门狗 drop-in：只删 xovi 持久源目录里我们放的那一份；/etc 里 tmpfs 的拷贝下次整机重启自然消失
+uninstall_xochitl_watchdog() { dev_script <<'DEVICE_SCRIPT'
+set -eu
+F="$CJ_XOVI/services/xochitl.service/xochitl-watchdog.conf"
+if [ -f "$F" ]; then rm -f "$F"; echo "-- 已删 $F（整机重启后看门狗回到官方 60 秒）"; else echo "-- 没有 $F，跳过"; fi
+DEVICE_SCRIPT
+}
 
 # shellcheck disable=SC2046
 uninstall_wifi_watch() { dev_script $(step_payload wifi-watch) <<'DEVICE_SCRIPT'

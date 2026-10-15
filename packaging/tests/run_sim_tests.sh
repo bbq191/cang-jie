@@ -733,6 +733,20 @@ check "timezone-cn：设备镜像没有 zoneinfo → 警告并跳过（退出 0�
 RE_ETC_AFTER="$(md5sum /etc/chrony.conf 2>/dev/null | cut -c1-32)$(readlink -f /etc/localtime 2>/dev/null)"
 check "chrony/timezone 测试没有碰开发机真实的 /etc/chrony.conf 与 /etc/localtime" test "$RE_ETC_BEFORE" = "$RE_ETC_AFTER"
 
+section "xochitl-watchdog（2026-10-15：几万页的书打开时主线程算 60 秒以上，放宽 xochitl 看门狗）"
+new_sandbox; WD="$R/home/root/xovi/services/xochitl.service"; WF="$WD/xochitl-watchdog.conf"
+( cd "$PKG" && run sh deploy-xochitl-watchdog.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+check "xochitl-watchdog：没装 xovi（无 services/xochitl.service）→ 跳过、退出 0、不建目录、不记待生效" test "$rc" -eq 0 -a ! -e "$WD" -a ! -e "$CJ_PENDING_DIR/xochitl-watchdog" -a -n "$(grep '跳过' "$R/out.txt")"
+mkdir -p "$WD"; : > "$CJ_SIM_LOG"
+( cd "$PKG" && run sh deploy-xochitl-watchdog.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+check "xochitl-watchdog：写 drop-in（[Service] WatchdogSec=300，644）、记待生效标记、不碰 xochitl" test "$rc" -eq 0 -a -n "$(grep -x 'WatchdogSec=300' "$WF")" -a -n "$(grep -x '\[Service\]' "$WF")" -a "$(stat -c %a "$WF")" = 644 -a -f "$CJ_PENDING_DIR/xochitl-watchdog" -a "$(count_log 'xochitl$')" = 0 -a "$(count_log 'xovi/start')" = 0
+rm -rf "$CJ_PENDING_DIR"; SUMW="$(md5sum < "$WF")"
+( cd "$PKG" && run sh deploy-xochitl-watchdog.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+check "xochitl-watchdog 第二次（内容没变）：不改文件、不记待生效（重跑 install-all 不白白整机重启）" test "$rc" -eq 0 -a "$SUMW" = "$(md5sum < "$WF")" -a ! -e "$CJ_PENDING_DIR/xochitl-watchdog"
+check "xochitl-watchdog：目录里不留临时文件" test -z "$(find "$WD" -name '.*.new.*')"
+( cd "$PKG" && run sh uninstall-all.sh 127.0.0.1 --skip "$(bash -c "cd '$PKG' && . ./lib.sh && uninstall_only_skip xochitl-watchdog")" ) >"$R/out.txt" 2>&1; rc=$?
+check "uninstall-all 只卸 xochitl-watchdog：删掉 drop-in、目录本身（xovi 的）保留" test "$rc" -eq 0 -a ! -e "$WF" -a -d "$WD"
+
 # ═══════════════════════════ 7. 2026-09-24 审计新增 ═══════════════════════════
 section "2026-09-24：待换入 .so 与卸载 / 重启设备后 / 重复部署不重复备份"
 HLSO="$REPO/enhance/hl-snap/hl-snap.so"
@@ -803,6 +817,7 @@ mk_dump() {
     {
         echo "VERSION|1"; echo "NOW|2000000000"; echo "UPTIME|100000.00"; echo "FW_SHA|$FW_OK"; echo "FW_VER|3.28.0.172"
         echo "X_ACTIVE|active"; echo "X_PID|4242"; echo "X_NRESTARTS|0"; echo "X_START_MONO|7400000"; echo "X_XOVI|1"
+        echo "X_WATCHDOG_USEC|5min"; echo "X_WATCHDOG_DROPIN|1"
         echo "XMAP|/home/root/xovi/extensions.d/hl-snap.so|3|0"
         echo "HAS_XOVI|1"; echo "EXT_FILE|hl-snap.so|1999000000"
         echo "HAS_QRR|1"
@@ -853,6 +868,9 @@ vcase "有待生效标记 → ⚠" 0 "⚠ 待生效标记：shelf-qmd" "\$a PEND
 vcase "xovi 没在 xochitl 里生效 → ✗" 1 "✗ xovi：xochitl 没带 xovi" "s/^X_XOVI${T}1/X_XOVI${T}0/"
 vcase "设备没装 xovi → 只 ⚠" 0 "⚠ xovi：设备上没有 xovi.so" "s/^X_XOVI${T}1/X_XOVI${T}0/" "s/^HAS_XOVI${T}1/HAS_XOVI${T}0/" "/^XMAP/d" "/^EXT_FILE/d"
 vcase "xochitl NRestarts>0 → ⚠" 0 "⚠ xochitl：active，MainPID=4242，NRestarts=2" "s/^X_NRESTARTS${T}0/X_NRESTARTS${T}2/"
+vcase "xochitl 看门狗是官方 1min、没放 drop-in → ⚠" 0 "⚠ xochitl 看门狗：WatchdogUSec=1min（官方默认" "s/^X_WATCHDOG_USEC${T}5min/X_WATCHDOG_USEC${T}1min/;s/^X_WATCHDOG_DROPIN${T}1/X_WATCHDOG_DROPIN${T}0/"
+vcase "xochitl 看门狗 drop-in 已落盘、还没重启 → ⚠" 0 "⚠ xochitl 看门狗：drop-in 已落盘但当前是 WatchdogUSec=1min" "s/^X_WATCHDOG_USEC${T}5min/X_WATCHDOG_USEC${T}1min/"
+vcase "journal 有 xochitl 看门狗超时 → ⚠" 0 "⚠ xochitl 看门狗超时：" "\$a ALERT${T}J${T}xochitl-watchdog${T}2${T}xochitl.service: Watchdog timeout (limit 1min)!"
 vcase "xochitl 不是 active → ✗" 1 "✗ xochitl：is-active=failed" "s/^X_ACTIVE${T}active/X_ACTIVE${T}failed/"
 vcase "固件哈希不在白名单 → ✗" 1 "✗ 固件：IMG_VERSION=3.28.0.172，sha256=deadbeef 不在白名单" "s/^FW_SHA${T}.*/FW_SHA${T}deadbeef/"
 echo "cafebabe  (--force 追加，未验证，2026-09-25)" > "$CJ_ALLOWLIST_LOCAL"
@@ -880,14 +898,14 @@ vcase "退役单元都不在 → 不报" 0 "✓ 单元：12/12 个在位" "\$a U
 check "  └ 没有遗留提示" test -z "$(vline '已退役/旧命名的遗留')"
 ONLY_SKIP="$(bash -c "cd '$PKG' && . ./lib.sh && uninstall_only_skip battop handwriting-stroke")"
 vcase "已移除的手写优化 hw-stroke.so 还在 extensions.d（旧设备）→ ⚠（不当成正常扩展），给清理命令" 0 "⚠ 扩展 hw-stroke.so：已移除的手写优化（2026-09-30）还在 extensions.d 里——清掉：sh install-all.sh" "\$a EXT_FILE${T}hw-stroke.so${T}1999000000" "\$a XMAP${T}/home/root/xovi/extensions.d/hw-stroke.so${T}3${T}0"
-check "  └ 清理命令只留 battop/handwriting-stroke 两步（--skip $ONLY_SKIP）、没把它报成 ✓" test "$ONLY_SKIP" = "chrony-boot-wakelock,wifi-watch,xovi-persist,hl-snap,ui-font,shelf,sidebar-entry" -a -n "$(vline "uninstall-all.sh --skip $ONLY_SKIP")" -a -z "$(vline '✓ 扩展 hw-stroke.so')"
+check "  └ 清理命令只留 battop/handwriting-stroke 两步（--skip $ONLY_SKIP）、没把它报成 ✓" test "$ONLY_SKIP" = "chrony-boot-wakelock,wifi-watch,xovi-persist,xochitl-watchdog,hl-snap,ui-font,shelf,sidebar-entry" -a -n "$(vline "uninstall-all.sh --skip $ONLY_SKIP")" -a -z "$(vline '✓ 扩展 hw-stroke.so')"
 vcase "已移除的 hw-stroke.so 在待换入区 → ⚠" 0 "⚠ 待换入区 hw-stroke.so：已移除的手写优化还在待换入区里" "\$a PENDING${T}so-pending:hw-stroke.so"
 vcase "已移除的电池刺客单元/二进制还在（旧设备）→ ⚠、不计入在位统计" 0 "⚠ battop.service：已移除的电池刺客（2026-09-30）遗留（单元 在，载荷 在）——清掉：sh install-all.sh" "s/^UNIT${T}removed${T}battop.service${T}0${T}0/UNIT${T}removed${T}battop.service${T}1${T}1/"
 check "  └ 在位统计仍是 12/12" test -n "$(vline '✓ 单元：12/12 个在位')"
 vcase "旧版遗留的 battop.timer 还在 → ⚠" 0 "⚠ battop.timer：已移除的电池刺客（2026-09-30）遗留（单元 在，载荷 不在）" "s/^UNIT${T}removed${T}battop.timer${T}0/UNIT${T}removed${T}battop.timer${T}1/"
 vcase "已退役的侧栏 qmd 还在、appload 也在 → ⚠" 0 "⚠ koreader-sidebar-entry.qmd：已退役的 KOReader/WeRead 侧栏入口还在" "\$a QRR_FILE${T}koreader-sidebar-entry.qmd${T}1" "s/^HAS_APPLOAD${T}0/HAS_APPLOAD${T}1/"
 vcase "已退役的侧栏 qmd 还在、appload 已卸 → ✗（它 IMPORT 的模块不在了）" 1 "✗ koreader-sidebar-entry.qmd：已退役的侧栏入口还在，而 appload 已不在" "\$a QRR_FILE${T}koreader-sidebar-entry.qmd${T}1"
-check "  └ 清理命令只留 sidebar-entry 一步（--skip 由步骤表算出，不手写）" test -n "$(vline "uninstall-all.sh --skip chrony-boot-wakelock,wifi-watch,xovi-persist,hl-snap,ui-font,shelf,battop,handwriting-stroke")"
+check "  └ 清理命令只留 sidebar-entry 一步（--skip 由步骤表算出，不手写）" test -n "$(vline "uninstall-all.sh --skip chrony-boot-wakelock,wifi-watch,xovi-persist,xochitl-watchdog,hl-snap,ui-font,shelf,battop,handwriting-stroke")"
 vcase "journal 有 panic → ✗" 1 "✗ panic：1 条相关日志；最近一条：thread 'main' panicked at src/x.rs" "\$a ALERT${T}J${T}panic${T}1${T}thread 'main' panicked at src/x.rs"
 vcase "dmesg 与 journal 同一次 OOM 各一份 → 取较大计数、样例用 journal" 1 "✗ OOM：3 条相关日志；最近一条：J-sample" "\$a ALERT${T}K${T}oom${T}3${T}K-sample" "\$a ALERT${T}J${T}oom${T}2${T}J-sample"
 vcase "SHELF-MKDIR 超时只 ⚠" 0 "⚠ SHELF-MKDIR 超时：4 条相关日志" "\$a ALERT${T}J${T}mkdir-timeout${T}4${T}SHELF-MKDIR: transfer timeout after 9000ms"
