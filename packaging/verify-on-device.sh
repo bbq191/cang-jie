@@ -251,7 +251,8 @@ if command -v journalctl >/dev/null 2>&1; then
         index($0, "SHELF-MKDIR: transfer timeout") { hit("mkdir-timeout") }
         index($0, "hook 未安装") { hit("hook-missing") }
         index($0, "processed more than once") { hit("dup-ext") }
-        index($0, "xochitl.service: Watchdog timeout") { hit("xochitl-watchdog") }
+        # 只认 systemd 自己那一行（以单元名开头）：memfaultd 开机打印的配置里也含这串文字（"pattern": ".*xochitl.service: Watchdog timeout.*"），10-15 误报过
+        /^xochitl\.service: Watchdog timeout/ { hit("xochitl-watchdog") }
         /Out of memory|oom-kill|invoked oom-killer|killed by the OOM killer/ { hit("oom") }
         END { for (k in c) print "ALERT" T P T k T c[k] T s[k] }'
     if [ "$XP" != "0" ]; then
