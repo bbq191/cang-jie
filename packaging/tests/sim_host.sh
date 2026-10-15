@@ -214,9 +214,9 @@ check "install-all 两遍：部署记录各记一条、都是 install-all（编�
 ( cd "$PKG" && hrun sh uninstall-all.sh 127.0.0.1 ) >/dev/null 2>&1; rc3=$?
 n3="$(count_log '^ssh')"
 echo "       （install-all 首装 ssh=$n1 scp=$s1；重跑 ssh=$n2 scp=$s2；uninstall-all ssh=$n3；加固前依次 24/12、20/0、13）"
-check "install-all 首装：17 次 ssh（加固前 24）" test "$rc" -eq 0 -a "$n1" = 17
-check "install-all 重跑（无变化）：12 次 ssh、不传任何文件（加固前 20，且每次重推 20MB 书架载荷）" test "$rc2" -eq 0 -a "$n2" = 12 -a "$s2" = 0
-check "uninstall-all：11 次 ssh（加固前 13）" test "$rc3" -eq 0 -a "$n3" = 11
+check "install-all 首装：18 次 ssh（加固前 24；10-15 加 xochitl-watchdog 一步 +1）" test "$rc" -eq 0 -a "$n1" = 18
+check "install-all 重跑（无变化）：13 次 ssh、不传任何文件（加固前 20，且每次重推 20MB 书架载荷；xochitl-watchdog +1）" test "$rc2" -eq 0 -a "$n2" = 13 -a "$s2" = 0
+check "uninstall-all：12 次 ssh（加固前 13；xochitl-watchdog +1）" test "$rc3" -eq 0 -a "$n3" = 12
 new_sandbox; : > "$CJ_SIM_LOG"
 ( cd "$PKG" && CJ_SKIP_BUILD=1 DEFER_XOVI_START=1 hrun sh deploy-hl-snap.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
 check "单独 deploy-hl-snap 首装：3 次 ssh（连通/比对/复核并安装）+ 4 次 scp" test "$rc" -eq 0 -a "$(count_log '^ssh')" = 3 -a "$(count_log '^scp')" = 4

@@ -8,6 +8,7 @@
 #   timezone-cn          默认时区 Asia/Shanghai（跟 xovi/vellum 无关）
 #   wifi-watch           WiFi 载波假死看护（2026-09-20 接入；跟 xovi/vellum 无关）
 #   xovi-persist         xovi 开机持久化恢复链（需要 vellum add xovi）
+#   xochitl-watchdog     xochitl 看门狗 60→300 秒（xovi/services 下的 drop-in；几万页的书打开时主线程要算 60 秒以上；只落盘）
 #   hl-snap              荧光笔 CJK 精确吸附（需要 vellum add xovi；只落盘）
 #   ui-font              界面字体（xovi 扩展，换 xochitl 应用默认字体；需要 vellum add xovi；只落盘）
 #   （sidebar-entry 已退役，2026-09-29：设备不再用 KOReader/WeRead/appload；安装件 09-30 已删，uninstall-all 仍会清，见 lib.sh STEP_RETIRED）
