@@ -12,7 +12,7 @@
 
 ## 2026-10
 
-### 10-16（单击翻页热区下沿贴到书页底边；分支 `feat/tap-zone-page-bottom`，未部署）
+### 10-16（单击翻页热区下沿贴到书页底边；分支 `feat/tap-zone-page-bottom`，未部署）〔17:08 已部署（`deploy.sh --only book` + 整机重启），核对 41✓ 1⚠（刚开机）0✗，journal 有 `CJ-PAGE-TURN: loaded`；新热区未手测，书页矩形实际值待开书日志〕
 
 - 单击翻页的纵向范围改成从屏幕高度 35% 到书页显示区域的底边（`DeviceSceneView.pageBorderRect` 的底边，不是屏幕底边；底部工具栏展开时再让到 `availableSceneRect` 之内），宽度仍是左右各 7%（用户定，不加宽）。开书时那行 `CJ-PAGE-TURN: cfg tap=…` 顺带打出书页矩形、可用区域和视图高度，便于核对下沿；单击时仍不打日志。3.28、3.29 离线套补丁都通过。网页说明、白皮书与示意图同步。改了 qmd，要部署 book 服务并整机重启。
 
