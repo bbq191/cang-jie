@@ -12,7 +12,7 @@
 
 ## 2026-10
 
-### 10-16（翻页方向由书决定；分支 `feat/rtl-from-book`，未部署）
+### 10-16（翻页方向由书决定；分支 `feat/rtl-from-book`，未部署）〔11:30 已部署（`deploy.sh --only book` + 整机重启），核对 41✓ 1⚠ 0✗；设备书库 128 本 EPUB 里 36 本标了 rtl。11:32 用户真机测试通过：《浪客行 第01卷》日志 `rtl book`，左滑 = 上一页、点左边缘 = 下一页；普通书方向不变〕
 
 - EPUB 自己在 OPF 里标了从右往左（`page-progression-direction="rtl"`，日漫常见）的书，在 xochitl 里按书的方向翻：左滑、键盘右箭头、点右边缘（单击翻页开着时）= 上一页，反过来 = 下一页。没标的书、PDF、笔记本不变。没有开关，也不认手动清单；Calibre 转的日漫多半没标，要在电脑上用 sheng-ren 标好再传。10-07 删掉的「日漫翻页规则」只按标记的那部分回来了。
 - 3.28 和 3.29 用同一份补丁（对调做在两版都有、只被用户翻页调用的 `moveForward` / `moveBackward` 里）。book-serve 恢复 `GET /reading-direction/{uuid}`。

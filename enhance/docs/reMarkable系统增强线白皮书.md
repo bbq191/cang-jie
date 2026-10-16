@@ -436,7 +436,7 @@ cd enhance/ui-font && make aarch64     # 产物 ui-font.so（已提交进仓库�
 |---|---|---|
 | 第六轮审计（10-09）：壁纸先裁再缩放、池只认普通文件、找主进程改读 `/proc`；font-serve `fc-cache` 只扫用户目录、一批只跑一次、`fc-scan`/`fc-cache` 超时、只认普通文件 | 10-09 13:48 `install-all`，38✓ 1⚠（刚开机）0✗ | 传一张横图，休眠屏取景正常、上传明显变快；一次上传两三个字体，回执很快、菜单出现新字体 |
 | 10-09 两处 C 隐患修复（glyph 上界 #1、ui-font 非 PIE 拒加载 #3）与调用桩分配失败时恢复页权限 | 10-09 13:48 / 16:32 | 这两处加上失败路径在当前固件上都走不到，**只有离线反汇编、ELF 头核对和 host 单测**；部署后两个扩展照常加载。还要划几段中文确认吸附照常 |
-| 按书的方向翻页（10-16 加回） | **未部署**。离线：3.28 与 3.29 真实 QML 上 `apply-diffs` 三个文件都应用，两个函数的对调分支插在函数体最前面；qmllint 报错与旧补丁相同（都是类型未解析）；book-serve 测试覆盖 rtl / ltr / 不是 EPUB / 坏 zip / 不存在 / 非法 uuid / 缓存失效 | 部署 + 整机重启后开一本 OPF 标了 rtl 的漫画：journal 有 `rtl book`，左滑 = 上一页、右滑 = 下一页；开一本普通书方向照旧；单击翻页开着时点右边缘 = 上一页 |
+| 按书的方向翻页（10-16 加回） | **10-16 已部署，真机通过**（3.29.0.153）：《浪客行 第01卷》journal `rtl book`，左滑 = 上一页、单击左边缘 = 下一页，普通书方向不变。离线：3.28 与 3.29 真实 QML 上 `apply-diffs` 三个文件都应用，两个函数的对调分支插在函数体最前面；qmllint 报错与旧补丁相同（都是类型未解析）；book-serve 测试覆盖 rtl / ltr / 不是 EPUB / 坏 zip / 不存在 / 非法 uuid / 缓存失效 | 部署 + 整机重启后开一本 OPF 标了 rtl 的漫画：journal 有 `rtl book`，左滑 = 上一页、右滑 = 下一页；开一本普通书方向照旧；单击翻页开着时点右边缘 = 上一页 |
 | 删日漫翻页规则 | 10-07 整机重启，自检通过；journal 有 `CJ-PAGE-TURN: loaded`、无 qmd 解析报错；离线 `apply-diffs` 三个 AFFECT 都应用，新旧输出差异正好是删掉的代码 | 「系统增强」只剩单击翻页；单击左右边缘照常翻页；`cfg tap=…` 正常 |
 | 第五轮审计（09-30）：壁纸收到 `IN_IGNORED` 重建监听、`shelf-mkdir-agent.qmd` 失败打日志 | 09-30 14:10，38✓ | 壁纸照常轮换；建文件夹失败时 journal 有 `SHELF-MKDIR: failed` |
 | 第四轮审计（09-25）：font-serve 开机复用索引、上传暂存移到 `/home`；壁纸去重改用 `/proc/uptime`；mkdir / trash 代理出错退避 | 随 09-25 / 09-30 部署上机 | `systemctl restart font-serve` 后"索引 N 个家族"秒回、`fonts.conf` mtime 不变；停掉 book-serve 时代理不再每 15 秒重试。代理 qmd 的 `apply-diffs` **只在带同名锚点的桩 QML 上跑过** |
@@ -491,7 +491,7 @@ cd enhance/ui-font && make aarch64     # 产物 ui-font.so（已提交进仓库�
 | 09-25 第四轮 | font-serve 开机复用索引、`fonts.conf` 不变不重写；上传暂存移到 `~/.local/state/shelf/upload`；壁纸去重改用 `/proc/uptime`；代理 qmd 出错退避 | 已上机，功能未逐项手测 |
 | 09-30 第五轮 | 壁纸收到 `IN_IGNORED` 重建监听；hl-snap `make clean` 不删已提交的胶水；font-serve 回执去掉 KOReader 提示；mkdir 代理失败打日志；发现 `check-compatibility` 不做校验 | 09-30 14:10 部署 |
 | 10-07 | 删日漫翻页规则；新增界面字体 ui-font | 已部署；ui-font 真机目测通过 |
-| 10-16 | 按书里 OPF 标的方向翻页加回（没有开关、没有手动清单） | 未部署 |
+| 10-16 | 按书里 OPF 标的方向翻页加回（没有开关、没有手动清单） | 已部署，真机通过 |
 | 10-09 第六轮 | 壁纸先裁再缩放（12MP 横图 1.72s → 1.01s，中间图 15MB → 6.5MB）；font-serve `fc-cache` 只扫用户目录（开发机 CPU 0.7s → 0.006s）、一批一次、加超时；两个服务的通用代码迁到 rmsvc-core。**三处 C 隐患**：#1 glyph 上界、#2 代码页恢复 `r-x`（同日又补了调用桩分配失败时的恢复）、#3 ui-font 非 PIE 防递归 | 13:48 / 16:32 部署；#2 真机确认，#1 #3 只有离线证据 |
 | 10-10 第七轮 | `minijson` 合并、`cj_insn_pc_relative` 防线（审计 EN-2） | 10-12 已部署，未手测 |
 | 10-10 重构第二阶段 | 壁纸监听迁 `fswatch::watch_with`（CORE-7）、`UploadTarget`（CORE-6）、错误分级（CORE-1）、`sse_reply_for`（CORE-5）；`ttf` 模块与 `SleepScreenPath` 常量从基座搬回服务（CORE-3）；上传整体错误类型化（multipart 400 / 暂存 500） | 未部署 |
