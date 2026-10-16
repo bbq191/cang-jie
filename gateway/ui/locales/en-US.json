@@ -401,7 +401,7 @@
   "manage.enhance.pageTurn.title": "xochitl reader page turns",
   "manage.enhance.pageTurn.desc": "Only affects xochitl's built-in reader and is off by default; it is read when a book is opened, so reopen the book after changing it.",
   "manage.enhance.pageTurn.tapToggle": "Tap to turn pages",
-  "manage.enhance.pageTurn.tapHint": "Tap the left or right edge (about 7% wide, 45%–80% of the screen height) to turn pages: right edge = next, left edge = previous. Elsewhere taps work as usual (double-tap for text, links).",
+  "manage.enhance.pageTurn.tapHint": "Tap the left or right edge (about 7% wide, 35%–75% of the screen height) to turn pages: right edge = next, left edge = previous. Elsewhere taps work as usual (double-tap for text, links).",
   "manage.subnav.health": "🩺 Device health",
   "health.title": "Device health",
   "health.lead": "A read-only check-up: data is collected only when you open this screen or press Refresh, never sampled in the background. Tap a badge for details.",
