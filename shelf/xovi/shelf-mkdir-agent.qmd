@@ -26,6 +26,11 @@
 ;   顶层（书库根）`parentFolderId` = 空字符串——`currentFolderId` 声明处的缺省值就是 `""`
 ;   （`qml_00e46516.qml:20 property string currentFolderId: ""`），跟本项目其余地方"根文件夹 parent
 ;   为空串"的约定一致（book-serve `.metadata` 落地、`Xochitl::upload` 的 `set_folder("")` 同理）。
+;
+; 【3.29】固件 3.29.0.153（2026-10-16 离线核对）：界面层的 `Library`（C++ `LibraryFacade`）元数据里已没有
+;   `createCollection`，挪到了 `LibraryController`（参数 parentId、visibleName）；3.29 自己的建文件夹窗口
+;   调的就是 `root.libraryController.createCollection(上级 id 字符串, 名字)`。本代理运行时看 `Library` 上
+;   有没有这个函数，没有就用 `LibraryController`，两个固件同一份补丁。
 ;   **没有真机点过这个对话框做交叉验证**（那样会真建一个用户可见的文件夹，干扰度更高）——这条结论
 ;   目前只到"反编译 + 静态调用链一致"这一步，比"形状看着像"更硬，但还没有"UI 手点后 .metadata 真的
 ;   多了一条 CollectionType 记录"这层最终验证；靠母版库「加入 xochitl → 文件夹」的真实投递流程间接
@@ -134,9 +139,11 @@ AFFECT /qml/device/view/main/MainView.qml
                                 // 按 items（带上级文件夹 uuid，空串＝书库根）建，见文件头【按层建】。
                                 var items = JSON.parse(x.responseText).items || [];
                                 count = items.length;
+                                // 3.28 的 createCollection 在 Library 上；3.29 起只在 LibraryController 上（见文件头【3.29】）。
+                                var mk = (typeof Library.createCollection === "function") ? Library : LibraryController;
                                 for (var i = 0; i < items.length; i++) {
                                     var parent = items[i].parent || "";
-                                    Library.createCollection(parent, items[i].name);
+                                    mk.createCollection(parent, items[i].name);
                                     console.log("SHELF-MKDIR: created " + items[i].name + (parent ? " in " + parent : ""));
                                 }
                             } catch (e) {
