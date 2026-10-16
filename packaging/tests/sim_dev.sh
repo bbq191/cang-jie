@@ -124,6 +124,7 @@ mkdir -p "$DS/h/.local/bin" "$DS/h/xovi/extensions.d" "$DS/h/xovi/exthome/qt-res
 echo g > "$DS/h/.local/bin/gateway"; echo old > "$DS/h/xovi/extensions.d/a.so"
 echo new > "$DS/h/.cangjie-stage/so-pending/a.so"; echo fresh > "$DS/h/.cangjie-stage/so-pending/b.so"
 echo q > "$DS/h/xovi/exthome/qt-resource-rebuilder/x.qmd"; echo t > "$DS/h/xovi/exthome/qt-resource-rebuilder/hashtab"
+# shellcheck disable=SC2034  # 给紧接着 source 的 devlib.sh 用
 ds_run() { ( CJ_HOME="$DS/h"; CJ_XOVI="$DS/h/xovi"; CJ_SO_PENDING_DIR="$DS/h/.cangjie-stage/so-pending"; CJ_DEPLOY_LOG="$DS/log.jsonl"; CJ_DEPLOY_KEEP=2
            CJ_STAMP_META="$1"; . "$PKG/devlib.sh"; cj_deploy_stamp ) >/dev/null 2>&1; }
 ds_run ""
