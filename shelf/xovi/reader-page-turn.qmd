@@ -10,7 +10,8 @@
 ;   10-07 删掉的旧版「日漫翻页规则」带网页开关和手动清单 rtl-overrides.json，都不加回。
 ;
 ; 【单击翻页开关】tapPageTurn，在「管理 → 系统增强」，默认关：点屏幕左右边缘翻页。区域 = 左右各 7% 宽、纵向只在屏幕高度
-;   35%–85% 之间（用户定，10-16 由 45%–80% 先改 35%–75%、再改 35%–85%；避开顶部工具栏、底部进度条和握持的四角）。其余位置交回原生逻辑（双击进文本、点链接、选图照常）。
+;   35% 到书页显示区域底边（pageBorderRect，不是屏幕底边）之间（用户定，10-16 由 45%–80% 先后改 35%–75%、35%–85%、
+;   再改成到书页底边；避开顶部工具栏和握持的上角）。其余位置交回原生逻辑（双击进文本、点链接、选图照常）。
 ;   原来还有「日漫翻页规则」rtlPageTurn（OPF 标了 rtl 的书把左右滑动/点按对调，方向问 book-serve /reading-direction）：
 ;   2026-10-07 用户定书架只负责入库、翻页方向交给书本身，整个删掉——xochitl 不看 OPF 的方向标记，日漫在 xochitl 里从左往右翻。
 ;   开关写在 ~/.local/share/cangjie-ime/reading-qol.json（网关 enhance/qol.rs 全量写回）。
@@ -86,7 +87,9 @@ AFFECT /qml/device/view/documentview/DocumentView.qml
                         console.warn("CJ-PAGE-TURN: config read failed " + e);
                     }
                     sceneView.cjTapPageTurn = tap;
-                    console.warn("CJ-PAGE-TURN: cfg tap=" + tap);
+                    // 顺带记下书页显示区域和可用区域（单击翻页的下沿就取这两个），开书一次一行。
+                    console.warn("CJ-PAGE-TURN: cfg tap=" + tap + " page=" + sceneView.pageBorderRect
+                        + " avail=" + sceneView.availableSceneRect + " h=" + sceneView.height);
                     var did = String(root.document.id).replace(/[{}]/g, "");
                     var x = new XMLHttpRequest();
                     x.onreadystatechange = function() {
@@ -159,14 +162,22 @@ AFFECT /qml/device/view/documentview/SceneViewGestures.qml
                     && !view.zoomedOut
                     && !view.notePage) {
                     var _cjx = pos.x / touchArea.width;
-                    var _cjy = pos.y / touchArea.height;
                     var _cjdir = 0;
-                    // 纵向只在 35%–85% 生效（距顶 35%、距底 15%）；横向左右各 7% 边缘。
-                    if (_cjy > 0.35 && _cjy < 0.85) {
-                        if (_cjx < 0.07) {
-                            _cjdir = -1;
-                        } else if (_cjx > 0.93) {
-                            _cjdir = 1;
+                    // 横向左右各 7% 边缘；纵向从屏幕高度 35% 起，到书页显示区域的底边为止
+                    // （pageBorderRect = 书页映射到屏幕上的矩形，不是屏幕底边），且不超过可用区域
+                    // availableSceneRect（工具栏在底部展开时让开）。touchArea 铺满 DeviceSceneView，坐标一致。
+                    if (_cjx < 0.07 || _cjx > 0.93) {
+                        var _cjBottom = touchArea.height;
+                        var _cjPb = view.pageBorderRect;
+                        if (_cjPb && _cjPb.height > 0) {
+                            _cjBottom = Math.min(_cjBottom, _cjPb.y + _cjPb.height);
+                        }
+                        var _cjAv = view.availableSceneRect;
+                        if (_cjAv && _cjAv.height > 0) {
+                            _cjBottom = Math.min(_cjBottom, _cjAv.y + _cjAv.height);
+                        }
+                        if (pos.y > touchArea.height * 0.35 && pos.y < _cjBottom) {
+                            _cjdir = _cjx < 0.07 ? -1 : 1;
                         }
                     }
                     if (_cjdir !== 0) {

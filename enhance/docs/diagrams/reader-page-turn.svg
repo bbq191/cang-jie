@@ -10,7 +10,7 @@
 <polyline points="74,225.5 246,225.5" fill="none" stroke="#CBD5E1" stroke-width="1.5" stroke-dasharray="5 4"/>
 <polyline points="74,390.5 246,390.5" fill="none" stroke="#CBD5E1" stroke-width="1.5" stroke-dasharray="5 4"/>
 <text xml:space="preserve" x="270" y="229.5" font-size="11" fill="#6B7280" text-anchor="start">35%</text>
-<text xml:space="preserve" x="270" y="394.5" font-size="11" fill="#6B7280" text-anchor="start">85%</text>
+<text xml:space="preserve" x="270" y="394.5" font-size="11" fill="#6B7280" text-anchor="start">书页底边</text>
 <text xml:space="preserve" x="160" y="299.25" font-size="11" fill="#6B7280" text-anchor="middle">中间照常：</text>
 <text xml:space="preserve" x="160" y="317.25" font-size="11" fill="#6B7280" text-anchor="middle">选字、点链接</text>
 <text xml:space="preserve" x="67" y="460" font-size="11" fill="#6B7280" text-anchor="middle">左 7%</text>
