@@ -414,6 +414,8 @@
   "health.upMins": "{m} 分钟",
   "health.xovi": "xovi 生效",
   "health.extensions": "已加载的扩展",
+  "health.refused": "自己拒绝加载的扩展",
+  "health.refusedTitle": "这些扩展已经装在设备上，但启动时认不出当前固件，自己没有加载（多半是系统升级后特征码对不上），功能不生效；要等扩展适配新固件",
   "health.deleted": "换了文件未重启",
   "health.deletedTitle": "xochitl 还在用这些扩展被替换或删除之前的旧版本（进程内存映射里标着 (deleted)），整机重启后才用上新文件；别单独重启 xochitl（它退出时有概率崩溃）",
   "health.soPending": "待换入的扩展",

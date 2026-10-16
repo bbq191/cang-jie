@@ -111,6 +111,9 @@ pub struct XochitlMaps {
     pub extensions: Vec<String>,
     /// 其中文件已被删除/替换、进程还在用旧的那份（maps 行尾 ` (deleted)`）：换了文件但 xochitl 还没重启。
     pub deleted: Vec<String>,
+    /// 映射了、但它自己在 `_xovi_shouldLoad` 里拒绝加载的扩展（固件不认识，多半是 OTA 后特征码不中）。xovi 先映射
+    /// `.so` 再问它要不要加载，所以光看 maps 会当成"已加载"（10-16 固件 3.29 上的 hl-snap）。这些不再列进 `extensions`。
+    pub refused: Vec<String>,
 }
 
 pub fn xochitl_maps(proc_root: &Path, pid: Option<u32>) -> XochitlMaps {
@@ -143,6 +146,36 @@ pub fn parse_maps(maps: &str) -> XochitlMaps {
         v.dedup();
     }
     m
+}
+
+/// xochitl 启动时刻（unix 秒）起 2 分钟内、这个进程自己的 journal（`-o cat`）。扩展拒不拒绝加载都在启动时打印；
+/// 只取这一段，不把它跑了一天攒下的排版日志整个读出来。读不到 `/proc/<pid>/stat` 时不限时段。
+pub fn xochitl_journal(proc_root: &Path, pid: u32) -> Option<String> {
+    let pid_arg = format!("_PID={pid}");
+    let mut args = vec!["-b".to_string(), pid_arg, "-o".into(), "cat".into(), "-q".into(), "--no-pager".into()];
+    if let Some(start) = crate::enhance::process_start_secs(proc_root, pid) {
+        args.extend(["--since".into(), format!("@{start}"), "--until".into(), format!("@{}", start + 120)]);
+    }
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    rmsvc_core::proc::run_timeout("journalctl", &args, JOURNAL_TIMEOUT).ok()
+}
+
+/// 按 xochitl 的 journal 把自己拒绝加载的扩展从 `extensions` 挪进 `refused`。只认**行首**就是
+/// `[扩展名] _xovi_shouldLoad` 且含"拒绝加载"的行：主进程会把排版子进程的输出转写成
+/// `rm.worker.unix …: [hl-snap] _xovi_shouldLoad: 找不到 xochitl 映射 → 拒绝加载`（进程号也是主进程的），
+/// 那是子进程里的正常拒绝，不算。
+pub fn apply_refused(m: &mut XochitlMaps, log: &str) {
+    let refused: Vec<String> = m
+        .extensions
+        .iter()
+        .filter(|ext| {
+            let head = format!("[{}] _xovi_shouldLoad", ext.strip_suffix(".so").unwrap_or(ext));
+            log.lines().any(|l| l.starts_with(&head) && l.contains("拒绝加载"))
+        })
+        .cloned()
+        .collect();
+    m.extensions.retain(|e| !refused.contains(e));
+    m.refused = refused;
 }
 
 /// 上次开机的最后几行 journal（`journalctl -b -1 -n 20 --no-pager`）：设备冻死/意外重启后，这是设备自己能拿到的
@@ -191,8 +224,9 @@ pub struct Space {
     total_bytes: Option<u64>,
 }
 
-/// 采集一次。`show` 是 `systemctl show` 的原始输出（失败时传 `Err`，其余照常采集）；`prev_boot` 是上次开机的 journal 尾部。
-pub fn collect(paths: &Paths, proc_root: &Path, show: Result<String, String>, prev_boot: Option<Vec<String>>) -> Health {
+/// 采集一次。`show` 是 `systemctl show` 的原始输出（失败时传 `Err`，其余照常采集）；`prev_boot` 是上次开机的 journal 尾部；
+/// `xochitl_log(pid)` 取 xochitl 启动时的 journal（[`xochitl_journal`]），用来认出自己拒绝加载的扩展，测试里注入。
+pub fn collect(paths: &Paths, proc_root: &Path, show: Result<String, String>, prev_boot: Option<Vec<String>>, xochitl_log: impl FnOnce(u32) -> Option<String>) -> Health {
     let units = units();
     let (table, show_err) = match show {
         Ok(t) => (parse_show(&t), None),
@@ -200,7 +234,12 @@ pub fn collect(paths: &Paths, proc_root: &Path, show: Result<String, String>, pr
     };
     let list: Vec<UnitHealth> = units.iter().map(|u| unit_health(proc_root, u, table.get(u))).collect();
     let xochitl_pid = list.iter().find(|u| u.unit == "xochitl.service").and_then(|u| u.pid);
-    let maps = xochitl_maps(proc_root, xochitl_pid);
+    let mut maps = xochitl_maps(proc_root, xochitl_pid);
+    if let (Some(pid), false) = (xochitl_pid, maps.extensions.is_empty()) {
+        if let Some(log) = xochitl_log(pid) {
+            apply_refused(&mut maps, &log);
+        }
+    }
     let space = rmsvc_core::fs::fs_space(paths.home());
     Health {
         uptime_secs: rmsvc_core::proc::uptime_secs(proc_root).map(|s| s as u64),
@@ -223,6 +262,19 @@ mod tests {
     const SHOW: &str = "Id=xochitl.service\nLoadState=loaded\nActiveState=active\nSubState=running\nNRestarts=2\nMainPID=613\nInactiveExitTimestampMonotonic=7400000\nActiveEnterTimestampMonotonic=7401500\n\n\
 Id=xovi-reenable.service\nLoadState=loaded\nActiveState=active\nSubState=exited\nNRestarts=0\nMainPID=0\nInactiveExitTimestampMonotonic=5460000\nActiveEnterTimestampMonotonic=7490000\n\n\
 Id=book-serve.service\nLoadState=not-found\nActiveState=inactive\nSubState=dead\nNRestarts=0\nMainPID=0\nInactiveExitTimestampMonotonic=0\nActiveEnterTimestampMonotonic=0\n";
+
+    #[test]
+    fn refused_extension_moves_out_of_loaded_only_on_line_start() {
+        let mut m = parse_maps("7f00-7f01 r-xp 0 00:00 1 /home/root/xovi/extensions.d/hl-snap.so\n7f02-7f03 r-xp 0 00:00 2 /home/root/xovi/extensions.d/ui-font.so\n");
+        // 主进程转写的排版子进程拒绝行（行首不是扩展名）不算
+        let relayed = "01:28:07.898 rm.worker.unix  /x.pdf: [hl-snap] _xovi_shouldLoad: 找不到 xochitl 映射 → 拒绝加载(裸启原生)\n[ui-font] 安装完成（setFont 导入槽 0x1）\n";
+        apply_refused(&mut m, relayed);
+        assert_eq!((m.extensions.clone(), m.refused.clone()), (vec!["hl-snap.so".to_string(), "ui-font.so".to_string()], vec![]));
+        let own = format!("{relayed}[hl-snap] _xovi_shouldLoad: 荧光笔扩张函数特征码未唯一命中(未知固件) → 拒绝加载(裸启原生)\n");
+        apply_refused(&mut m, &own);
+        assert_eq!(m.extensions, ["ui-font.so"]);
+        assert_eq!(m.refused, ["hl-snap.so"]);
+    }
 
     #[test]
     fn parses_multi_unit_show_and_computes_start_times() {
@@ -273,12 +325,12 @@ Id=book-serve.service\nLoadState=not-found\nActiveState=inactive\nSubState=dead\
         std::fs::create_dir_all(so_pending_dir(&paths)).unwrap();
         std::fs::write(so_pending_dir(&paths).join("hl-snap.so"), b"x").unwrap();
         std::fs::write(so_pending_dir(&paths).join(".hl-snap.so.new.123"), b"x").unwrap(); // 换入途中的半成品不算
-        let v = serde_json::to_value(collect(&paths, &t.path().join("proc"), Err("no systemd".into()), Some(vec!["a".into(), "b".into()]))).unwrap();
+        let v = serde_json::to_value(collect(&paths, &t.path().join("proc"), Err("no systemd".into()), Some(vec!["a".into(), "b".into()]), |_| None)).unwrap();
         assert_eq!(v["systemctlError"], "no systemd");
         assert_eq!(v["units"].as_array().unwrap().len(), units().len());
         assert_eq!(v["soPending"], serde_json::json!(["hl-snap.so"]));
         assert_eq!(v["prevBoot"], serde_json::json!(["a", "b"]));
-        assert!(collect(&paths, &t.path().join("proc"), Err(String::new()), None).prev_boot.is_none(), "journal 没持久化：不显示");
+        assert!(collect(&paths, &t.path().join("proc"), Err(String::new()), None, |_| None).prev_boot.is_none(), "journal 没持久化：不显示");
         assert!(v["home"]["freeBytes"].as_u64().is_some(), "临时目录所在分区应可查");
         assert!(v["uptimeSecs"].is_null() && v["xochitl"]["readable"] == false);
     }
@@ -288,7 +340,7 @@ Id=book-serve.service\nLoadState=not-found\nActiveState=inactive\nSubState=dead\
     fn wire_snapshot_collect() {
         let t = tempfile::tempdir().unwrap();
         let paths = Paths::sandbox(t.path());
-        let mut v = serde_json::to_value(collect(&paths, &t.path().join("proc"), Err("x".into()), None)).unwrap();
+        let mut v = serde_json::to_value(collect(&paths, &t.path().join("proc"), Err("x".into()), None, |_| None)).unwrap();
         assert!(v["at"].as_u64().is_some() && v["home"]["freeBytes"].as_u64().is_some() && v["home"]["totalBytes"].as_u64().is_some());
         v["at"] = 0.into();
         v["home"] = serde_json::json!({"freeBytes": 0, "totalBytes": 0});
@@ -298,7 +350,7 @@ Id=book-serve.service\nLoadState=not-found\nActiveState=inactive\nSubState=dead\
             serde_json::json!({
                 "uptimeSecs": null, "systemctlError": "x",
                 "units": {"unit": "xochitl.service", "load": "", "active": "", "sub": "", "nRestarts": null, "pid": null, "rssKb": null, "hwmKb": null, "startedAtMs": null, "startMs": null},
-                "xochitl": {"readable": false, "xovi": false, "extensions": [], "deleted": []},
+                "xochitl": {"readable": false, "xovi": false, "extensions": [], "deleted": [], "refused": []},
                 "soPending": [], "prevBoot": null, "home": {"freeBytes": 0, "totalBytes": 0},
                 "firmware": {"state": "pending"},
                 "deploy": {"current": null, "history": [], "files": 0, "drift": []}, "at": 0,

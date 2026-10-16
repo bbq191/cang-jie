@@ -8,6 +8,10 @@
 //! 才算已载入；文件比进程新 = 改过但还没重启 xochitl，报"待重启"。这是按加载机制推断，看不到 qmd 里的
 //! LOCATE 是否全部命中。
 //!
+//! 映射了不等于加载了（2026-10-16 补）：xovi 先映射 `.so` 再调它的 `_xovi_shouldLoad`，扩展认不出固件（如 OTA 后特征码
+//! 不中）会自己拒绝加载、什么都不装，maps 里却照样有它。所以写缓存那一次另读 xochitl 启动时的 journal
+//!（[`crate::device::health::xochitl_journal`]，同一进程只读一次），自己拒绝加载的从 `extensions` 挪到 `refused`。
+//!
 //! 主进程判定：`comm == "xochitl"` 且父进程是 1（systemd）。xochitl 渲染 PDF 时会 fork 出同名的
 //! worker 子进程，父进程不是 1，排除。
 use serde::Serialize;
@@ -20,8 +24,10 @@ pub struct Loaded {
     pub xochitl: bool,
     /// 主进程里映射了 xovi.so（LD_PRELOAD 生效）。
     pub xovi: bool,
-    /// 已映射的 `extensions.d/` 下的扩展文件名（去重、排序），如 `hl-snap.so`。
+    /// 已映射且没有自己拒绝加载的 `extensions.d/` 下的扩展文件名（去重、排序），如 `hl-snap.so`。
     pub extensions: Vec<String>,
+    /// 映射了、但自己在 `_xovi_shouldLoad` 里拒绝加载的扩展（见文件头）。
+    pub refused: Vec<String>,
     /// 启动时已载入的 qmd 补丁文件名（排序）。
     pub qmds: Vec<String>,
     /// 存在但比 xochitl 进程新的 qmd（改过、还没重启 xochitl 生效）。
@@ -34,6 +40,13 @@ fn main_xochitl_ticks(proc_root: &Path, pid: u32) -> Option<u64> {
     let stat = std::fs::read_to_string(proc_root.join(pid.to_string()).join("stat")).ok()?;
     let (comm, ppid, ticks) = rmsvc_core::proc::parse_stat(&stat)?;
     (comm == "xochitl" && ppid == 1).then_some(ticks)
+}
+
+/// 任一进程的启动时刻（unix 秒）；读不到 stat 为 None。
+pub fn process_start_secs(proc_root: &Path, pid: u32) -> Option<u64> {
+    let stat = std::fs::read_to_string(proc_root.join(pid.to_string()).join("stat")).ok()?;
+    let (_, _, ticks) = rmsvc_core::proc::parse_stat(&stat)?;
+    start_secs(proc_root, ticks)
 }
 
 /// 进程启动时刻（unix 秒）：starttime 滴答（arm64/x86 的 USER_HZ 都是 100）+ `/proc/stat` 的 `btime`。
@@ -62,6 +75,7 @@ struct Mapped {
     start: Option<u64>,
     xovi: bool,
     extensions: Vec<String>,
+    refused: Vec<String>,
 }
 
 /// 进程启动后多久才把映射结果缓存下来：xovi 在 xochitl 启动时逐个加载扩展，刚起的进程映射可能还不全。
@@ -79,6 +93,11 @@ impl Scanner {
     }
 
     pub fn scan(&self, proc_root: &Path, qrr_dir: &Path) -> Loaded {
+        self.scan_with(proc_root, qrr_dir, |pid| crate::device::health::xochitl_journal(proc_root, pid))
+    }
+
+    /// `xochitl_log(pid)` 取 xochitl 启动时的 journal，只在要写缓存（进程已起满 [`SETTLE_SECS`]）时调一次。
+    fn scan_with(&self, proc_root: &Path, qrr_dir: &Path, xochitl_log: impl FnOnce(u32) -> Option<String>) -> Loaded {
         let mut cache = rmsvc_core::sync::lock(&self.0);
         let hit = cache.as_ref().is_some_and(|m| main_xochitl_ticks(proc_root, m.pid) == Some(m.ticks));
         if !hit {
@@ -87,9 +106,16 @@ impl Scanner {
             let Some((pid, ticks)) = rmsvc_core::proc::find_process(proc_root, "xochitl", Some(1)) else { return Loaded::default() };
             // maps 解析跟「设备健康」同一个函数（含路径带空格、行尾 ` (deleted)`）：此前这里另写一份按行尾判 xovi，
             // xovi.so 在 xochitl 运行中被替换后行尾多出 ` (deleted)` 就判成"没加载"，OTA 横幅随之误报。
-            let maps = crate::device::health::parse_maps(&std::fs::read_to_string(proc_root.join(pid.to_string()).join("maps")).unwrap_or_default());
-            let m = Mapped { start: start_secs(proc_root, ticks), xovi: maps.xovi, pid, ticks, extensions: maps.extensions };
-            let settled = m.start.is_some_and(|s| rmsvc_core::clock::now_secs().saturating_sub(s) >= SETTLE_SECS);
+            let mut maps = crate::device::health::parse_maps(&std::fs::read_to_string(proc_root.join(pid.to_string()).join("maps")).unwrap_or_default());
+            let start = start_secs(proc_root, ticks);
+            let settled = start.is_some_and(|s| rmsvc_core::clock::now_secs().saturating_sub(s) >= SETTLE_SECS);
+            // 刚起的进程不读 journal（结果也不缓存，下次再扫）；起满了读一次、跟映射结果一起缓存。
+            if settled && !maps.extensions.is_empty() {
+                if let Some(log) = xochitl_log(pid) {
+                    crate::device::health::apply_refused(&mut maps, &log);
+                }
+            }
+            let m = Mapped { start, xovi: maps.xovi, pid, ticks, extensions: maps.extensions, refused: maps.refused };
             let loaded = m.loaded(qrr_dir);
             if settled {
                 *cache = Some(m);
@@ -106,14 +132,14 @@ impl Mapped {
             (true, Some(start)) => qmd_states(qrr_dir, start),
             _ => (vec![], vec![]),
         };
-        Loaded { xochitl: true, xovi: self.xovi, extensions: self.extensions.clone(), qmds, qmds_pending }
+        Loaded { xochitl: true, xovi: self.xovi, extensions: self.extensions.clone(), refused: self.refused.clone(), qmds, qmds_pending }
     }
 }
 
 /// 不带缓存的一次扫描（测试用）。
 #[cfg(test)]
 pub fn scan(proc_root: &Path, qrr_dir: &Path) -> Loaded {
-    Scanner::new().scan(proc_root, qrr_dir)
+    Scanner::new().scan_with(proc_root, qrr_dir, |_| None)
 }
 
 #[cfg(test)]
@@ -177,6 +203,29 @@ mod tests {
         assert!(l.xochitl && !l.xovi && l.extensions.is_empty());
     }
 
+    /// 映射了但自己拒绝加载的扩展进 `refused`、不算加载；只在起满 SETTLE_SECS 后读一次 journal，并跟映射一起缓存。
+    #[test]
+    fn refused_extension_is_not_loaded_and_journal_read_once() {
+        let t = tempfile::tempdir().unwrap();
+        let r = t.path();
+        std::fs::write(r.join("stat"), format!("cpu 0\nbtime {}\n", rmsvc_core::clock::now_secs() - 3600)).unwrap();
+        proc_entry(r, "613", "xochitl", "1", "7f00-7f01 r-xp 0 00:00 1 /home/root/xovi/extensions.d/hl-snap.so\n7f02-7f03 r-xp 0 00:00 2 /home/root/xovi/extensions.d/ui-font.so\n");
+        let log = "[hl-snap] _xovi_shouldLoad: 荧光笔扩张函数特征码未唯一命中(未知固件) → 拒绝加载(裸启原生)\n[ui-font] 安装完成\n";
+        let sc = Scanner::new();
+        let calls = std::cell::Cell::new(0);
+        let l = sc.scan_with(r, r, |pid| {
+            calls.set(calls.get() + 1);
+            assert_eq!(pid, 613);
+            Some(log.to_string())
+        });
+        assert_eq!((l.extensions.clone(), l.refused.clone()), (vec!["ui-font.so".to_string()], vec!["hl-snap.so".to_string()]));
+        let l2 = sc.scan_with(r, r, |_| panic!("同一进程命中缓存，不该再读 journal"));
+        assert_eq!(l2.refused, ["hl-snap.so"]);
+        assert_eq!(calls.get(), 1);
+        let hl = crate::enhance::Artifact::Extension("hl-snap.so");
+        assert_eq!(crate::enhance::load_state(&hl, &l2), Some(crate::enhance::LoadState::Off), "拒绝加载的扩展徽章不是 On");
+    }
+
     /// 缓存：同一个进程（pid + starttime）第二次不再读 maps；进程换了（starttime 变）就重扫；刚起的进程不缓存。
     #[test]
     fn caches_mapping_per_process_and_rescans_on_restart() {
@@ -186,20 +235,20 @@ mod tests {
         std::fs::write(r.join("stat"), format!("cpu 0\nbtime {}\n", now - 3600)).unwrap(); // 进程已跑了约 1 小时
         proc_entry(r, "613", "xochitl", "1", "7f00-7f01 r-xp 0 00:00 1 /home/root/xovi/extensions.d/hl-snap.so\n");
         let sc = Scanner::new();
-        assert_eq!(sc.scan(r, r).extensions, ["hl-snap.so"]);
+        assert_eq!(sc.scan_with(r, r, |_| None).extensions, ["hl-snap.so"]);
         std::fs::write(r.join("613/maps"), "").unwrap(); // 缓存命中时不会再读 maps
-        assert_eq!(sc.scan(r, r).extensions, ["hl-snap.so"], "同一进程命中缓存");
+        assert_eq!(sc.scan_with(r, r, |_| None).extensions, ["hl-snap.so"], "同一进程命中缓存");
         // 同 pid 但 starttime 变了（xochitl 重启后恰好复用 pid）：重扫
         std::fs::write(r.join("613/stat"), "613 (xochitl) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 2000 0 0").unwrap();
-        assert!(sc.scan(r, r).extensions.is_empty(), "进程变了要重扫");
+        assert!(sc.scan_with(r, r, |_| None).extensions.is_empty(), "进程变了要重扫");
         // 进程退出：不再报 xochitl
         std::fs::remove_dir_all(r.join("613")).unwrap();
-        assert!(!sc.scan(r, r).xochitl);
+        assert!(!sc.scan_with(r, r, |_| None).xochitl);
         // 刚启动的进程（不到 SETTLE_SECS）不缓存：之后映射变了能看到
         std::fs::write(r.join("stat"), format!("cpu 0\nbtime {}\n", now - 12)).unwrap();
         proc_entry(r, "700", "xochitl", "1", "");
-        assert!(sc.scan(r, r).extensions.is_empty());
+        assert!(sc.scan_with(r, r, |_| None).extensions.is_empty());
         std::fs::write(r.join("700/maps"), "7f00-7f01 r-xp 0 00:00 1 /home/root/xovi/extensions.d/hw-stroke.so\n").unwrap();
-        assert_eq!(sc.scan(r, r).extensions, ["hw-stroke.so"], "启动初期的结果不该被缓存住");
+        assert_eq!(sc.scan_with(r, r, |_| None).extensions, ["hw-stroke.so"], "启动初期的结果不该被缓存住");
     }
 }

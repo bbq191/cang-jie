@@ -12,6 +12,7 @@
 //! 以后再加系统增强能力，往这个目录加一个新文件（比照 `qol.rs`）+ 这里挂一个路由，
 //! 不需要单独起一个 service（同机文件 I/O，没有独立进程边界的理由）。
 mod loaded;
+pub(crate) use loaded::process_start_secs;
 mod qol;
 
 use rmsvc_core::http::{ApiError, ApiResult, Reply, Request};
@@ -213,7 +214,7 @@ mod tests {
                     {"key": "notesImportMdEnabled", "on": false, "kind": "web", "loaded": null},
                     {"key": "notesReviewEnabled", "on": false, "kind": "web", "loaded": null},
                 ],
-                "loaded": {"xochitl": false, "xovi": false, "extensions": [], "qmds": [], "qmdsPending": []},
+                "loaded": {"xochitl": false, "xovi": false, "extensions": [], "refused": [], "qmds": [], "qmdsPending": []},
             })
         );
     }
@@ -227,6 +228,7 @@ mod tests {
             extensions: ext.iter().map(|s| s.to_string()).collect(),
             qmds: qmds.iter().map(|s| s.to_string()).collect(),
             qmds_pending: pending.iter().map(|s| s.to_string()).collect(),
+            refused: vec![],
         };
         let so = Artifact::Extension("hl-snap.so");
         let qmd = Artifact::Patch("reader-page-turn.qmd");
