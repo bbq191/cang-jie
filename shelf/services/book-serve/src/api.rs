@@ -7,6 +7,7 @@
 //! · 2026-10-07 删除：`/staging/optimize`、`/staging/fetch-article`、`/staging/originals/*`、`/staging/cancel`（书架不再优化书，
 //!   优化全部在电脑上用 sheng-ren 做；剩下的投递没有能中途停的步骤）。
 //! · `GET /events`（SSE：母版库/inbox 变更即推，网页零轮询）。
+//! 阅读方向：`GET /reading-direction/{uuid}` → `{rtl}`（xochitl 里 reader-page-turn.qmd 打开书时问；只看书自己 OPF 里标的方向，见 reading_direction.rs）。
 //! 原生回收站队列：`POST /trash/add {uuid, name}`（name 必须与书库 visibleName 相符）· `GET /trash/pending?wait=` → `{uuids}`（MainView 代理 qmd 长轮询拉取执行）· `GET /trash`（只供调试：ssh 上 curl 看队列）。
 //! 原生建文件夹队列：`POST /mkdir/add {name, parentPath?: [各级名字]}`（建在 `parentPath` 那个已有文件夹里，缺省书库根；上级不在 → 404）· `GET /mkdir/pending?wait=` → `{items: [{name, parent}]}`（MainView 代理
 //! shelf-mkdir-agent.qmd 长轮询拉取执行；`parent` 是上级文件夹 uuid，空串＝书库根）· `GET /mkdir`（只供调试）。
@@ -76,6 +77,11 @@ pub fn router(st: Arc<State>) -> Router {
             s.staging.spawn_deliver(&name, &folder_path(&j), &s.jobs, s.bus.clone()).map_err(api_error)?;
             s.bus.publish(ev::AREA, ev::STAGING); // 立即推一次，UI 马上看到这条目进入 busy 状态
             Ok(Reply::ok(&serde_json::json!({"ok": true, "message": format!("《{name}》已开始投递，完成后自动刷新"), "async": true})))
+        }))
+        // ── 阅读方向（reader-page-turn.qmd 打开书时查；rtl=书自己标了从右往左，见 reading_direction.rs）──
+        .get("/reading-direction/{uuid}", bind(&st, |s, r| {
+            let rtl = s.reading_direction.is_rtl(r.param("uuid")).map_err(ApiError::bad)?;
+            Ok(Reply::ok(&serde_json::json!({"rtl": rtl})))
         }))
         // ── 漫画页边距待办（QML 代理 shelf-comic-margins.qmd 在书打开时查；见 comic_margins.rs）──
         .get("/margins/{uuid}", bind(&st, |s, r| match s.comic_margins.get(r.param("uuid")) {

@@ -1,7 +1,15 @@
 ; ─────────────────────────────────────────────────────────────────────────
-; reader-page-turn.qmd —— xochitl 阅读器：单击翻页（固件 3.28.0.172，2026-09-24）
+; reader-page-turn.qmd —— xochitl 阅读器：单击翻页 + 按书自己标的方向翻页（固件 3.28.0.172 / 3.29.0.153）
 ;
-; 【开关】tapPageTurn，在「管理 → 系统增强」，默认关：点屏幕左右边缘翻页。区域 = 左右各 7% 宽、纵向只在屏幕高度
+; 【翻页方向由书决定】（2026-10-16 用户定，没有开关）：EPUB 的 OPF 标了 `<spine page-progression-direction="rtl">`（日漫常见）
+;   的书，所有翻页都对调——左滑、键盘右箭头、点右边缘 = 上一页；右滑、左箭头、点左边缘 = 下一页。没标、标 ltr、PDF、
+;   笔记本照原生。xochitl 自己不看这个标记；打开书时问 book-serve `GET /reading-direction/<uuid>`（读书库里那本 EPUB 的 OPF），
+;   book-serve 没在跑 / 查不到 = 按原生方向。对调做在 DocumentView 的 moveForward / moveBackward 函数开头：两个固件里这两个
+;   函数都只被用户翻页（滑动手势、单击翻页、键盘快捷键）调，所以一处改动全部覆盖，不用分别改 3.28 的 next/prevPageGesture
+;   和 3.29 的 right/leftPageGesture。书架不往书里写方向：没标方向的日漫要在电脑上用 sheng-ren 标好再传。
+;   10-07 删掉的旧版「日漫翻页规则」带网页开关和手动清单 rtl-overrides.json，都不加回。
+;
+; 【单击翻页开关】tapPageTurn，在「管理 → 系统增强」，默认关：点屏幕左右边缘翻页。区域 = 左右各 7% 宽、纵向只在屏幕高度
 ;   45%–80% 之间（用户定；避开顶部工具栏、底部进度条和握持的四角）。其余位置交回原生逻辑（双击进文本、点链接、选图照常）。
 ;   原来还有「日漫翻页规则」rtlPageTurn（OPF 标了 rtl 的书把左右滑动/点按对调，方向问 book-serve /reading-direction）：
 ;   2026-10-07 用户定书架只负责入库、翻页方向交给书本身，整个删掉——xochitl 不看 OPF 的方向标记，日漫在 xochitl 里从左往右翻。
@@ -25,7 +33,7 @@
 ;   moveForward()（DocumentView.qml:1018-1027）。点击时按阅读视图上有没有 rightPageRequested 二选一，两个固件同一份补丁。
 ;
 ; 【qmldiff 纪律】INSERT{} 块内是 QML，注释只能用 //（用 ; 会被当成 QML 输出）。
-; 【日志】journalctl -u xochitl | grep CJ-PAGE-TURN：loaded（加载）/ cfg（打开书读到的开关）。
+; 【日志】journalctl -u xochitl | grep CJ-PAGE-TURN：loaded（加载）/ cfg（打开书读到的开关）/ rtl book（这本书按从右往左翻）。
 ;   单击/滑动命中不写日志（09-24 真机验证后去掉）：每行 journal 都会唤醒 wallpaper-serve 的 journalctl -f 和飞行记录仪。
 ; ─────────────────────────────────────────────────────────────────────────
 
@@ -36,6 +44,8 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
         INSERT {
             // ── reader-page-turn：状态（由 DocumentView 打开书时写入；默认关 = 原生行为）──
             property bool cjTapPageTurn: false
+            // 这本书自己标了从右往左（book-serve /reading-direction 的结果；默认 false = 原生方向）。
+            property bool cjRtl: false
         }
     END TRAVERSE
 
@@ -46,9 +56,13 @@ AFFECT /qml/device/view/documentview/DocumentView.qml
     TRAVERSE ?#root
         LOCATE AFTER ChapterPositionTracker#chapterPositionTracker
         INSERT {
+            // 从右往左的书对调翻页时置位，让对调过去的那个函数走原生逻辑、不再对调回来。
+            property bool _cjPageFlip: false
             Connections {
                 target: root
                 function onDocumentChanged() {
+                    // 先回到原生方向，等查询结果回来再决定要不要对调，不沿用上一本书的方向。
+                    sceneView.cjRtl = false;
                     cjPageTurnOpenTimer.restart();
                 }
             }
@@ -73,9 +87,47 @@ AFFECT /qml/device/view/documentview/DocumentView.qml
                     }
                     sceneView.cjTapPageTurn = tap;
                     console.warn("CJ-PAGE-TURN: cfg tap=" + tap);
+                    var did = String(root.document.id).replace(/[{}]/g, "");
+                    var x = new XMLHttpRequest();
+                    x.onreadystatechange = function() {
+                        if (x.readyState !== XMLHttpRequest.DONE || x.status !== 200) { return; }
+                        try {
+                            // 结果回来时书可能已经换了：只对仍是同一本书的情况生效。
+                            if (!root.document || String(root.document.id).replace(/[{}]/g, "") !== did) { return; }
+                            sceneView.cjRtl = !!JSON.parse(x.responseText).rtl;
+                            if (sceneView.cjRtl) { console.warn("CJ-PAGE-TURN: rtl book " + did); }
+                        } catch (e2) {
+                        }
+                    };
+                    x.open("GET", "http://127.0.0.1:8790/reading-direction/" + did);
+                    x.send();
                 }
             }
         }
+    END TRAVERSE
+
+    ; 从右往左的书：下一页 ↔ 上一页对调（这两个函数只被用户翻页调用，见文件头）
+    TRAVERSE ?#root
+        REBUILD moveForward
+            LOCATE BEFORE ALL
+            INSERT {
+                if (sceneView.cjRtl && !root._cjPageFlip) {
+                    root._cjPageFlip = true;
+                    try { root.moveBackward(); } finally { root._cjPageFlip = false; }
+                    return;
+                }
+            }
+        END REBUILD
+        REBUILD moveBackward
+            LOCATE BEFORE ALL
+            INSERT {
+                if (sceneView.cjRtl && !root._cjPageFlip) {
+                    root._cjPageFlip = true;
+                    try { root.moveForward(); } finally { root._cjPageFlip = false; }
+                    return;
+                }
+            }
+        END REBUILD
     END TRAVERSE
 
 END AFFECT
