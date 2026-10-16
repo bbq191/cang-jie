@@ -43,12 +43,38 @@
  * 逐字节抄自 chinese-ime/langhook/src/hook_init.c 的 PROLOGUE_HL_EXPAND，
  * 2026-09-09 真机在 3.28.0.172 上复核过这段特征码仍唯一命中（不是固件迁移偏移
  * 漂移的问题，见系统增强线白皮书 §03a）。 */
-static const uint8_t PROLOGUE_HL_EXPAND[] = {
+static const uint8_t PROLOGUE_HL_EXPAND_328[] = {
     0x3f, 0x23, 0x03, 0xd5, 0xfd, 0x7b, 0xbd, 0xa9, 0xfd, 0x03, 0x00, 0x91,
     0xf5, 0x13, 0x00, 0xf9, 0xf5, 0x03, 0x00, 0xaa, 0x20, 0x00, 0x40, 0xf9,
     0xf3, 0x53, 0x01, 0xa9, 0xf4, 0x03, 0x01, 0xaa, 0x80, 0x00, 0x00, 0xb4,
     0x01, 0x00, 0x40, 0xb9,
 };
+
+/* 3.29.0.153（2026-10-16 objdump 定位）：同一个函数挪到 0xcaddb0，逐子区间扩张的函数被内联进来了
+ * （3.28 的 0xf02e90 不再单独存在），所以函数体、栈帧都变了（帧 0x50），但入口语义不变：
+ * x0=scene 句柄、x1=区间向量（QList，元素从 8 字节变成 32 字节，起点仍在元素 +0）。开头 20 字节是
+ * paciasp / stp x29,x30,[sp,#-80]! / mov x29,sp / stp x19,x20,[sp,#16] / mov x20,x1，没有 PC 相对指令。
+ * 和 3.28 不一样的是 x0 多了一层：字形数组在 [[x0]+8]、个数在 [[x0]+0x10]（函数里 `ldr x0,[x24]` →
+ * `ldr x22,[x0,#8]`；取上界的 0xcad3b0 是 `ldr x3,[x22]` → `ldr x0,[x3,#16]`），每个字仍 0x38 字节、
+ * QChar 在 +0x30。这 40 字节在 3.29 的 xochitl 里只命中一处。 */
+static const uint8_t PROLOGUE_HL_EXPAND_329[] = {
+    0x3f, 0x23, 0x03, 0xd5, 0xfd, 0x7b, 0xbb, 0xa9, 0xfd, 0x03, 0x00, 0x91,
+    0xf3, 0x53, 0x01, 0xa9, 0xf4, 0x03, 0x01, 0xaa, 0xf7, 0x63, 0x03, 0xa9,
+    0xf8, 0x03, 0x00, 0xaa, 0x20, 0x00, 0x40, 0xf9, 0xf9, 0x23, 0x00, 0xf9,
+    0x80, 0x00, 0x00, 0xb4,
+};
+
+/* 已知固件：特征码 + scene 句柄要不要先解一层指针。按顺序试，第一个唯一命中的算数。 */
+static const struct {
+    const char *fw;
+    const uint8_t *sig;
+    size_t len;
+    int scene_indirect;
+} HL_TARGETS[] = {
+    { "3.28", PROLOGUE_HL_EXPAND_328, sizeof(PROLOGUE_HL_EXPAND_328), 0 },
+    { "3.29", PROLOGUE_HL_EXPAND_329, sizeof(PROLOGUE_HL_EXPAND_329), 1 },
+};
+static int g_scene_indirect = 0;   /* 命中的那套特征码定，见 cj_hl_locate */
 #define PATCH_LEN CJ_FAR_JUMP_LEN /* 覆盖目标函数开头的字节数，跟远跳转指令长度一致 */
 
 /* 通用 trampoline 安装（cj_patch_target）在 enhance/shared/trampoline_patch.c，
@@ -67,6 +93,12 @@ static int g_hl_expand_neuter = 1;   /* 1=CJK 跳过扩张（修复）；0=恢�
  * 不去读数组外的内存。 */
 static int cj_hl_glyph_is_cjk(long scene, int idx) {
     if (idx < 0) return 0;
+    if (g_scene_indirect) {   /* 3.29：x0 指向的那一格里才是 scene */
+        long inner = 0;
+        memcpy(&inner, (const void *)scene, sizeof(inner));
+        if (!inner) return 0;
+        scene = inner;
+    }
     long garr = 0, count = 0;
     memcpy(&garr, (const void *)(scene + 8), sizeof(garr));
     memcpy(&count, (const void *)(scene + 0x10), sizeof(count));
@@ -122,6 +154,18 @@ static void cj_install_hl_expand_hook(uintptr_t target) {
             (void *)target, g_hl_expand_neuter);
 }
 
+/* 在 xochitl 里找目标函数：按 HL_TARGETS 依次试，唯一命中就记下 scene 布局、返回 1；都不中返回 0。 */
+static int cj_hl_locate(uintptr_t base, size_t size, uintptr_t *addr, const char **fw) {
+    for (size_t i = 0; i < sizeof(HL_TARGETS) / sizeof(HL_TARGETS[0]); i++) {
+        if (cj_find_unique_pattern((const uint8_t *)base, size, HL_TARGETS[i].sig, HL_TARGETS[i].len, addr)) {
+            g_scene_indirect = HL_TARGETS[i].scene_indirect;
+            *fw = HL_TARGETS[i].fw;
+            return 1;
+        }
+    }
+    return 0;
+}
+
 /* ---- xovi 扩展入口 ---- */
 
 /* 固件兼容性判据就是这个 hook 自己的目标特征码——不借用别的函数当总闸，这个
@@ -133,14 +177,14 @@ char _xovi_shouldLoad(void) {
         fprintf(stderr, "[hl-snap] _xovi_shouldLoad: 找不到 xochitl 映射 → 拒绝加载(裸启原生)\n");
         return 0;
     }
-    if (!cj_find_unique_pattern((const uint8_t *)base, size, PROLOGUE_HL_EXPAND,
-                                 sizeof(PROLOGUE_HL_EXPAND), &addr)) {
+    const char *fw = NULL;
+    if (!cj_hl_locate(base, size, &addr, &fw)) {
         fprintf(stderr, "[hl-snap] _xovi_shouldLoad: 荧光笔扩张函数特征码未唯一命中"
                 "(未知固件) → 拒绝加载(裸启原生)\n");
         return 0;
     }
-    fprintf(stderr, "[hl-snap] _xovi_shouldLoad: 固件兼容(FUN_00f05ad0@0x%lx) → 加载\n",
-            (unsigned long)addr);
+    fprintf(stderr, "[hl-snap] _xovi_shouldLoad: 固件兼容(%s 特征码 @0x%lx) → 加载\n",
+            fw, (unsigned long)addr);
     return 1;
 }
 
@@ -151,8 +195,8 @@ void _xovi_construct(void) {
         fprintf(stderr, "[hl-snap] _xovi_construct: 找不到 xochitl 映射，hook 未安装\n");
         return;
     }
-    if (!cj_find_unique_pattern((const uint8_t *)base, size, PROLOGUE_HL_EXPAND,
-                                 sizeof(PROLOGUE_HL_EXPAND), &addr)) {
+    const char *fw = NULL;
+    if (!cj_hl_locate(base, size, &addr, &fw)) {
         /* _xovi_shouldLoad 时还命中、这里却没命中 = 两步之间目标开头被改写了（多半是另一个
          * 扩展先 patch 了同一个函数，如同时装了 cangjie-langhook，白皮书 §03a）。以前这里
          * 静默返回，网页徽章显示"已加载"却没有 hook，只能靠 journal 缺一行"安装完成"推断。 */
