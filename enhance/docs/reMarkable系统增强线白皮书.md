@@ -187,7 +187,8 @@ ui-font 不走第 2、3 步的特征码与跳板，见 [3.3](#33-ui-font界面�
 
 **日志**：`journalctl -u xochitl | grep CJ-PAGE-TURN` → `loaded`（qmd 载入）、`cfg tap=…`（开书读到的开关）。单击 / 滑动命中时**不打日志**：每写一行 journal 都会唤醒日志读者。
 
-xochitl 不看 EPUB OPF 的 `page-progression-direction`，所以日漫在 xochitl 里一律从左往右翻（2026-10-07 起，用户已知悉；之前的"日漫翻页规则"见附录 A.4）。
+**翻页方向由书决定**（2026-10-16 用户定，没有开关）：xochitl 自己不看 EPUB OPF 的 `page-progression-direction`（3.29.0.153 二进制里也没有这个字串；原生左滑恒为下一页）。补丁在书一换时把 `DeviceSceneView.cjRtl` 清零，300 ms 后异步问 book-serve `GET /reading-direction/<uuid>`（读书库里那本 EPUB 的 OPF `<spine page-progression-direction="rtl">`，按大小 + mtime 缓存），回来时仍是同一本书才置位。置位后在 `DocumentView` 的 `moveForward` / `moveBackward` 函数开头对调（`_cjPageFlip` 防止对调回来）：3.28 和 3.29 里这两个函数都只被用户翻页调用——滑动手势、单击翻页、键盘左右键——所以一处覆盖全部，不用分别改 3.28 的 `next/prevPageGesture` 和 3.29 的 `right/leftPageGesture`。效果：左滑、右箭头、点右边缘 = 上一页。没标、标 `ltr`、PDF、笔记本、book-serve 没在跑都按原生方向。日志多一行 `rtl book <uuid>`。
+10-07 删掉的旧版（附录 A.4）还有网页开关和手动清单 `rtl-overrides.json`，都不加回；Calibre 转的日漫多半没标方向，要在 sheng-ren 里标。
 
 ### 3.5 font-serve：阅读字体与界面字体
 
@@ -435,6 +436,7 @@ cd enhance/ui-font && make aarch64     # 产物 ui-font.so（已提交进仓库�
 |---|---|---|
 | 第六轮审计（10-09）：壁纸先裁再缩放、池只认普通文件、找主进程改读 `/proc`；font-serve `fc-cache` 只扫用户目录、一批只跑一次、`fc-scan`/`fc-cache` 超时、只认普通文件 | 10-09 13:48 `install-all`，38✓ 1⚠（刚开机）0✗ | 传一张横图，休眠屏取景正常、上传明显变快；一次上传两三个字体，回执很快、菜单出现新字体 |
 | 10-09 两处 C 隐患修复（glyph 上界 #1、ui-font 非 PIE 拒加载 #3）与调用桩分配失败时恢复页权限 | 10-09 13:48 / 16:32 | 这两处加上失败路径在当前固件上都走不到，**只有离线反汇编、ELF 头核对和 host 单测**；部署后两个扩展照常加载。还要划几段中文确认吸附照常 |
+| 按书的方向翻页（10-16 加回） | **10-16 已部署，真机通过**（3.29.0.153）：《浪客行 第01卷》journal `rtl book`，左滑 = 上一页、单击左边缘 = 下一页，普通书方向不变。离线：3.28 与 3.29 真实 QML 上 `apply-diffs` 三个文件都应用，两个函数的对调分支插在函数体最前面；qmllint 报错与旧补丁相同（都是类型未解析）；book-serve 测试覆盖 rtl / ltr / 不是 EPUB / 坏 zip / 不存在 / 非法 uuid / 缓存失效 | 部署 + 整机重启后开一本 OPF 标了 rtl 的漫画：journal 有 `rtl book`，左滑 = 上一页、右滑 = 下一页；开一本普通书方向照旧；单击翻页开着时点右边缘 = 上一页 |
 | 删日漫翻页规则 | 10-07 整机重启，自检通过；journal 有 `CJ-PAGE-TURN: loaded`、无 qmd 解析报错；离线 `apply-diffs` 三个 AFFECT 都应用，新旧输出差异正好是删掉的代码 | 「系统增强」只剩单击翻页；单击左右边缘照常翻页；`cfg tap=…` 正常 |
 | 第五轮审计（09-30）：壁纸收到 `IN_IGNORED` 重建监听、`shelf-mkdir-agent.qmd` 失败打日志 | 09-30 14:10，38✓ | 壁纸照常轮换；建文件夹失败时 journal 有 `SHELF-MKDIR: failed` |
 | 第四轮审计（09-25）：font-serve 开机复用索引、上传暂存移到 `/home`；壁纸去重改用 `/proc/uptime`；mkdir / trash 代理出错退避 | 随 09-25 / 09-30 部署上机 | `systemctl restart font-serve` 后"索引 N 个家族"秒回、`fonts.conf` mtime 不变；停掉 book-serve 时代理不再每 15 秒重试。代理 qmd 的 `apply-diffs` **只在带同名锚点的桩 QML 上跑过** |
@@ -489,6 +491,7 @@ cd enhance/ui-font && make aarch64     # 产物 ui-font.so（已提交进仓库�
 | 09-25 第四轮 | font-serve 开机复用索引、`fonts.conf` 不变不重写；上传暂存移到 `~/.local/state/shelf/upload`；壁纸去重改用 `/proc/uptime`；代理 qmd 出错退避 | 已上机，功能未逐项手测 |
 | 09-30 第五轮 | 壁纸收到 `IN_IGNORED` 重建监听；hl-snap `make clean` 不删已提交的胶水；font-serve 回执去掉 KOReader 提示；mkdir 代理失败打日志；发现 `check-compatibility` 不做校验 | 09-30 14:10 部署 |
 | 10-07 | 删日漫翻页规则；新增界面字体 ui-font | 已部署；ui-font 真机目测通过 |
+| 10-16 | 按书里 OPF 标的方向翻页加回（没有开关、没有手动清单） | 已部署，真机通过 |
 | 10-09 第六轮 | 壁纸先裁再缩放（12MP 横图 1.72s → 1.01s，中间图 15MB → 6.5MB）；font-serve `fc-cache` 只扫用户目录（开发机 CPU 0.7s → 0.006s）、一批一次、加超时；两个服务的通用代码迁到 rmsvc-core。**三处 C 隐患**：#1 glyph 上界、#2 代码页恢复 `r-x`（同日又补了调用桩分配失败时的恢复）、#3 ui-font 非 PIE 防递归 | 13:48 / 16:32 部署；#2 真机确认，#1 #3 只有离线证据 |
 | 10-10 第七轮 | `minijson` 合并、`cj_insn_pc_relative` 防线（审计 EN-2） | 10-12 已部署，未手测 |
 | 10-10 重构第二阶段 | 壁纸监听迁 `fswatch::watch_with`（CORE-7）、`UploadTarget`（CORE-6）、错误分级（CORE-1）、`sse_reply_for`（CORE-5）；`ttf` 模块与 `SleepScreenPath` 常量从基座搬回服务（CORE-3）；上传整体错误类型化（multipart 400 / 暂存 500） | 未部署 |
@@ -504,7 +507,7 @@ cd enhance/ui-font && make aarch64     # 产物 ui-font.so（已提交进仓库�
 - **battop：诊断工具自己也会出事**。08-29 第一次冻机（屏幕冻住、ping/SSH 不通、USB 链路仍在，长按电源 25–30 秒恢复）：systemd 启动它的 oneshot 服务时把进程写进 cgroup，撞上内核 RCU stall 连 PID 1 一起卡死；timer 每 10 分钟拉起一次 = 每天 144 次 cgroup 迁移，把罕见 stall 的暴露面放大了。改常驻后 09-23 第二次冻机，时间与它每小时 fork 一次 `journalctl` 精确重合（只有时间吻合，没有内核栈证据）。RCU stall 的内核根因至今没有排除。常驻、周期性、在 cgroup / fork 这类内核敏感路径附近的操作要尽量去掉；"重启后自然关闭"这种安全态要写成明确设计。
 - **hw-stroke：交叉工具链的 glibc 比设备新**，`atan2f` / `sqrtf` 被打上 `GLIBC_2.43`，整个 `.so` 静默加载失败，还连累同一次扫描里的 `hl-snap.so`（[5.1](#51-构建)）。它的逆向结论见附录 B。
 
-**日漫翻页规则（2026-09-24～10-07）**：`reader-page-turn.qmd` 曾按 EPUB OPF 的 `<spine page-progression-direction="rtl">` 或手动清单 `~/.local/state/shelf/books/rtl-overrides.json` 判"从右往左"，开书时问 book-serve `GET /reading-direction/<uuid>`，对调左滑 / 右滑并让单击左边缘算下一页（09-24 真机通过，09-25《乱马》11 卷日志 `CJ-PAGE-TURN: rtl book`）。calibre 转出的漫画大多不写这个标记，所以加了手动清单。10-07 用户定书架只管入库、方向交给书本身，整段删除（qmd 分支、book-serve 接口、shelf-conv 的 `epub_is_rtl`、网关开关，单独传 `rtlPageTurn` 回 400）。删除前核对过：清单里 15 个 uuid 都已不在书库里；文件还在设备上，无人再读。
+**日漫翻页规则（2026-09-24～10-07）**：`reader-page-turn.qmd` 曾按 EPUB OPF 的 `<spine page-progression-direction="rtl">` 或手动清单 `~/.local/state/shelf/books/rtl-overrides.json` 判"从右往左"，开书时问 book-serve `GET /reading-direction/<uuid>`，对调左滑 / 右滑并让单击左边缘算下一页（09-24 真机通过，09-25《乱马》11 卷日志 `CJ-PAGE-TURN: rtl book`）。calibre 转出的漫画大多不写这个标记，所以加了手动清单。10-07 用户定书架只管入库、方向交给书本身，整段删除（qmd 分支、book-serve 接口、shelf-conv 的 `epub_is_rtl`、网关开关，单独传 `rtlPageTurn` 回 400）。删除前核对过：清单里 15 个 uuid 都已不在书库里；文件还在设备上，无人再读。**10-16 只按 OPF 标记的那一半加回**（见 3.4），开关和手动清单仍不要。
 
 ### A.5 迁移沿革
 
@@ -520,6 +523,7 @@ cd enhance/ui-font && make aarch64     # 产物 ui-font.so（已提交进仓库�
 | 2026-09-29 | 设备上卸载 KOReader、第三方 WeRead、appload 和侧栏入口（本线各工具只服务 xochitl） |
 | 2026-09-30 | 第五轮审计（14:10 部署）；移除 hw-stroke 与 battop（15:23 部署，自动清残留） |
 | 2026-10-07 | 删日漫翻页规则；界面字体 ui-font（`packaging` 加 `ui-font` 步） |
+| 2026-10-16 | 固件 3.29 适配；按书里的方向翻页加回（只认 OPF，没有开关） |
 | 2026-10-09 | 第六轮审计与三处 C 隐患修复（13:48 部署）；调用桩失败路径补口子（16:32 部署）；仓库公开 |
 | 2026-10-10 | 第七轮审计与重构第二阶段（10-12 已部署）；白皮书按新手阅读顺序重组 |
 

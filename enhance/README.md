@@ -14,7 +14,7 @@
 |---|---|---|---|
 | [`hl-snap/`](hl-snap/README.md) | xovi 扩展：荧光笔划中文时划哪吸哪，不再吸整行 | ✅ 真机通，日常在用 | 管理 → 系统增强，缺省开 |
 | [`ui-font/`](ui-font/README.md) | xovi 扩展 + qmd：把 xochitl **界面**的字体换成上传的字体，阅读器字体不变 | ✅ 真机目测通过（10-07：界面换成更纱，阅读不变） | 其他 → xochitl → 界面字体，整机重启生效 |
-| [`shelf/xovi/reader-page-turn.qmd`](../shelf/xovi/reader-page-turn.qmd) | qmd 补丁：xochitl 阅读器单击左右边缘翻页（源码在书架，原理记在本线） | ✅ 真机通（09-24）；10-07 删掉日漫翻页规则，已部署、未手测 | 管理 → 系统增强，缺省关 |
+| [`shelf/xovi/reader-page-turn.qmd`](../shelf/xovi/reader-page-turn.qmd) | qmd 补丁：xochitl 阅读器单击左右边缘翻页；OPF 标了从右往左的书对调翻页（源码在书架，原理记在本线） | ✅ 单击翻页真机通（09-24，3.29 10-16）；按书的方向翻页 10-16 加回，真机通（3.29） | 单击翻页：管理 → 系统增强，缺省关；翻页方向没有开关 |
 | `font-serve/` | Web 服务（`127.0.0.1:8792`）：阅读字体上传即装、中文回退链；也管界面字体 | ✅ 真机通 | 其他 → xochitl |
 | [`wallpaper-serve/`](wallpaper-serve/README.md) | Web 服务（`127.0.0.1:8793`）：休眠壁纸上传即用、每次休眠后轮换 | ✅ 真机通 | 其他 → 壁纸 |
 | [`lo-alias/`](lo-alias/README.md) | 让 `10.11.99.1` 在不插 USB 时也可达的小脚本（网关启动前调用） | ✅ 真机通（09-25 无 USB 冷启动） | 无 |

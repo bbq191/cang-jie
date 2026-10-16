@@ -30,6 +30,8 @@ pub struct State {
     pub comic_margins: Arc<ComicMargins>,
     /// 原地替换后找回阅读位置的快照（QML 代理 shelf-keep-progress.qmd 在书打开时查、跳完销账，见 progress.rs）。
     pub progress: Arc<crate::progress::Progress>,
+    /// 阅读方向查询（reader-page-turn.qmd 打开书时问，只看书自己标的方向，见 reading_direction.rs）。
+    pub reading_direction: crate::reading_direction::ReadingDirection,
     /// 原生书库「建文件夹」队列（QML 代理 shelf-mkdir-agent.qmd 拉取执行，2026-09-19 复活，
     /// 见 mkdir.rs 模块文档）；`Arc`：投递层（`XochitlDelivery`）也持一份。
     pub mkdir: Arc<MkdirQueue>,
@@ -79,6 +81,7 @@ impl State {
         let spool = Spool::new(books_state.clone());
         let comic_margins = Arc::new(ComicMargins::new(&books_state, &paths.xochitl_dir()));
         let progress = Arc::new(crate::progress::Progress::new(&books_state, &paths.xochitl_dir()));
+        let reading_direction = crate::reading_direction::ReadingDirection::new(&paths.xochitl_dir());
         let bus = Arc::new(EventBus::new());
         let agent_failures = Arc::new(AgentFailures::new(&books_state, Some(bus.clone())));
         let trash = Arc::new(TrashQueue::new(&books_state, &paths.xochitl_dir()).with_failures(agent_failures.clone()));
@@ -90,7 +93,7 @@ impl State {
         let staging = Staging::new(books_state.join("staging"), delivery.clone());
         let selftest = Arc::new(crate::selftest::SelfTest::new(&books_state, delivery.clone(), trash.clone()));
         let import = crate::import::Importer::new(delivery, books_state.join("import-tmp")).with_progress(progress.clone());
-        State { cfg, spool, staging, xochitl, bus, trash, comic_margins, progress, mkdir, agent_failures, import, selftest, jobs: crate::jobs::Jobs::default(), status_cache: Arc::new(TtlCache::new(STATUS_TTL)), inbox_settle: INBOX_SETTLE }
+        State { cfg, spool, staging, xochitl, bus, trash, comic_margins, progress, reading_direction, mkdir, agent_failures, import, selftest, jobs: crate::jobs::Jobs::default(), status_cache: Arc::new(TtlCache::new(STATUS_TTL)), inbox_settle: INBOX_SETTLE }
     }
 
     pub fn ensure_dirs(&self) -> std::io::Result<()> {

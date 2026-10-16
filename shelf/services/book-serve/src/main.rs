@@ -15,6 +15,7 @@ mod mkdir;
 mod ops;
 mod pending_queue;
 mod progress;
+mod reading_direction;
 mod render_check;
 mod selftest;
 mod service_state;

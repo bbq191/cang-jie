@@ -1,4 +1,4 @@
-//! 读 EPUB 的几样小事（[`Book`]）：找 OPF、书名/作者/语言、封面图、sheng-ren 的漫画页边距标记，外加写占位 EPUB 的 zip。
+//! 读 EPUB 的几样小事（[`Book`]）：找 OPF、书名/作者/语言、封面图、翻页方向、sheng-ren 的漫画页边距标记，外加写占位 EPUB 的 zip。
 //!
 //! 2026-10-07 起书架不优化书，只把书原样投进 xochitl，读书只剩这几样；以前借用 sheng-ren `bookconv` 的公开接口，
 //! 它连带的图片处理、网页正文抽取、HTTP 客户端等依赖书架一样都用不上，同日改成这里的最小实现（只读 container.xml、
@@ -106,6 +106,14 @@ impl Book {
         Some((image_ext_of(&path), read_entry(&mut self.zip, &path, MAX_IMAGE_BYTES).ok()??))
     }
 
+    /// 书自己标的翻页方向是不是从右往左：OPF `<spine page-progression-direction="rtl">`（值去空白、不分大小写；日漫常见）。
+    /// 缺 OPF / 没标 / 标 `ltr` → `false`。xochitl 自己不看这个标记，阅读器里的 reader-page-turn.qmd 经 book-serve
+    /// `GET /reading-direction/{uuid}` 问它（2026-10-16 用户定：翻页方向由书本身决定，不设开关、不设手动清单）。
+    pub fn is_rtl(&self) -> bool {
+        let Ok(opf) = self.opf.as_ref() else { return false };
+        start_tags(&opf.text, "spine").first().and_then(|t| attr(t, "page-progression-direction")).is_some_and(|v| v.trim().eq_ignore_ascii_case("rtl"))
+    }
+
     /// sheng-ren 写在漫画里的页边距（[`READER_MARGINS_MARKER`] 条目的内容）。没有、读不出、不是数字 → `None`。
     pub fn reader_margins(&mut self) -> Option<u32> {
         let entry = self.zip.by_name(READER_MARGINS_MARKER).ok()?;
@@ -186,6 +194,28 @@ mod tests {
     #[test]
     fn escape() {
         assert_eq!(xml_escape("A & <B> \"q\"\u{0}\u{1}"), "A &amp; &lt;B&gt; &quot;q&quot;");
+    }
+
+    /// 翻页方向只看 spine 自己的 `page-progression-direction`：注释里的不算、带前缀也认、值去空白不分大小写。
+    #[test]
+    fn is_rtl_reads_spine_direction_only() {
+        let d = tempfile::tempdir().unwrap();
+        let mk = |name: &str, spine: &str| {
+            let p = d.path().join(name);
+            let mut z = ZipWriter::new(std::fs::File::create(&p).unwrap());
+            let o = SimpleFileOptions::default();
+            z.start_file("META-INF/container.xml", o).unwrap();
+            z.write_all(br#"<container><rootfiles><rootfile full-path="OEBPS/content.opf"/></rootfiles></container>"#).unwrap();
+            z.start_file("OEBPS/content.opf", o).unwrap();
+            z.write_all(format!("<package><manifest/>{spine}</package>").as_bytes()).unwrap();
+            z.finish().unwrap();
+            Book::open(&p).unwrap().is_rtl()
+        };
+        assert!(mk("r.epub", r#"<spine toc="ncx" page-progression-direction="rtl"><itemref idref="a"/></spine>"#));
+        assert!(mk("p.epub", r#"<opf:spine page-progression-direction=" RTL "/>"#));
+        assert!(!mk("l.epub", r#"<spine page-progression-direction="ltr"><itemref idref="a"/></spine>"#));
+        assert!(!mk("n.epub", r#"<spine toc="ncx"><itemref idref="a"/></spine>"#));
+        assert!(!mk("c.epub", r#"<!-- <spine page-progression-direction="rtl"> --><spine/>"#));
     }
 
     /// 解压后超过上限的条目不整份读进内存：OPF 解出超过 [`epubpkg::MAX_TEXT_BYTES`] → 当成读不到 OPF（书名为空、造不了占位），不 OOM。
