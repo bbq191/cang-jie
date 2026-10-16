@@ -831,7 +831,7 @@ mk_dump() {
         echo "UNIT|once|chrony-boot-wakelock.service|1|-|inactive|-|-|-|-|-|-"
         echo "PORTINFO|1"; echo "LISTEN|443|0.0.0.0"
         for p in 8790 8792 8793 8795 8796 8797 8798; do echo "LISTEN|$p|127.0.0.1"; done
-        echo "JOURNAL|1"; echo "XLOG|hookok:hl-snap|3"; echo "XLOG|hookfail:hl-snap|0"
+        echo "JOURNAL|1"; echo "XLOG|hookok:hl-snap|3"; echo "XLOG|hookfail:hl-snap|0"; echo "XLOG|hookrefuse:hl-snap|0"
         echo "XLOG|mark:reader-page-turn.qmd|2"; echo "FLIGHT_ABSENT|1"; echo "DF_HOME|3000000"; echo "END|1"
     } | tr '|' '\t'
 }
@@ -867,6 +867,7 @@ check "  └ result=WARN" test "$(vsum result)" = WARN
 vcase "有待生效标记 → ⚠" 0 "⚠ 待生效标记：shelf-qmd" "\$a PENDING${T}shelf-qmd"
 vcase "xovi 没在 xochitl 里生效 → ✗" 1 "✗ xovi：xochitl 没带 xovi" "s/^X_XOVI${T}1/X_XOVI${T}0/"
 vcase "设备没装 xovi → 只 ⚠" 0 "⚠ xovi：设备上没有 xovi.so" "s/^X_XOVI${T}1/X_XOVI${T}0/" "s/^HAS_XOVI${T}1/HAS_XOVI${T}0/" "/^XMAP/d" "/^EXT_FILE/d"
+vcase "扩展在主进程里自己拒绝加载（OTA 后特征码不中）→ ✗、退出 1，不能因为已映射就报 ✓" 1 "✗ 扩展 hl-snap.so：已映射 3 段，但当前 xochitl 日志里它自己拒绝加载×1" "s/^XLOG${T}hookok:hl-snap${T}3/XLOG${T}hookok:hl-snap${T}0/" "s/^XLOG${T}hookrefuse:hl-snap${T}0/XLOG${T}hookrefuse:hl-snap${T}1/"
 vcase "xochitl NRestarts>0 → ⚠" 0 "⚠ xochitl：active，MainPID=4242，NRestarts=2" "s/^X_NRESTARTS${T}0/X_NRESTARTS${T}2/"
 vcase "xochitl 看门狗是官方 1min、没放 drop-in → ⚠" 0 "⚠ xochitl 看门狗：WatchdogUSec=1min（官方默认" "s/^X_WATCHDOG_USEC${T}5min/X_WATCHDOG_USEC${T}1min/;s/^X_WATCHDOG_DROPIN${T}1/X_WATCHDOG_DROPIN${T}0/"
 vcase "xochitl 看门狗 drop-in 已落盘、还没重启 → ⚠" 0 "⚠ xochitl 看门狗：drop-in 已落盘但当前是 WatchdogUSec=1min" "s/^X_WATCHDOG_USEC${T}5min/X_WATCHDOG_USEC${T}1min/"

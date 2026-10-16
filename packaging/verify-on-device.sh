@@ -187,7 +187,7 @@ if [ -d "$EXT" ]; then
         [ -f "$f" ] || continue
         n="$(basename "$f")"
         emit EXT_FILE "$n" "$(stat -c %Y "$f" 2>/dev/null)"
-        case "$n" in *.so) e="${n%.so}"; HOOKSPEC="$HOOKSPEC|hookok:$e=[$e]&安装完成|hookfail:$e=[$e]&hook 未安装" ;; esac
+        case "$n" in *.so) e="${n%.so}"; HOOKSPEC="$HOOKSPEC|hookok:$e=[$e]&安装完成|hookfail:$e=[$e]&hook 未安装|hookrefuse:$e=^[$e] _xovi_shouldLoad&拒绝加载" ;; esac
     done
 fi
 cj_pending_list | while IFS= read -r p; do emit PENDING "$p"; done
@@ -258,7 +258,7 @@ if command -v journalctl >/dev/null 2>&1; then
     if [ "$XP" != "0" ]; then
         journalctl -b "_PID=$XP" -o cat --no-pager -q 2>/dev/null | awk -v T="$T" -v SPEC="$MARKS$HOOKSPEC" '
             BEGIN { n = split(SPEC, sp, "|"); for (i = 1; i <= n; i++) if (sp[i] != "") { e = index(sp[i], "="); key[i] = substr(sp[i], 1, e - 1); pat[i] = substr(sp[i], e + 1); c[key[i]] = 0 } }
-            { for (i = 1; i <= n; i++) if (i in key) { m = split(pat[i], ps, "&"); ok = 1; for (j = 1; j <= m; j++) if (!index($0, ps[j])) { ok = 0; break }; if (ok) c[key[i]]++ } }
+            { for (i = 1; i <= n; i++) if (i in key) { m = split(pat[i], ps, "&"); ok = 1; for (j = 1; j <= m; j++) { p = ps[j]; if (substr(p, 1, 1) == "^" ? index($0, substr(p, 2)) != 1 : !index($0, p)) { ok = 0; break } }; if (ok) c[key[i]]++ } }
             END { for (k in c) print "XLOG" T k T c[k] }'
     fi
 else
@@ -358,6 +358,11 @@ judge_xochitl() {
         e="${name%.so}"
         ok_n="$(awk -F'\t' -v k="hookok:$e" '$1 == "XLOG" && $2 == k { print $3; exit }' "$DUMP")"
         bad_n="$(awk -F'\t' -v k="hookfail:$e" '$1 == "XLOG" && $2 == k { print $3; exit }' "$DUMP")"
+        # 主进程里 _xovi_shouldLoad 拒绝加载：xovi 先映射 .so 再问它，所以照样"已映射"，但什么都没装
+        #（10-16 固件 3.29 上 hl-snap 特征码不中，旧版本脚本把它报成 ✓）。子进程（排版用的 xochitl_pdf_renderer
+        # 等）里的拒绝是正常的；主进程会把子进程的输出转写成 `rm.worker.unix …: [hl-snap] … 拒绝加载`，进程号也是
+        # 主进程的，所以这一项要求行首就是 `[扩展名] _xovi_shouldLoad`（HOOKSPEC 里的 ^）。
+        ref_n="$(awk -F'\t' -v k="hookrefuse:$e" '$1 == "XLOG" && $2 == k { print $3; exit }' "$DUMP")"
         hooks=""; num "${ok_n:-x}" && [ "$ok_n" -gt 0 ] && hooks="，日志 hook「安装完成」×$ok_n"
         if [ -z "$m" ]; then
             if [ "$xv" = 1 ]; then
@@ -367,6 +372,8 @@ judge_xochitl() {
             fi
         elif [ "$(echo "$m" | cut -f2)" = 1 ]; then
             item fail "$S" "扩展 $name" "maps 里是 (deleted)：文件换了但 xochitl 还用着旧的。别 restart xochitl（换过已映射的 .so 再 restart 会 SEGV→整机重启），整机重启让它生效"
+        elif num "${ref_n:-x}" && [ "$ref_n" -gt 0 ]; then
+            item fail "$S" "扩展 $name" "已映射 $(echo "$m" | cut -f1) 段，但当前 xochitl 日志里它自己拒绝加载×$ref_n（固件不认识，多半是 OTA 后特征码没命中），功能不生效"
         elif num "${bad_n:-x}" && [ "$bad_n" -gt 0 ]; then
             item fail "$S" "扩展 $name" "已映射 $(echo "$m" | cut -f1) 段，但当前 xochitl 日志有「hook 未安装」×$bad_n（特征码没命中，功能不生效）"
         else
