@@ -19,6 +19,11 @@
 ;   - SceneViewGestures.qml:208-259 TouchAreaClickFilter{id:touchClick} 的 onClick: (pos) => {；
 ;     :439 nextPageGesture / :457 prevPageGesture 的 onActiveChanged 调 view.moveForward()/moveBackward()。
 ;
+; 【3.29】固件 3.29.0.153（2026-10-16 真机：点边缘报 `TypeError: Property 'moveForward' of object DeviceSceneView`）：
+;   DeviceSceneView 没有 moveForward/moveBackward 信号了，改成 signal rightPageRequested / leftPageRequested（:197-198），
+;   原生左滑手势发 rightPageRequested，DocumentView 的 onRightPageRequested 先 endItemSelection、exitTextMode 再
+;   moveForward()（DocumentView.qml:1018-1027）。点击时按阅读视图上有没有 rightPageRequested 二选一，两个固件同一份补丁。
+;
 ; 【qmldiff 纪律】INSERT{} 块内是 QML，注释只能用 //（用 ; 会被当成 QML 输出）。
 ; 【日志】journalctl -u xochitl | grep CJ-PAGE-TURN：loaded（加载）/ cfg（打开书读到的开关）。
 ;   单击/滑动命中不写日志（09-24 真机验证后去掉）：每行 journal 都会唤醒 wallpaper-serve 的 journalctl -f 和飞行记录仪。
@@ -115,7 +120,11 @@ AFFECT /qml/device/view/documentview/SceneViewGestures.qml
                     if (_cjdir !== 0) {
                         toolbar.closeFoldout();
                         reset();
-                        if (_cjdir > 0) {
+                        // 3.29 起阅读视图发 rightPageRequested / leftPageRequested（DocumentView 接住后
+                        // moveForward / moveBackward）；3.28 是 moveForward / moveBackward 信号。见文件头【3.29】。
+                        if (typeof view.rightPageRequested === "function") {
+                            if (_cjdir > 0) { view.rightPageRequested(); } else { view.leftPageRequested(); }
+                        } else if (_cjdir > 0) {
                             view.moveForward();
                         } else {
                             view.moveBackward();
