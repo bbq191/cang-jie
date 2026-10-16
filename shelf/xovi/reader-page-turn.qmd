@@ -10,7 +10,7 @@
 ;   10-07 删掉的旧版「日漫翻页规则」带网页开关和手动清单 rtl-overrides.json，都不加回。
 ;
 ; 【单击翻页开关】tapPageTurn，在「管理 → 系统增强」，默认关：点屏幕左右边缘翻页。区域 = 左右各 7% 宽、纵向只在屏幕高度
-;   35%–75% 之间（用户定，10-16 由 45%–80% 上移；避开顶部工具栏、底部进度条和握持的四角）。其余位置交回原生逻辑（双击进文本、点链接、选图照常）。
+;   35%–85% 之间（用户定，10-16 由 45%–80% 先改 35%–75%、再改 35%–85%；避开顶部工具栏、底部进度条和握持的四角）。其余位置交回原生逻辑（双击进文本、点链接、选图照常）。
 ;   原来还有「日漫翻页规则」rtlPageTurn（OPF 标了 rtl 的书把左右滑动/点按对调，方向问 book-serve /reading-direction）：
 ;   2026-10-07 用户定书架只负责入库、翻页方向交给书本身，整个删掉——xochitl 不看 OPF 的方向标记，日漫在 xochitl 里从左往右翻。
 ;   开关写在 ~/.local/share/cangjie-ime/reading-qol.json（网关 enhance/qol.rs 全量写回）。
@@ -161,8 +161,8 @@ AFFECT /qml/device/view/documentview/SceneViewGestures.qml
                     var _cjx = pos.x / touchArea.width;
                     var _cjy = pos.y / touchArea.height;
                     var _cjdir = 0;
-                    // 纵向只在 35%–75% 生效（距顶 35%、距底 25%）；横向左右各 7% 边缘。
-                    if (_cjy > 0.35 && _cjy < 0.75) {
+                    // 纵向只在 35%–85% 生效（距顶 35%、距底 15%）；横向左右各 7% 边缘。
+                    if (_cjy > 0.35 && _cjy < 0.85) {
                         if (_cjx < 0.07) {
                             _cjdir = -1;
                         } else if (_cjx > 0.93) {
