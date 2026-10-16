@@ -44,7 +44,7 @@ pub fn health(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
     if req.q_flag("fresh") {
         health_cache().invalidate();
     }
-    let v = health_cache().get_or(|| health::collect(paths, Path::new("/proc"), health::systemctl_show(&health::units()), health::prev_boot_journal()));
+    let v = health_cache().get_or(|| health::collect(paths, Path::new("/proc"), health::systemctl_show(&health::units()), health::prev_boot_journal(), |pid| health::xochitl_journal(Path::new("/proc"), pid)));
     Ok(Reply::ok(&v))
 }
 

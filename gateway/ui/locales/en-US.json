@@ -414,6 +414,8 @@
   "health.upMins": "{m} min",
   "health.xovi": "xovi active",
   "health.extensions": "Loaded extensions",
+  "health.refused": "Extensions that refused to load",
+  "health.refusedTitle": "These extensions are installed but did not recognise this firmware at startup, so they did not load and their features are off (usually after a system update changed the code they look for). They need an update for the new firmware.",
   "health.deleted": "Replaced, not restarted",
   "health.deletedTitle": "xochitl is still running the old copy of these extensions (marked (deleted) in its memory map). The new files take effect after a device reboot; don't restart xochitl on its own (it may crash while exiting)",
   "health.soPending": "Extensions waiting to swap in",

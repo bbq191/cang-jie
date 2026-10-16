@@ -82,6 +82,8 @@ function mountHealth(box){
     body('extensions').innerHTML=`<div class="kv small">
       <b>${T('health.xovi')}</b><span>${xoviTxt}</span>
       <b>${T('health.extensions')}</b><span>${names(x.extensions)}</span></div>
+      ${x.refused&&x.refused.length?`<h3>${T('health.refused')}</h3><p class="small">${T('health.refusedTitle')}</p>
+      <p><span class="badge off">${esc(x.refused.join(' · '))}</span></p>`:''}
       ${(x.deleted&&x.deleted.length)||(d.soPending&&d.soPending.length)?`
       <h3>${T('health.deleted')}</h3><p class="small">${T('health.deletedTitle')}</p>
       <p>${x.deleted&&x.deleted.length?`<span class="badge off">${esc(x.deleted.join(' · '))}</span>`:none}</p>
