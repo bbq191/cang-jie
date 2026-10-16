@@ -183,9 +183,9 @@ ui-font 不走第 2、3 步的特征码与跳板，见 [3.3](#33-ui-font界面�
 - `DocumentView.qml`：书一换，300 ms 后同步读 `reading-qol.json` 取 `tapPageTurn`。**每次打开书只读一次**，不轮询（08 月旧版每 1.5 秒轮询一次配置，费电），代价是改开关要重新打开书；关书时不读。
 - `SceneViewGestures.qml`：在单击 `touchClick.onClick` 函数体开头插入翻页分支；守卫：链接按下、文本编辑、缩放、笔记页不接管。
 
-**区域**（用户定）：左右各 7% 宽，纵向只在屏幕高度 35%–85% 之间（距顶 35%、距底 15%；10-16 由 45%–80% 先改 35%–75%、再改 35%–85%），避开顶部工具栏、底部进度条和握持的四角。右边缘下一页，左边缘上一页。滑动翻页不改。
+**区域**（用户定）：左右各 7% 宽，纵向从屏幕高度 35% 起、到书页显示区域的底边为止（取 `pageBorderRect` 底边，不是屏幕底边；底部工具栏展开时再让到 `availableSceneRect` 之内；10-16 由 45%–80% 先后改 35%–75%、35%–85%，再改成到书页底边），避开顶部工具栏、底部进度条和握持的四角。右边缘下一页，左边缘上一页。滑动翻页不改。
 
-**日志**：`journalctl -u xochitl | grep CJ-PAGE-TURN` → `loaded`（qmd 载入）、`cfg tap=…`（开书读到的开关）。单击 / 滑动命中时**不打日志**：每写一行 journal 都会唤醒日志读者。
+**日志**：`journalctl -u xochitl | grep CJ-PAGE-TURN` → `loaded`（qmd 载入）、`cfg tap=… page=… avail=… h=…`（开书读到的开关，以及当时的书页显示矩形、可用区域、视图高度——单击翻页的下沿就取前两者）。单击 / 滑动命中时**不打日志**：每写一行 journal 都会唤醒日志读者。
 
 **翻页方向由书决定**（2026-10-16 用户定，没有开关）：xochitl 自己不看 EPUB OPF 的 `page-progression-direction`（3.29.0.153 二进制里也没有这个字串；原生左滑恒为下一页）。补丁在书一换时把 `DeviceSceneView.cjRtl` 清零，300 ms 后异步问 book-serve `GET /reading-direction/<uuid>`（读书库里那本 EPUB 的 OPF `<spine page-progression-direction="rtl">`，按大小 + mtime 缓存），回来时仍是同一本书才置位。置位后在 `DocumentView` 的 `moveForward` / `moveBackward` 函数开头对调（`_cjPageFlip` 防止对调回来）：3.28 和 3.29 里这两个函数都只被用户翻页调用——滑动手势、单击翻页、键盘左右键——所以一处覆盖全部，不用分别改 3.28 的 `next/prevPageGesture` 和 3.29 的 `right/leftPageGesture`。效果：左滑、右箭头、点右边缘 = 上一页。没标、标 `ltr`、PDF、笔记本、book-serve 没在跑都按原生方向。日志多一行 `rtl book <uuid>`。
 10-07 删掉的旧版（附录 A.4）还有网页开关和手动清单 `rtl-overrides.json`，都不加回；Calibre 转的日漫多半没标方向，要在 sheng-ren 里标。
