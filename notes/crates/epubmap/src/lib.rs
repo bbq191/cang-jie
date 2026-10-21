@@ -94,7 +94,7 @@ pub fn read_toc_texts_from<R: Read + Seek>(epub: R) -> (Option<String>, Option<S
     let (mut guess_nav, mut guess_ncx) = (None, None);
     for i in 0..ar.len() {
         let Ok(f) = ar.by_index(i) else { continue };
-        let n = f.name().to_string();
+        let Ok(n) = f.name().map(|n| n.into_owned()) else { continue };
         let l = n.to_ascii_lowercase();
         if l.ends_with(".ncx") {
             guess_ncx.get_or_insert(n);

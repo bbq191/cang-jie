@@ -128,7 +128,7 @@ mod tests {
     fn assert_valid_epub(bytes: &[u8]) {
         let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
         let first = z.by_index(0).unwrap();
-        assert_eq!((first.name(), first.compression()), ("mimetype", zip::CompressionMethod::Stored));
+        assert_eq!((first.name().unwrap().as_ref(), first.compression()), ("mimetype", zip::CompressionMethod::Stored));
         drop(first);
         let e = entries_of(bytes);
         assert_eq!(e["mimetype"], b"application/epub+zip");
@@ -168,7 +168,7 @@ mod tests {
 
     fn entries_of(bytes: &[u8]) -> std::collections::HashMap<String, Vec<u8>> {
         let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
-        (0..z.len()).map(|i| { let mut f = z.by_index(i).unwrap(); let mut v = Vec::new(); f.read_to_end(&mut v).unwrap(); (f.name().to_string(), v) }).collect()
+        (0..z.len()).map(|i| { let mut f = z.by_index(i).unwrap(); let mut v = Vec::new(); f.read_to_end(&mut v).unwrap(); (f.name().unwrap().into_owned(), v) }).collect()
     }
 
     #[test]
