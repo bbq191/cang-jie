@@ -10,4 +10,4 @@ description = "设备 EPUB 的页号 → 章/小节映射：xochitl `.epubindex`
 epubpkg = { path = "../../../rmsvc-core/epubpkg" }
 regex = "1"
 # 只用 flate2 的 deflate（zip 的 "deflate" 特性还会带上用不到的 zopfli）
-zip = { version = "2", default-features = false, features = ["deflate-flate2", "flate2"] }
+zip = { version = "9", default-features = false, features = ["deflate-flate2"] }

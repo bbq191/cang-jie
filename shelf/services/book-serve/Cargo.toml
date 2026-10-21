@@ -23,6 +23,6 @@ sha2 = "0.11"
 
 [dev-dependencies]
 # 测试里手搓 EPUB 用；特性跟 shelf-conv 一致（"deflate" 特性还会带上用不到的 zopfli）
-zip = { version = "2", default-features = false, features = ["deflate-flate2", "flate2"] }
+zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
 tempfile = "3"
 tiny_http = "0.12"

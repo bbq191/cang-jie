@@ -10,7 +10,7 @@ description = "书架投递 xochitl 用的读书工具：读 EPUB 的书名/封�
 epubpkg = { path = "../../../rmsvc-core/epubpkg" }
 regex = "1"
 # 只用 flate2 的 deflate（zip 的 "deflate" 特性还会带上用不到的 zopfli）
-zip = { version = "2", default-features = false, features = ["deflate-flate2", "flate2"] }
+zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
 # pdfmeta 解 FlateDecode 的交叉引用流/对象流（有界解压）
 miniz_oxide = "0.8"
 

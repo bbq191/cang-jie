@@ -12,6 +12,10 @@
 
 ## 2026-10
 
+### 10-21（依赖安全升级，修 CI audit；分支 `fix/rustls-audit`，未部署）
+
+- CI 的 `cargo audit` 从 10-16 起一直失败：rustls 0.23.45 在 10-14 出了 4 条公告（RUSTSEC-2026-0346～0349）。顺带处理之后新出的公告：rustls-webpki 0.103.15（0382）、webpki-roots 1.0.9（0381）、zip 2.4.2（0367～0369，且该版本已撤回）。rustls→0.23.46、rustls-webpki→0.103.16、webpki-roots→1.0.10，均为兼容升级；zip 2→9 是大版本升级，唯一的 API 变化是 `ZipFile::name()` 改为返回 `Result`：epubmap 读目录时遇到名字不合法的条目就跳过，其余几处只在测试里。zip 的三条公告都在 `extract()` 里，本项目没有调用过，所以旧版本实际不受影响。开发机上 CI 的全部 `cargo test` 通过，7 个 lockfile 的 audit 都干净。设备上的二进制要重新部署才会用上新依赖。
+
 ### 10-16（单击翻页热区下沿贴到书页底边；分支 `feat/tap-zone-page-bottom`，未部署）〔17:08 已部署（`deploy.sh --only book` + 整机重启），核对 41✓ 1⚠（刚开机）0✗，journal 有 `CJ-PAGE-TURN: loaded`。17:09 用户真机测试通过（「完美」）；开书日志 `page=QRectF(0, 0, 954, 1696) avail=QRectF(0, 112, 954, 1584) h=1696`：这台设备上书页铺满整屏，所以下沿实际就是屏幕底边 1696（顶部工具栏只影响 avail 的上沿，不影响下沿）〕
 
 - 单击翻页的纵向范围改成从屏幕高度 35% 到书页显示区域的底边（`DeviceSceneView.pageBorderRect` 的底边，不是屏幕底边；底部工具栏展开时再让到 `availableSceneRect` 之内），宽度仍是左右各 7%（用户定，不加宽）。开书时那行 `CJ-PAGE-TURN: cfg tap=…` 顺带打出书页矩形、可用区域和视图高度，便于核对下沿；单击时仍不打日志。3.28、3.29 离线套补丁都通过。网页说明、白皮书与示意图同步。改了 qmd，要部署 book 服务并整机重启。

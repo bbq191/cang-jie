@@ -119,7 +119,7 @@ mod tests {
         let bytes = pack("doc-uuid", "《测试书》第一章", "", &page, TEMPLATE_AUTHOR, 1_700_000_000_000).unwrap();
 
         let mut z = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).unwrap();
-        let names: Vec<String> = (0..z.len()).map(|i| z.by_index(i).unwrap().name().to_string()).collect();
+        let names: Vec<String> = (0..z.len()).map(|i| z.by_index(i).unwrap().name().unwrap().into_owned()).collect();
         assert_eq!(names, vec!["doc-uuid.metadata", "doc-uuid.content", "doc-uuid/1111.rm"]);
 
         let mut meta = String::new();
