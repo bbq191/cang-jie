@@ -29,7 +29,14 @@ You run **one command** on your computer; the scripts build the programs, instal
 
 ## Scope
 
-**reMarkable Paper Pro Move (imx93-chiappa), firmware 3.28.0.172**. It is the only version verified on real hardware so far, and the installer checks it before doing anything (see "Automatic checks"). Other firmware versions and other reMarkable models are unverified; forcing an install there may misplace the UI patches — best case a feature doesn't work, worst case it affects normal device use.
+**reMarkable Paper Pro Move (imx93-chiappa), firmware 3.28.0.172 or 3.29.0.153**. The installer checks the firmware before doing anything (see "Automatic checks"). Other firmware versions and other reMarkable models are unverified; forcing an install there may misplace the UI patches — best case a feature doesn't work, worst case it affects normal device use.
+
+| Firmware | How far it is verified |
+|---|---|
+| 3.28.0.172 | Everything in daily use (since 2026-09) |
+| 3.29.0.153 | Verified after the device's OTA on 2026-10-16: all 7 UI patches apply offline and load on the device after a reboot; the one-click self-test passed all five steps (root folder, sub-folder, upload and claim, render, move to trash); tap-to-turn and per-book page direction tested on the device; the UI font installs; the 5-minute watchdog is in effect. **For the `hl-snap` highlighter fix only the hook installation is confirmed; the snapping itself has not been tried** |
+
+Three things differ on 3.29 and the code picks the right one at run time, so the same package installs on both: folder creation `createCollection` moved from `Library` to `LibraryController`; the reader's page-turn signals changed from `moveForward`/`moveBackward` to `rightPageRequested`/`leftPageRequested`; the `hl-snap` target function moved and has a new signature (see [`enhance/hl-snap/README.md`](../enhance/hl-snap/README.md)).
 
 ## Before you install
 
@@ -71,7 +78,7 @@ Keep the device awake and the cable plugged in during the install. The scripts h
 
 ### One command
 
-1. **Check the firmware version** in the device settings; only 3.28.0.172 has been verified.
+1. **Check the firmware version** in the device settings; 3.28.0.172 and 3.29.0.153 are verified (see "Scope").
 2. **Get the code**:
    ```sh
    git clone https://github.com/bbq191/cang-jie.git
@@ -112,6 +119,7 @@ The **step names** can be used with `--skip`; the matching script `packaging/dep
 | `timezone-cn` | Sets the default timezone to Asia/Shanghai | — |
 | `wifi-watch` | WiFi watchdog: reconnects when the link silently dies; locks to 2.4 GHz only when the AP is on a 5 GHz channel the device isn't allowed to use (5150–5350 MHz); turns on WiFi power saving (since 09-28; one side-by-side measurement showed idle current about 37% lower). Configurable on the device in `~/.config/wifi-watch.conf` (`BAND=`, `POWERSAVE=`) | — |
 | `xovi-persist` | Re-activates xovi automatically after boot, so a device reboot needs no manual fix-up | xovi |
+| `xochitl-watchdog` | Relaxes xochitl's watchdog from the stock 60 seconds to 300: opening or re-flowing a collection of tens of thousands of pages keeps the main thread busy for about 66 seconds, and past 60 seconds systemd treats it as hung and kills it (seen on the device on 2026-10-15). The cost: a genuinely hung xochitl takes 5 minutes to be restarted. The setting lives in xovi's persistent directory; files only | xovi |
 | `hl-snap` | Makes the highlighter snap to exactly what you drew over Chinese text, instead of "a short stroke grabs the whole line"; files only | xovi |
 | `ui-font` | UI font plugin: xochitl's interface (library, settings, dialogs, titles) uses the font you pick on the web page; the reader font is unchanged (since 2026-10-07); files only | xovi |
 | `shelf` | 8 web services: the gateway, books (book), fonts and wallpapers (font / wallpaper), and the four notes services (ink / transcribe / mind / note); plus 7 UI patches (font menu, UI font tokens, trash proxy, new-folder proxy, comic-margin proxy, reading-position proxy, reader tap-to-turn), files only | The patches need qt-resource-rebuilder; without it only the patches are skipped and the services still install |
@@ -247,10 +255,10 @@ The sidebar entry isn't cleaned automatically because its icon pack file name `c
 
 ```sh
 # only the battery sampler and handwriting stroke tuning (plan should list just handwriting-stroke and battop)
-sh packaging/uninstall-all.sh 10.11.99.1 --dry-run --skip chrony-boot-wakelock,wifi-watch,xovi-persist,hl-snap,ui-font,shelf,sidebar-entry
-sh packaging/uninstall-all.sh 10.11.99.1 --skip chrony-boot-wakelock,wifi-watch,xovi-persist,hl-snap,ui-font,shelf,sidebar-entry
+sh packaging/uninstall-all.sh 10.11.99.1 --dry-run --skip chrony-boot-wakelock,wifi-watch,xovi-persist,xochitl-watchdog,hl-snap,ui-font,shelf,sidebar-entry
+sh packaging/uninstall-all.sh 10.11.99.1 --skip chrony-boot-wakelock,wifi-watch,xovi-persist,xochitl-watchdog,hl-snap,ui-font,shelf,sidebar-entry
 # only the sidebar entry
-sh packaging/uninstall-all.sh 10.11.99.1 --skip chrony-boot-wakelock,wifi-watch,xovi-persist,hl-snap,ui-font,shelf,battop,handwriting-stroke
+sh packaging/uninstall-all.sh 10.11.99.1 --skip chrony-boot-wakelock,wifi-watch,xovi-persist,xochitl-watchdog,hl-snap,ui-font,shelf,battop,handwriting-stroke
 ```
 
 Afterwards reboot the device once (`reboot`). `verify-on-device.sh` flags these leftovers with ⚠ (✗ if the sidebar patch remains while appload is gone), and the cleanup commands it prints are the ones above.
@@ -279,6 +287,8 @@ This is the **authoritative description** of OTA recovery; other documents link 
 | Staging library, font and wallpaper pools, certificates, gateway password, sleep-screen setting, `cangjie-backups/` | `/home` | Kept | Nothing to do |
 | The web services' programs (`~/.local/bin`) | `/home` | Kept | Nothing to do |
 | The `hl-snap` and `ui-font` plugins, the UI patches | `/home` (`extensions.d/`, `exthome/`) | Files remain, but need a rebuilt hashtable to take effect | Step 2, then run `install-all.sh` |
+| xochitl's 300-second watchdog setting | `/home` (`~/xovi/services/xochitl.service/xochitl-watchdog.conf`) | File remains; xovi copies it into `/etc` at boot, so it comes back once xovi does | Nothing separate to do |
+| Deploy log | `/home` (`~/.local/state/shelf/deploy-log.jsonl`, last 20 deploys) | Kept | Nothing to do; "Device health" shows the deployed version |
 | Service units for the web services and `shelf.target` | `/usr` | **Wiped** | The `shelf` step (or on its own: `SHELF_NO_BUILD=1 sh packaging/deploy.sh <device>`) |
 | `xovi-reenable.service` (re-activates xovi at boot) | `/usr` | **Wiped** | The `xovi-persist` step |
 | `chrony-boot-wakelock.service` | `/usr` | **Wiped** | The `chrony-boot-wakelock` step |
@@ -286,6 +296,8 @@ This is the **authoritative description** of OTA recovery; other documents link 
 | Mainland-China time servers, default timezone | `/etc` | **Wiped** | The `chrony-cn` / `timezone-cn` steps |
 
 **Risk layers**: the shelf layer only uses xochitl's web upload interface and standard system components, so reinstalling after a firmware change brings it back; UI patches such as the font menu depend on xochitl's internal QML and often need re-adapting after a major version upgrade.
+
+**On real hardware**: on 2026-10-16 the device went from 3.28.0.172 to 3.29.0.153 by OTA and was recovered with exactly this procedure: the `/usr` units were wiped and xovi wasn't running, everything in `/home` was still there; after `rebuild_hashtable` and a reinstall, the post-reboot check was 40✓ 0✗ and the one-click self-test passed all five steps. Check the patches offline against the new firmware's real QML before touching the device; the three changes 3.29 needed are listed under "Scope".
 
 **A "bare-metal restore" needs one more check**: an OTA itself doesn't delete `/home`, but after a more thorough reset the plugins and programs under `/home` may be gone too (hit on real hardware on 2026-09-09). Confirm they're still there before re-running `install-all.sh`.
 
@@ -307,8 +319,8 @@ All of these are known issues with a clear trigger, not random failures.
 ### Other troubleshooting
 
 - Start with the summary to find the failing step; the header comment of the matching `packaging/deploy-*.sh` explains what the step does and common causes of failure.
-- The web page's "Manage" view shows whether a plugin is really loaded into xochitl ("loaded / not loaded"). A switch that's on but shows "not loaded" means the plugin isn't installed or the device hasn't rebooted since. "Manage → Device health" shows a fuller picture (services, extensions, last boot log).
-- To check the scripts aren't broken without touching a device: `bash packaging/tests/run_sim_tests.sh` (local simulation, 448 assertions, all passing on 2026-10-10). It doesn't replace verification on real hardware.
+- The web page's "Manage" view shows whether a plugin is really loaded into xochitl ("loaded / not loaded"). A switch that's on but shows "not loaded" means the plugin isn't installed, the device hasn't rebooted since, or the plugin didn't recognise the firmware and refused to load itself (typical after an OTA; listed separately under Device health's "Extensions"). "Manage → Device health" shows a fuller picture (services, extensions, last boot log, deployed version and deploy history), and its "Self-test" tab really creates folders, uploads and trashes a document in the library.
+- To check the scripts aren't broken without touching a device: `bash packaging/tests/run_sim_tests.sh` (local simulation, 460 assertions, all passing on 2026-10-22). It doesn't replace verification on real hardware.
 
 ## Risks and known limitations
 
@@ -329,6 +341,8 @@ The full record is in [`packaging/README.md` "验证现状"](../packaging/README
 | Full `uninstall-all.sh` run | **Run on real hardware**: 2026-09-25; all 8 steps succeeded in reverse order, shelf/notes data and configuration kept, xochitl wasn't restarted during the uninstall |
 | "Swap in a new `.so` → full reboot → auto-restore at boot → check" | **Run on real hardware**: 2026-09-25 (43✓) |
 | Automatic cleanup of removed components | **Run on real hardware**: 2026-09-30 15:23, a single reboot, 36✓ 1⚠ 0✗ |
+| The `xochitl-watchdog` step | **Run on real hardware**: deployed and rebooted on 2026-10-15, check `WatchdogUSec=5min` ✓; a collection of tens of thousands of pages opens and turns pages |
+| Recovery after the OTA to 3.29.0.153 | **Run on real hardware**: 2026-10-16, see "On real hardware" under "After a firmware update (OTA)" |
 | The two 2026-10-10 hardening rounds (stop on disconnect, no reboot after a failure, no re-sending an unchanged package, merged round trips, on-device convergence after interruption, etc.) | **Local simulation only**, not yet on real hardware |
 | Disconnect detection, not executing a half-received script, error without reboot when xovi is missing, handling a failed `systemctl reboot`, keeping programs under dm-verity, `--purge`, `uninstall-all` cleaning only removed components | **Local simulation only** |
 

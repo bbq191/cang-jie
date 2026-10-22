@@ -53,7 +53,7 @@ shelf（书架）是跑在 reMarkable Paper Pro Move 上的一组网页服务。
 | 组件 | 端口 / 位置 | 职责 | 源码 |
 |---|---|---|---|
 | gateway（网关） | `0.0.0.0:443`，唯一对外 | HTTPS + 登录密码、单页网页、按 `/api/<段>/*` 反向代理、批量队列、事件汇聚 | `gateway/` |
-| book-serve | `127.0.0.1:8790` | 母版库（入库、改名、删除、下载原件）、加入 xochitl、直接导入 / 原地替换、四个 qmd 代理的待办队列 | `shelf/services/book-serve` |
+| book-serve | `127.0.0.1:8790` | 母版库（入库、改名、删除、下载原件）、加入 xochitl、直接导入 / 原地替换、四个 qmd 代理的待办队列、阅读方向查询、一键自检 | `shelf/services/book-serve` |
 | shelf-conv | 库，链进 book-serve | **只读不改书**：读 EPUB 的书名 / 封面 / 漫画页边距标记、第三方 PDF 页数、大文件通道的占位文档、文件名规范化 | `shelf/crates/shelf-conv` |
 | font-serve | `127.0.0.1:8792` | xochitl 字体上传即装 | `enhance/font-serve` |
 | wallpaper-serve | `127.0.0.1:8793` | 休眠壁纸上传即用 | `enhance/wallpaper-serve` |
@@ -187,7 +187,7 @@ book-serve 跑在设备上，能直接写 xochitl 书库目录。所以超过体
 
 | 代理 | 做什么 | 怎么取活 | 调什么 |
 |---|---|---|---|
-| `shelf-mkdir-agent.qmd`（MainView） | 建文件夹（按上级 + 名字，支持多级） | 长轮询 `GET /mkdir/pending?wait=290` | `Library.createCollection(上级, 名字)` |
+| `shelf-mkdir-agent.qmd`（MainView） | 建文件夹（按上级 + 名字，支持多级） | 长轮询 `GET /mkdir/pending?wait=290` | `createCollection(上级, 名字)`：3.28 在 `Library` 上，3.29 起在 `LibraryController` 上，运行时二选一 |
 | `shelf-trash-agent.qmd`（MainView） | 把文档移进回收站（网页「设备健康 → 清理」、笔记线挪走旧版笔记本） | 长轮询 `GET /trash/pending?wait=290` | `LibraryController.moveEntriesToTrash([Library.entryForId(uuid).id])` |
 | `shelf-comic-margins.qmd`（DocumentView） | 带标记的漫画首次打开设页边距 1 | 开书 1.5 秒后问 `GET /margins/{uuid}` | `EpubProperties.setMargins(1)` |
 | `shelf-keep-progress.qmd`（DocumentView） | 原地替换后跳回原阅读位置（4.5） | 开书后问 `GET /progress/{uuid}`，最多约 60 秒 | `sceneView.goToPage(n)` |
@@ -230,7 +230,7 @@ sheng-ren 原地替换一本在读的 EPUB 后，xochitl 重开时整本重排�
 
 - font-serve 每次上传 / 删除都**动态重写** fontconfig：中文回退指向当前已装的中文字体（覆盖率降序）、全部 `weak`（所选字体永远在最前，缺字才逐字回退）；覆盖率 <8% 不入回退链。旧中文化套件写死回退曾导致"方框 + 选了不生效"（历史附录 §03k）。
 - 字体菜单 qmd：3.28 版先删后加（只删自己加的条目）。
-- 只支持 Paper Pro Move、固件 3.28.0.172；换固件后要重装（`/home` 保留，`/usr` 与 `/etc` 被冲，见 6.5）。
+- 只支持 Paper Pro Move，固件 3.28.0.172 或 3.29.0.153（10-16 OTA 后适配，书架这边只有建文件夹代理要改，一键自检真机五步全过）；换固件后要重装（`/home` 保留，`/usr` 与 `/etc` 被冲，见 6.5）。
 - WiFi 连上恰好 60 秒就掉的真凶是精简 `regulatory.db` 里 CN 没有 5150–5350 MHz；看护脚本在 `packaging/wifi-watch/`（历史附录 §03w）。
 
 ## 5｜接口与配置参考
@@ -391,7 +391,7 @@ qmd 和 xovi 扩展只在 xochitl **启动时**注入。**一律整机重启**�
 - **inbox 只判"还在不在写"**：scp 中途断开留下的半截文件静止 5 秒后仍可能被收进母版库。
 - **从 sheng-ren 复制的两处**没有自动检查（6.7）。
 - **建文件夹代理的长轮询 290 秒**依赖 Qt 6.10 的 QML XHR 不设传输超时；journal 里出现 `SHELF-MKDIR: transfer timeout` 说明退回了 25 秒。
-- **多级文件夹**（直接导入；网页加入与「＋新建」10-13 起也是）依赖 `Library.createCollection` 传非空上级，10-14 一键自检在真机上第一次建出了子文件夹（`createCollection` 带非空上级通过）；#24、#29 其余几项（sheng-ren 多级导入、网页往子文件夹里加书）10-14 用户真机测试通过。
+- **多级文件夹**（直接导入；网页加入与「＋新建」10-13 起也是）依赖 `createCollection` 传非空上级（3.29 起在 `LibraryController` 上），10-14 一键自检在真机上第一次建出了子文件夹（`createCollection` 带非空上级通过）；#24、#29 其余几项（sheng-ren 多级导入、网页往子文件夹里加书）10-14 用户真机测试通过。
 - **旧设备残留**：`.pdf-originals/`、`books/done/` 等不会再被自动清理（5.3）。
 
 ### 7.2 按症状排错
@@ -485,7 +485,7 @@ qmd 和 xovi 扩展只在 xochitl **启动时**注入。**一律整机重启**�
 | 18 | 09-30 三项改动 | 超限书走大文件通道，超 1GiB / 造不出占位时整本拒绝、回执干净 |
 | 19 | 09-30 第五轮审计与补修 | 长书名能入库、加入；母版库目录不留 `.*.tmp`；「全部中止」在一本刚开始时确实不跑；网关重启后网页自动恢复实时刷新；只加入过 KOReader 的旧书回到「未加入」；带 Basic 头的脚本连发请求时网关 CPU 不持续满载；>90MB 第三方 PDF（交叉引用流）加入后页数正确；书名 >244 字节的书在网页上显示加入状态 |
 | 22 | 10-07 书架不再优化书（已部署 37✓） | 「传书」只剩上传卡、底部只剩「加入 xochitl」、筛选三档默认「未加入」；旧 `batch.json` 里的 optimize 任务被剔除；设备上优化过的书照样能加入；sheng-ren 漫画首次打开设页边距 1、其它书不设；sheng-ren 产的 >90MB 书走大文件通道；最小占位 PDF 让 >90MB 的 PDF 照常加入；已删接口回 404；补跑浏览器冒烟 |
-| 23 | 10-07 稍后的清理与代码审查修复（已部署 36✓） | 行内没有按钮；渲染徽章只显示页数；格式筛选只有 EPUB / PDF；批量多本一本一本跑、网关重启后续跑；占位显示书里的书名；「系统增强」只剩「单击翻页」；日漫从左往右翻（预期）；`/reading-direction`、`/staging/mark`、`/api/budget/*` 回 404；筛选计数加得拢；结果不明记失败；加入后马上改名显示「未见渲染」；原地替换后书库没有 `.epub.new`、页边距没被重设 |
+| 23 | 10-07 稍后的清理与代码审查修复（已部署 36✓） | 行内没有按钮；渲染徽章只显示页数；格式筛选只有 EPUB / PDF；批量多本一本一本跑、网关重启后续跑；占位显示书里的书名；「系统增强」只剩「单击翻页」；日漫从左往右翻（预期）；`/reading-direction`、`/staging/mark`、`/api/budget/*` 回 404（**10-16 起后两条已不成立**：按书的方向翻页加回，`/reading-direction` 恢复）；筛选计数加得拢；结果不明记失败；加入后马上改名显示「未见渲染」；原地替换后书库没有 `.epub.new`、页边距没被重设 |
 | 24 | **10-14 用户真机测试通过**：10-07 傍晚直接导入多级文件夹（已部署 36✓） | sheng-ren 推 `folder=一级/二级` 的书，书库出现「一级」里套「二级」（关键是 `createCollection` 传非空上级，从没在真机上走过）；「一级」已存在时不重复建；不同上级下的同名子文件夹分开；journal 无 `SHELF-MKDIR` 报错 |
 | 25 | 10-09 第六轮审计（已部署 38✓） | 坏 EPUB 入库、加入时 book-serve 不被 OOM 杀；xochitl 正在改写 `.metadata` 时回收站待办不丢；「新建文件夹」加入后不再白等 20 秒；投到刚删的文件夹落书库根；剩余 <300MiB 网页标红；>90MB 的书照常；`shelf-uninstall --only book` 删 qmd 后提示整机重启；`.reason` 正常 |
 | 26 | 10-09 找回阅读位置（已部署 39✓，真机验证一次） | 还要测：sheng-ren 改动内容、页数变了之后重开是否落在同一章附近；书里插过笔记页时跳到的页对不对；新 `.content` 的 `pageCount` 是否与新 `.epubindex` 同时更新；没替换过的书打开时 journal 没有 `CJ-KEEP-PROGRESS` |

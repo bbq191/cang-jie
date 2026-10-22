@@ -29,7 +29,14 @@
 
 ## 适用范围
 
-**reMarkable Paper Pro Move（imx93-chiappa），固件 3.28.0.172**。这是目前唯一在真机上验证过的版本，安装脚本动手前会自动核对（见「动手前的自动检查」）。其它固件版本、其它 reMarkable 型号都没验证过；强装的话，界面补丁可能定位错，轻则某个功能不生效，重则影响设备正常使用。
+**reMarkable Paper Pro Move（imx93-chiappa），固件 3.28.0.172 或 3.29.0.153**。安装脚本动手前会自动核对（见「动手前的自动检查」）。其它固件版本、其它 reMarkable 型号都没验证过；强装的话，界面补丁可能定位错，轻则某个功能不生效，重则影响设备正常使用。
+
+| 固件 | 验证到什么程度 |
+|---|---|
+| 3.28.0.172 | 全部功能日常在用（2026-09 起） |
+| 3.29.0.153 | 2026-10-16 设备 OTA 后验证：7 个界面补丁离线套用全部命中、整机重启后真机载入；一键自检五步全过（建根文件夹、子文件夹、上传认领、排版、移进回收站）；单击翻页与按书翻页方向真机通过；界面字体装上；看门狗 5 分钟生效。**荧光笔吸附 `hl-snap` 只确认挂钩装上，划线效果没实测** |
+
+3.29 上有三处跟 3.28 不同，代码运行时自动二选一，同一份安装包两个固件都能装：建文件夹的 `createCollection` 从 `Library` 挪到了 `LibraryController`；阅读视图的翻页信号从 `moveForward`/`moveBackward` 改成 `rightPageRequested`/`leftPageRequested`；`hl-snap` 的目标函数换了位置和特征码（见 [`enhance/hl-snap/README.md`](../enhance/hl-snap/README.md)）。
 
 ## 装之前
 
@@ -71,7 +78,7 @@
 
 ### 一条命令装好
 
-1. **确认固件版本**：设备设置里看系统版本，目前只有 3.28.0.172 验证过。
+1. **确认固件版本**：设备设置里看系统版本，验证过的是 3.28.0.172 和 3.29.0.153（见「适用范围」）。
 2. **取代码**：
    ```sh
    git clone https://github.com/bbq191/cang-jie.git
@@ -112,6 +119,7 @@
 | `timezone-cn` | 默认时区设为 Asia/Shanghai | — |
 | `wifi-watch` | WiFi 假死看护：检测到断链自动重连；连上的 AP 在设备不许用的 5G 信道（5150–5350 MHz）时才锁 2.4G；打开 WiFi 省电（09-28 起，一次对照实测空闲电流约降 37%）。可在设备 `~/.config/wifi-watch.conf` 里改（`BAND=`、`POWERSAVE=`） | — |
 | `xovi-persist` | 开机后自动让 xovi 重新生效，重启设备后不用手动补 | xovi |
+| `xochitl-watchdog` | 把 xochitl 的看门狗从官方 60 秒放宽到 300 秒：几万页的合集打开或重排时主线程要连续算约 66 秒，超过 60 秒会被系统当成卡死、杀掉重启（2026-10-15 真机）。代价是 xochitl 真卡死时要 5 分钟才被自动拉起。配置放在 xovi 的持久目录里，只落盘 | xovi |
 | `hl-snap` | 荧光笔划中文"划哪吸哪"，不再"划一小段吸整行"；只落盘 | xovi |
 | `ui-font` | 界面字体插件：xochitl 的界面（书库、设置、对话框、标题）用你在网页上选的字体，阅读器字体不变（2026-10-07 起）；只落盘 | xovi |
 | `shelf` | 8 个网页服务：网关、书（book）、字体与壁纸（font / wallpaper）、笔记四服务（ink / transcribe / mind / note）；附带 7 个界面补丁（字体菜单、界面字体令牌、回收站代理、建文件夹代理、漫画页边距代理、阅读位置代理、阅读器单击翻页）只落盘 | 补丁需要 qt-resource-rebuilder，缺了只跳过补丁、服务照装 |
@@ -247,10 +255,10 @@ sh packaging/uninstall-all.sh 10.11.99.1 --skip shelf       # 跳过某步
 
 ```sh
 # 只清电池刺客与手写优化（计划里应只有 handwriting-stroke、battop 两步）
-sh packaging/uninstall-all.sh 10.11.99.1 --dry-run --skip chrony-boot-wakelock,wifi-watch,xovi-persist,hl-snap,ui-font,shelf,sidebar-entry
-sh packaging/uninstall-all.sh 10.11.99.1 --skip chrony-boot-wakelock,wifi-watch,xovi-persist,hl-snap,ui-font,shelf,sidebar-entry
+sh packaging/uninstall-all.sh 10.11.99.1 --dry-run --skip chrony-boot-wakelock,wifi-watch,xovi-persist,xochitl-watchdog,hl-snap,ui-font,shelf,sidebar-entry
+sh packaging/uninstall-all.sh 10.11.99.1 --skip chrony-boot-wakelock,wifi-watch,xovi-persist,xochitl-watchdog,hl-snap,ui-font,shelf,sidebar-entry
 # 只清侧栏入口
-sh packaging/uninstall-all.sh 10.11.99.1 --skip chrony-boot-wakelock,wifi-watch,xovi-persist,hl-snap,ui-font,shelf,battop,handwriting-stroke
+sh packaging/uninstall-all.sh 10.11.99.1 --skip chrony-boot-wakelock,wifi-watch,xovi-persist,xochitl-watchdog,hl-snap,ui-font,shelf,battop,handwriting-stroke
 ```
 
 跑完在设备上整机重启一次（`reboot`）。`verify-on-device.sh` 看到这些残留会报 ⚠（侧栏入口补丁还在而 appload 已卸则报 ✗），给的清理命令就是上面这几条。
@@ -279,6 +287,8 @@ sh packaging/uninstall-all.sh 10.11.99.1 --skip chrony-boot-wakelock,wifi-watch,
 | 母版库、字体与壁纸池、证书、网关密码、休眠屏设置、`cangjie-backups/` | `/home` | 保留 | 不用管 |
 | 各网页服务的程序（`~/.local/bin`） | `/home` | 保留 | 不用管 |
 | `hl-snap`、`ui-font` 插件，各界面补丁 | `/home`（`extensions.d/`、`exthome/`） | 文件还在，但要重建 hashtable 才生效 | 第 2 步，再跑 `install-all.sh` |
+| xochitl 看门狗 300 秒的配置 | `/home`（`~/xovi/services/xochitl.service/xochitl-watchdog.conf`） | 文件还在；开机时由 xovi 拷进 `/etc`，xovi 恢复后自然生效 | 不用单独管 |
+| 部署记录 | `/home`（`~/.local/state/shelf/deploy-log.jsonl`，留最近 20 次） | 保留 | 不用管；网页「设备健康」显示部署版本 |
 | 各网页服务与 `shelf.target` 的服务单元 | `/usr` | **被冲掉** | `shelf` 步（或单独：`SHELF_NO_BUILD=1 sh packaging/deploy.sh <设备>`） |
 | `xovi-reenable.service`（开机自动让 xovi 生效） | `/usr` | **被冲掉** | `xovi-persist` 步 |
 | `chrony-boot-wakelock.service` | `/usr` | **被冲掉** | `chrony-boot-wakelock` 步 |
@@ -286,6 +296,8 @@ sh packaging/uninstall-all.sh 10.11.99.1 --skip chrony-boot-wakelock,wifi-watch,
 | 国内校时服务器、默认时区 | `/etc` | **被冲掉** | `chrony-cn` / `timezone-cn` 步 |
 
 **风险分层**：书架这层只用 xochitl 的网页上传接口和系统标准组件，换固件重装就回来；字体菜单这类界面补丁依赖 xochitl 内部 QML，大版本升级常要重新适配。
+
+**真机经历**：2026-10-16 设备从 3.28.0.172 OTA 到 3.29.0.153，就是按上面的流程恢复的：`/usr` 下的单元被冲掉，xovi 没起来，`/home` 里的东西都在；跑过 `rebuild_hashtable` 再重装，整机重启后核对 40✓ 0✗，一键自检五步全过。新固件要先用它的真实 QML 离线核对补丁，再上设备；3.29 上要改的三处见「适用范围」。
 
 **"裸机恢复"要多查一步**：OTA 本身不删 `/home`，但如果设备做过更彻底的重置，`/home` 下的插件和程序可能也没了（2026-09-09 真机踩过）。重跑 `install-all.sh` 前先确认它们还在。
 
@@ -307,8 +319,8 @@ sh packaging/uninstall-all.sh 10.11.99.1 --skip chrony-boot-wakelock,wifi-watch,
 ### 其它排障
 
 - 先看收尾汇总，定位哪一步失败；对应 `packaging/deploy-*.sh` 的开头注释写了这一步做什么、常见失败原因。
-- 网页「管理」页能直接看到插件是否真的加载进了 xochitl（"已加载 / 未加载"）。开关开着但显示"未加载"，说明插件没装上或装完还没整机重启。「管理 → 设备健康」能看到更全的状态（各服务、扩展、上次开机日志）。
-- 不碰真机就想确认脚本没被改坏：`bash packaging/tests/run_sim_tests.sh`（本机模拟，448 项断言，2026-10-10 实跑全过）。它代替不了真机验证。
+- 网页「管理」页能直接看到插件是否真的加载进了 xochitl（"已加载 / 未加载"）。开关开着但显示"未加载"，说明插件没装上、装完还没整机重启，或者插件认不出当前固件、自己拒绝加载了（多见于 OTA 之后；设备健康的「扩展」里单列）。「管理 → 设备健康」能看到更全的状态（各服务、扩展、上次开机日志、部署版本与部署历史），「自检」标签可以在书库里真走一遍建文件夹、上传、移进回收站。
+- 不碰真机就想确认脚本没被改坏：`bash packaging/tests/run_sim_tests.sh`（本机模拟，460 项断言，2026-10-22 实跑全过）。它代替不了真机验证。
 
 ## 风险提示与已知限制
 
@@ -329,6 +341,8 @@ sh packaging/uninstall-all.sh 10.11.99.1 --skip chrony-boot-wakelock,wifi-watch,
 | 整轮 `uninstall-all.sh` | **真机跑过**：2026-09-25，8 步逆序全部成功，书架/笔记数据与配置保留，卸载期间 xochitl 没有重启 |
 | "换入新版 `.so` → 整机重启 → 开机自动恢复 → 核对" | **真机跑过**：2026-09-25（43✓） |
 | 自动清理已移除组件 | **真机跑过**：2026-09-30 15:23，只整机重启一次，36✓ 1⚠ 0✗ |
+| `xochitl-watchdog` 步骤 | **真机跑过**：2026-10-15 部署并整机重启，核对 `WatchdogUSec=5min` ✓；几万页的合集打开后能翻页 |
+| OTA 到 3.29.0.153 后恢复 | **真机跑过**：2026-10-16，见「固件升级（OTA）之后」的真机经历 |
 | 2026-10-10 两轮加固（断线即停、有失败不重启、载荷不重传、往返合并、设备端中断后收敛等） | **只有本机模拟**，还没上真机 |
 | 断线判定、断在半截不执行、没有 xovi 时报错不重启、`systemctl reboot` 失败的处理、dm-verity 下保留程序、`--purge`、只清已移除组件的 `uninstall-all` | **只有本机模拟** |
 
