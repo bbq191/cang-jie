@@ -12,6 +12,12 @@
 
 ## 2026-10
 
+### 10-22（Obsidian 导出按作者 Vault 的约定调整；分支 `feat/obsidian-vault-conventions`）〔已导出到作者的 Vault（`~/Documents/ikate`）：98 个文件，第二次运行 0 写入；还没在 Obsidian 里打开看过〕
+
+- 缺省位置改成作者 Vault 的约定：笔记放 `技术能力/cang-jie/`，入口 `cang-jie MOC` 和 `待验证清单`、`Index_MOC` 放项目根（不再有 `00-MOC/`）；示意图放 `00 Library/Assets/cang-jie/`，文件名加 `cang-jie-` 前缀（两张 `architecture.svg` 分别成了 `cang-jie-shelf-…`、`cang-jie-notes-…`），正文用短链接 `![[文件名]]`。`--subdir`、`--assets-dir` 可改，支持多级目录。
+- 标签对齐 Vault 已有的体系：`工具技巧/reMarkable`、`cang-jie/<分类>`（如 `cang-jie/架构设计`）、`领域/…`（开发、部署、逆向、认证、网络、shell，按正文关键词密度打）；MOC 另打 `MOC`。`type`、`line` 只作属性。
+- Vault 按文件名全库解析双链，所以写入前查全库重名：库里别处已有同名笔记或附件时拒绝写入（`--force` 才继续）。清单里的路径改为相对 Vault，删文件后只在这两个目录里往上收空目录。
+
 ### 10-22（文档导出到 Obsidian；分支 `feat/obsidian-export`，只加工具，不改文档）
 
 - 新增 `docs/obsidian/migrate_to_obsidian.py <Vault 绝对路径>`：仓库文档仍是唯一来源、原样不动（GitHub 上的相对链接照常能点），脚本每次从仓库生成知识库里的一份副本。按「00-MOC … 08-概念、99-附件」分目录，文件名全库唯一；每篇注入 YAML frontmatter（日期取 git，标签按类型、所属线、正文关键词密度生成）；相对链接改成 `[[双链]]`（锚点按 GitHub 规则找回标题），源码与没导出的文档改指 GitHub；每篇第一次出现的核心术语和组件链到概念笔记或对应文档。另外生成概念笔记（来自 OVERVIEW 术语表）、API 路由总表（从代码和 systemd 单元抽取）、踩坑索引、待验证清单、项目 MOC 和 Index_MOC。英文版和打赏页不导出。
