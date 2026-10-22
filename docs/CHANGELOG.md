@@ -12,6 +12,13 @@
 
 ## 2026-10
 
+### 10-22（xovi 扩展源码没变就不重编；分支 `fix/xovi-ext-rebuild`）
+
+- **起因**：10-22 17:09 跑 `install-all.sh` 时，hl-snap、ui-font 两步按老规矩原地 `make aarch64`。开发机的交叉编译器 10-19 从 GCC 16.1 升到了 16.2，编出来的两个 `.so` 和已提交的字节不同（反汇编去掉地址后逐条相同、导出符号相同，只差编译器版本），工作区因此变脏，部署记录也标成 `dirty`。设备上装的就是这两份（17:25 核对，md5 分别是 `44659634…`、`edb9ce94…`）。这次把它们提交进仓库，仓库与设备一致。
+- **改法**：每个扩展的 `.so` 旁边新提交一份 `<名>.so.inputs`，记下编它时全部输入（源码、头文件、xovi 胶水、Makefile）的 sha256；`make aarch64` 编完同时刷新它。部署脚本先跑 `make check-inputs` 按内容比对（不看 mtime，git checkout 会改 mtime）：一致就直接用已提交的 `.so`，不一致才重编；`CJ_FORCE_BUILD=1` 强制重编，`CJ_SKIP_BUILD=1` 照旧一律不编。用 GCC 16.2 重编两次，产物与 17:10 那两份逐字节相同，说明编译结果可重复。
+- **CI** 新增一步：已提交的 `.so` 必须由当前源码编出（`.so.inputs` 对得上），否则失败。改了扩展源码要把 `.so` 和 `.so.inputs` 一起提交。比的是输入，不是 `.so` 字节，所以 runner 用别的 gcc 版本也不受影响。
+- 安装脚本模拟测试加 3 项（源码没变不跑 `make aarch64`、强制重编时照跑并在编不出来时退回已提交的 `.so`、测试不改动仓库里的 `.so`），共 463 项全过。以前有几个测试场景会在真实仓库里重编 `.so`，这次修好后不会再发生。另外，「单独跑 deploy-hl-snap 被 Ctrl-C」这一项在 4 次运行里失败过 2 次；它不经过这次改的逻辑，是原有的、按信号时机判断的不稳定测试。
+
 ### 10-22（Obsidian 导出按作者 Vault 的约定调整；分支 `feat/obsidian-vault-conventions`）〔已导出到作者的 Vault（`~/Documents/ikate`）：98 个文件，第二次运行 0 写入；还没在 Obsidian 里打开看过〕
 
 - 缺省位置改成作者 Vault 的约定：笔记放 `技术能力/cang-jie/`，入口 `cang-jie MOC` 和 `待验证清单`、`Index_MOC` 放项目根（不再有 `00-MOC/`）；示意图放 `00 Library/Assets/cang-jie/`，文件名加 `cang-jie-` 前缀（两张 `architecture.svg` 分别成了 `cang-jie-shelf-…`、`cang-jie-notes-…`），正文用短链接 `![[文件名]]`。`--subdir`、`--assets-dir` 可改，支持多级目录。

@@ -7,13 +7,24 @@ SHARED_DIR = ../shared
 # EXTRA_CFLAGS：CI 传 -Werror（交叉编译零警告门槛）；平常为空，产物与不加时逐字节相同
 CFLAGS_COMMON = -std=gnu17 -Wall -Wextra -g -ffile-prefix-map=$(CURDIR)=. -I$(SHARED_DIR) $(EXTRA_CFLAGS)
 
-.PHONY: aarch64 test clean
+.PHONY: aarch64 test clean check-inputs
+
+# 编进 .so 的全部输入（源码、头文件、胶水、本 Makefile）。.so 提交进仓库，同时提交 <名>.so.inputs＝这些输入的 sha256：
+# 部署脚本先 `make check-inputs`，源码与记录一致就直接用已提交的 .so、不重编——编译器升级后重编出的 .so 字节不同、
+# 代码一样，会白白弄脏工作区并让设备多一次整机重启（2026-10-22：GCC 16.1→16.2 后 install-all 原地重编了两个 .so）。
+# 改了任何输入就 `make aarch64`（同时刷新记录），把 .so 和 .so.inputs 一起提交；CI 查两者对得上。
+INPUTS = $(sort $(wildcard src/*.c src/*.h) xovi_glue.c xovi_glue.h $(SHARED_DIR)/minijson.c $(SHARED_DIR)/minijson.h Makefile)
 
 # xovi 胶水 xovi_glue.{c,h} 已提交进仓库：ui-font.xovi 只有版本号，与 hl-snap 的胶水逐字节相同（拷来的）。
 # 改了 .xovi 才需要 asivery/xovi 的 xovigen.py 重新生成：python3 <xovi>/util/xovigen.py -o xovi_glue.c -H xovi_glue.h -a aarch64 ui-font.xovi
 aarch64:
 	$(AARCH64_CC) $(CFLAGS_COMMON) -shared -fPIC src/ui_font.c $(SHARED_DIR)/minijson.c xovi_glue.c -o ui-font.so
+	sha256sum $(INPUTS) > ui-font.so.inputs
 	aarch64-linux-gnu-nm -D ui-font.so | grep -iE "_xovi_construct|_xovi_shouldLoad" || true
+
+# 已提交的 ui-font.so 是不是由当前源码编出来的（按内容比，不看 mtime）：是则退出 0。
+check-inputs:
+	@test -f ui-font.so && sha256sum $(INPUTS) | cmp -s - ui-font.so.inputs
 
 # 四种链接方式各跑一遍：懒绑定 / BIND_NOW（RELRO 只读，走 mprotect）× PIE / 非 PIE（非 PIE 编译也加 -fno-pie，
 # 不然发行版默认 -fPIE 编出的代码取地址走 GOT，测不到"规范 PLT"那种危险情形）；

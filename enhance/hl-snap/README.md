@@ -28,6 +28,8 @@ make aarch64                               # 产物 hl-snap.so（已提交进仓
 make glue XOVI_DIR=<asivery/xovi clone 路径>   # 只有改了 hl-snap.xovi 才需要：重新生成 xovi 胶水
 ```
 
+改了源码、头文件、胶水或 Makefile 就 `make aarch64`，把 `hl-snap.so` 和 `hl-snap.so.inputs`（编它时全部输入的 sha256）**一起提交**。部署脚本按这份记录判断：源码没变就直接用已提交的 `.so`、不重编（`make check-inputs`）；CI 也查两者对得上。
+
 构建只需要 aarch64 交叉编译器：
 
 - xovi 胶水 `xovi_glue.{c,h}` 已提交进仓库，缺失时才会调 asivery/xovi 的 `xovigen.py` 生成（不看 `.xovi` 的修改时间——2026-09-24 前看，checkout 后可能无端去跑 xovigen、没有 clone 就失败）。`make clean` 只删 `hl-snap.so`，不删已提交的胶水。

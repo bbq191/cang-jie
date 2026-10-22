@@ -32,6 +32,8 @@ make aarch64   # 产物 ui-font.so（已提交进仓库）
 make test      # host（x86_64）：配置解析 + 导入表改写（懒绑定 / BIND_NOW × PIE / 非 PIE）+ 防递归判定 + 真实 Qt 6 上走一遍 setFont 替换（没有 Qt6Gui 开发包就跳过最后一项）
 ```
 
+改了源码、头文件、胶水或 Makefile 就 `make aarch64`，把 `ui-font.so` 和 `ui-font.so.inputs`（编它时全部输入的 sha256）**一起提交**。部署脚本按这份记录判断：源码没变就直接用已提交的 `.so`、不重编（`make check-inputs`）；CI 也查两者对得上。
+
 只用 `../shared/` 的 `minijson`，不用它的特征码扫描和跳板：`setFont` 开头第 3 条是 PC 相对的 `adrp`，搬进跳板会算错地址，所以改的是 xochitl 导入表（`.got.plt`）里的那一格，运行时按符号名从 `.rela.plt` 找，不写死地址。xovi 胶水 `xovi_glue.{c,h}` 与 hl-snap 的逐字节相同（`ui-font.xovi` 只有版本号）。
 
 ## 部署

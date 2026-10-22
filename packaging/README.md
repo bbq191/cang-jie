@@ -21,7 +21,7 @@ sh verify-on-device.sh <host>                  # 装完（或任何一次单独�
 sh uninstall-all.sh <host> --dry-run           # 卸载预演
 sh uninstall-all.sh <host>                     # 卸全部（chrony-cn / timezone-cn / xovi-apply 没有卸载语义）
 
-bash tests/run_sim_tests.sh                    # 不碰真机的模拟测试（2026-10-22：460 项全过）
+bash tests/run_sim_tests.sh                    # 不碰真机的模拟测试（2026-10-22：463 项全过）
 ```
 
 `<host>` 缺省 `10.11.99.1`（USB 网段），WiFi 下给设备 IP 或 `shelf.local`。所有脚本 `-h` 看用法；参数写错一律退出码 2 且不连设备。
@@ -293,7 +293,7 @@ sh verify-on-device.sh --from d.txt        # 不连设备，离线重判存下�
 | `CJ_FLIGHT_LOG` | `~/.local/state/cang-jie-flight/flight.log` | 电脑（核对） | 飞行记录仪日志的路径 |
 | `SHELF_NO_BUILD=1` | — | 电脑（`deploy.sh`） | 跳过 `shelf/build.sh`，直接用 `target/` 里现成的产物 |
 | `SHELF_FORCE_PUSH=1` | — | 电脑（`deploy.sh`） | 设备上已是同一份书架载荷也照样重传 |
-| `CJ_SKIP_BUILD=1` · `XOVI_DIR` | — | 电脑（`deploy-xovi-ext.sh`） | 不构建、直接用仓库里已提交的 `.so` · xovi 源码 clone 路径（只有改了 `.xovi` 要重新生成胶水时才需要） |
+| `CJ_SKIP_BUILD=1` · `CJ_FORCE_BUILD=1` · `XOVI_DIR` | — | 电脑（`deploy-xovi-ext.sh`） | 缺省：源码与已提交的 `.so` 对应（`<名>.so.inputs` 里记的输入 sha256 与当前一致，按内容比、不看 mtime）就直接用已提交的 `.so`，不一致才 `make aarch64`（2026-10-22 起；以前每次都重编，编译器一升级就编出字节不同、代码一样的 `.so`，弄脏工作区还让设备多一次整机重启）· `CJ_SKIP_BUILD=1` 一律不构建 · `CJ_FORCE_BUILD=1` 一律重编 · xovi 源码 clone 路径（只有改了 `.xovi` 要重新生成胶水时才需要） |
 | `DEFER_XOVI_START=1` | — | 电脑（`install-all` 自动设） | hl-snap / ui-font 只落盘不生效 |
 | `CJ_DEVICE_OK` · `CJ_AWAKE_HELD` · `CJ_AWAKE_RELEASE=1` | — | 电脑（编排者自动设） | 已通过连通检查的 host · 唤醒锁已由编排者持有 · 让最后一步顺手放锁。手动别设 |
 | `CJ_PENDING_DIR` / `CJ_PENDING_FALLBACK` | `/run/cangjie-pending-apply` / `~/.cangjie-stage/pending-apply` | 设备 | 待生效标记目录 / `/run` 写不了时的退路 |
@@ -367,7 +367,7 @@ sh verify-on-device.sh --from d.txt        # 不连设备，离线重判存下�
 ## 测试：不碰真机验证脚本
 
 ```sh
-bash packaging/tests/run_sim_tests.sh      # 2026-10-22 实跑 460 项断言全过
+bash packaging/tests/run_sim_tests.sh      # 2026-10-22 实跑 463 项断言全过
 uv run pytest packaging/tests -q           # 同一套，经 tests/test_install_scripts_sim.py 调用（CI 走这条）
 git ls-files -z '*.sh' | xargs -0 shellcheck --severity=warning   # 全仓库 36 个 .sh，零告警（2026-10-10）
 shellcheck --severity=warning --shell=sh packaging/tests/stubs/*   # 测试桩（无 .sh 后缀），CI 同样门控

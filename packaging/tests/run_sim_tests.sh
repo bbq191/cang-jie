@@ -451,6 +451,24 @@ check "hl-snap DEFER：退出 0" test "$rc" -eq 0
 check "hl-snap：设备上的 .so 与仓库产物 md5 一致" test "$(md5sum < "$EXT/hl-snap.so")" = "$(md5sum < "$REPO/enhance/hl-snap/hl-snap.so")"
 check "hl-snap：旧 .so 备份进 cangjie-backups，extensions.d 里只有 hl-snap.so（无 .bak/.new/临时文件）" test -f "$(ls "$R"/home/root/cangjie-backups/hl-snap.so.bak.pre-* | head -n 1)" -a "$(ls -A "$EXT")" = "hl-snap.so"
 check "hl-snap DEFER：不重启 xochitl、不 xovi/start" test "$(count_log 'restart xochitl')" = 0 -a "$(count_log XOVI_START)" = 0
+
+# 源码没变不重编（2026-10-22）：make 换成桩——check-inputs 交给真 make（只读比对仓库里的 .so.inputs），aarch64 只记日志并失败，
+# 免得测试在真实仓库里重编出新的 .so（以前就是这样弄脏工作区的）。
+MK="$R/mkstub"; mkdir -p "$MK"; REAL_MAKE="$(command -v make)"
+cat > "$MK/make" <<EOF
+#!/bin/sh
+for a in "\$@"; do [ "\$a" = aarch64 ] && { echo "MAKE_AARCH64" >> "\$CJ_SIM_LOG"; exit 1; }; done
+exec "$REAL_MAKE" "\$@"
+EOF
+chmod +x "$MK/make"
+SO_SIG="$(md5sum < "$REPO/enhance/hl-snap/hl-snap.so") $(stat -c %Y "$REPO/enhance/hl-snap/hl-snap.so")"
+new_sandbox; : > "$CJ_SIM_LOG"
+( cd "$PKG" && unset CJ_SKIP_BUILD CJ_FORCE_BUILD; PATH="$MK:$PATH" DEFER_XOVI_START=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+check "hl-snap 源码与 hl-snap.so.inputs 一致：不跑 make aarch64、用已提交的 .so、退出 0" test "$rc" -eq 0 -a "$(count_log MAKE_AARCH64)" = 0 -a -n "$(grep '不重编' "$R/out.txt")"
+new_sandbox; : > "$CJ_SIM_LOG"
+( cd "$PKG" && unset CJ_SKIP_BUILD; PATH="$MK:$PATH" CJ_FORCE_BUILD=1 DEFER_XOVI_START=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+check "CJ_FORCE_BUILD=1：照样 make aarch64；编不出来退回已提交的 .so 并提示" test "$rc" -eq 0 -a "$(count_log MAKE_AARCH64)" = 1 -a -n "$(grep '改用仓库里已提交的' "$R/out.txt")"
+check "两次都没动仓库里的 hl-snap.so（内容与 mtime）" test "$(md5sum < "$REPO/enhance/hl-snap/hl-snap.so") $(stat -c %Y "$REPO/enhance/hl-snap/hl-snap.so")" = "$SO_SIG"
 check "hl-snap：暂存/推送目录里带了 xovi-ext-install.sh 与 devlib.sh" test -f "$R/home/root/hl-snap/deploy/xovi-ext-install.sh" -a -f "$R/home/root/hl-snap/deploy/devlib.sh"
 check "hl-snap：reading-qol.json 首次装才建" test -f "$R/home/root/.local/share/cangjie-ime/reading-qol.json"
 echo '{"user":"setting"}' > "$R/home/root/.local/share/cangjie-ime/reading-qol.json"
