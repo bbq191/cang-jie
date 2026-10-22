@@ -35,7 +35,7 @@ reMarkable Paper Pro Move 的**传书工具**：跑在设备上的一组网页�
 | 服务 | 端口 | 职责 | 源码 |
 |---|---|---|---|
 | gateway | `0.0.0.0:443`，唯一对外 | HTTPS + 登录密码、网页、反向代理、批量队列 | [`../gateway`](../gateway/README.md) |
-| book-serve | 127.0.0.1:8790 | 母版库、加入 xochitl、直接导入、四个 qmd 代理的待办队列 | `services/book-serve` |
+| book-serve | 127.0.0.1:8790 | 母版库、加入 xochitl、直接导入、四个 qmd 代理的待办队列、阅读方向查询、一键自检 | `services/book-serve` |
 | font-serve | 127.0.0.1:8792 | xochitl 字体上传即装 | `../enhance/font-serve` |
 | wallpaper-serve | 127.0.0.1:8793 | 休眠壁纸上传即用（写 xochitl 的 `SleepScreenPath` 键） | `../enhance/wallpaper-serve` |
 | 笔记线四服务 | 8795–8798 | 见 [`../notes/README.md`](../notes/README.md) | `../notes` |
@@ -58,7 +58,7 @@ shelf/
 ├── crates/shelf-conv/                只读不改书：读 EPUB（书名、封面、漫画页边距标记）、第三方 PDF 页数、大文件通道占位文档、文件名规范化
 ├── services/book-serve/              母版库服务
 ├── systemd/                          shelf.target + book-serve 单元
-├── xovi/                             注入 xochitl 的 qmd：字体菜单（3.28 / 3.27 两版）、界面字体令牌、回收站 / 建文件夹 / 漫画页边距 / 阅读位置代理、阅读器单击翻页
+├── xovi/                             注入 xochitl 的 qmd：字体菜单（3.27 一版、3.28 起一版，3.29 用的也是后者）、界面字体令牌、回收站 / 建文件夹 / 漫画页边距 / 阅读位置代理、阅读器单击翻页与按书翻页方向
 ├── install.sh · uninstall.sh · manifest.sh   设备端安装 / 卸载与共用清单
 └── docs/                             白皮书、历史附录、传书链路技术细节 + diagrams/
 ```

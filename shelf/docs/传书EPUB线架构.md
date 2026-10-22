@@ -18,7 +18,7 @@
 | 组件 | 角色 | 端口 / 连接 |
 |---|---|---|
 | `gateway` | 网页 UI + 反向代理 + 批量队列（`batch.rs`）+ 事件汇聚 | `0.0.0.0:443`（HTTPS，登录墙） |
-| `book-serve` | 母版库领域服务：入库 / 改名 / 删除 / 下载原件 / 加入 xochitl；投递层 `XochitlDelivery`（`delivery.rs`）；作业队列（`jobs.rs`）；四个 qmd 代理的待办（§4）；直接导入与阅读位置快照（§9） | `127.0.0.1:8790` |
+| `book-serve` | 母版库领域服务：入库 / 改名 / 删除 / 下载原件 / 加入 xochitl；投递层 `XochitlDelivery`（`delivery.rs`）；作业队列（`jobs.rs`）；四个 qmd 代理的待办（§4）；阅读方向查询（§2.5）；一键自检（§4）；直接导入与阅读位置快照（§9） | `127.0.0.1:8790` |
 | `shelf-conv` | **库，不是服务**，只读不改书：`epub`（`Book`：container.xml / OPF、书名作者语言、封面图、sheng-ren 的页边距标记；写占位 EPUB 的小 zip 写入器）、`pdfmeta`（第三方 PDF 页数）、`placeholder`（大文件通道的占位文档）、`naming`（文件名规范化）。container.xml / OPF 解析与 href 解码用与笔记线共用的 `rmsvc-core/epubpkg` | 无网络面 |
 
 **网关代理**（`gateway/src/proxy.rs`）：`/api/{段}/*` 按 `gateway/src/manage.rs` 的 `MODULES` 转发到 loopback，剥掉段名（`/api/books/x` → book-serve 的 `/x`）。请求体真流式；后端给了 `Content-Length` 的 200 应答，若是下载（带 `Content-Disposition`）或超过 256KB（`STREAM_MIN_BYTES`）就定长边读边发，其余小应答读完再回。超时只有空闲超时（连接 3 秒、读 900 秒、写 120 秒），不设总时长。
@@ -99,9 +99,14 @@
 - **下载原件** `GET /staging/file?name=`：`Reply::sized_stream` 边读边发（带 `Content-Length` 与 `Content-Disposition`），网关也流式转发，整条链不把书读进内存。
 - **改名** `POST /staging/rename {name, newName}`：只改文件名，扩展名不变（不带扩展名沿用原扩展名；带了别的扩展名只当名字的一部分）；新名已存在 409、书不在 404、名字不合法 400；新旧两个名字都占忙锁；边车跟着改名。边车里渲染自检还是 `pending` 时直接收成 `timeout`（自检线程按旧名找书，改名后永远找不到）。
 
-### 2.5 阅读方向（已删除）
+### 2.5 阅读方向（只读书里标的方向）
 
-书架不管翻页方向（2026-10-07 稍后删除）。xochitl 不看 OPF 的 `page-progression-direction`，日漫在 xochitl 里一律从左往右翻。当年的接口与 qmd 分支见历史附录 §03bx。单击翻页 `reader-page-turn.qmd` 不经 book-serve，归系统增强线。
+xochitl 自己不看 OPF 的 `page-progression-direction`，原生左滑恒为下一页。2026-10-16 起，`reader-page-turn.qmd`（归系统增强线，随 book 服务装）开书时问 book-serve `GET /reading-direction/{uuid}` → `{rtl}`，为真就把这本书的翻页对调。
+
+- **判据只有书自己**（`reading_direction.rs`）：书库里 `<uuid>.epub` 的 OPF `<spine page-progression-direction="rtl">`（`shelf_conv::epub::Book::is_rtl`，只读 container.xml 和 OPF；值去空白、不分大小写，注释里的不算）。不是 EPUB、找不到、读不了一律 `false`，宁可按原生方向也不误翻。
+- **按（大小, mtime）缓存**，上限 1024 条，超了整表清空；sheng-ren 原地替换书后戳变了会重新判。uuid 不合法回 400。
+- **没有开关、没有手动清单，书架也不往书里写方向**：没标方向的日漫要在电脑上用 sheng-ren 标好再传。10-07 删掉的旧版带网页开关和 `rtl-overrides.json`（历史附录 §03bx），都不加回。
+- qmd 里对调怎么做、3.28 / 3.29 的差别，见[系统增强线白皮书](../../enhance/docs/reMarkable系统增强线白皮书.md)「单击翻页」一节。
 
 ## 3｜漫画页边距（带 sheng-ren 标记的漫画一律登记）
 
@@ -119,7 +124,7 @@
 
 | 队列 | qmd（`shelf/xovi/`） | 触发 | 用途 |
 |---|---|---|---|
-| `mkdir-pending.json`：（上级, 名字） | `shelf-mkdir-agent.qmd`（MainView） | 长轮询 `GET /mkdir/pending?wait=290`（服务端阻塞到入队或到期，上限 300 秒；遇 30 秒客户端超时自动退回 25 秒）；按 `items` 调 `Library.createCollection(parent, name)` | 网页「加入 → 文件夹」（缺的那几级）与「＋新建」（建在当前选中的位置里）；直接导入逐级建多级文件夹（建在上一级里）；`POST /mkdir/add`（建在根） |
+| `mkdir-pending.json`：（上级, 名字） | `shelf-mkdir-agent.qmd`（MainView） | 长轮询 `GET /mkdir/pending?wait=290`（服务端阻塞到入队或到期，上限 300 秒；遇 30 秒客户端超时自动退回 25 秒）；按 `items` 调 `createCollection(parent, name)`：3.28 在 `Library` 上，3.29 起挪到 `LibraryController`，运行时看 `Library` 上有没有这个函数二选一 | 网页「加入 → 文件夹」（缺的那几级）与「＋新建」（建在当前选中的位置里）；直接导入逐级建多级文件夹（建在上一级里）；`POST /mkdir/add`（建在根） |
 | `trash-pending.json`：uuid + name | `shelf-trash-agent.qmd`（MainView） | 长轮询 `GET /trash/pending?wait=290`（同样带 `cjWait` 自适应，10-10）；先 `Library.entryForId(uuid)` 取条目再取 `.id`，调 `LibraryController.moveEntriesToTrash(ids)`，与当前在看哪个文件夹无关 | 入队按 visibleName 核对 uuid，已进回收站或已删的拒绝；拉取时只把"`.metadata` 真没了、或已进回收站"的项移出，读不了 `.metadata` 先留着；调用方是网关「设备健康 → 清理」和笔记线 note-serve 旧版本软删 |
 | `comic-margins.json`：uuid → 页边距 | `shelf-comic-margins.qmd`（DocumentView） | 开书 1.5 秒后 `GET /margins/{uuid}` | §3 |
 
@@ -251,6 +256,7 @@ GET  /events                         SSE 事件流
 POST /trash/add {uuid, name} · GET /trash/pending[?wait=秒] · GET /trash   回收站代理队列（GET /trash 只供调试）
 POST /mkdir/add {name, parentPath?}（建在 parentPath 那个已有文件夹里，缺省根；上级不在 404）· GET /mkdir/pending[?wait=秒] → {items:[{name, parent}]} · GET /mkdir   建文件夹代理队列（GET /mkdir 只供调试）
 GET  /agent-failures · POST /agent-failures/clear      两个代理交满次数放弃的记录
+GET  /reading-direction/{uuid} → {rtl}   这本书的 OPF 标没标从右往左（reader-page-turn.qmd 开书时问；不是 EPUB / 找不到一律 false；uuid 不合法 400；§2.5）
 POST /selftest → 202（已在跑 409）· GET /selftest → {running: Run|null, runs: [最近 10 次]}   一键自检（§4）；Run = {at, current?, done, ok, steps:[{key, state: ok|fail|skip, ms, detail?}], leftovers}
 POST /import?name=&folder=           直接导入、不进母版库（体＝EPUB 原始字节；folder 是 / 分隔的多级路径）→ 202 {job}
 POST /import?uuid=&name=             原地替换已有文档内容、uuid 不变 → 202 {job}；不在 / 已删 / 回收站 / 非 EPUB → 404；同一 uuid 正在替换 → 409

@@ -21,7 +21,7 @@ sh verify-on-device.sh <host>                  # 装完（或任何一次单独�
 sh uninstall-all.sh <host> --dry-run           # 卸载预演
 sh uninstall-all.sh <host>                     # 卸全部（chrony-cn / timezone-cn / xovi-apply 没有卸载语义）
 
-bash tests/run_sim_tests.sh                    # 不碰真机的模拟测试（2026-10-10：448 项全过）
+bash tests/run_sim_tests.sh                    # 不碰真机的模拟测试（2026-10-22：460 项全过）
 ```
 
 `<host>` 缺省 `10.11.99.1`（USB 网段），WiFi 下给设备 IP 或 `shelf.local`。所有脚本 `-h` 看用法；参数写错一律退出码 2 且不连设备。
@@ -250,7 +250,7 @@ sh verify-on-device.sh --from d.txt        # 不连设备，离线重判存下�
 | 节 | 核什么 | ✗ | ⚠ |
 |---|---|---|---|
 | 1 固件与开机 | 开机时长；`/usr/bin/xochitl` 的 sha256 对白名单 + `IMG_VERSION` | 哈希不在任何白名单（OTA 了？） | 开机不足 `CJ_VERIFY_UPTIME_WARN`（600）秒——不是你重启的就看告警与飞行记录仪；哈希只在本机 `--force` 名单里 |
-| 2 xochitl 与 xovi 扩展 | `is-active`/`MainPID`/`NRestarts`；`maps` 里有没有 `xovi.so`；`extensions.d` 下每个文件是否被映射；本进程日志里各扩展"安装完成"次数；待换入区与待生效标记 | xochitl 不是 active；xovi 装了但没生效；扩展在 `maps` 里是 `(deleted)`（换了文件没重启——整机重启，别 restart xochitl）；日志有「hook 未安装」；`extensions.d` 里有非 `.so` 文件（xovi 会当扩展加载） | `NRestarts>0`；设备没装 xovi；扩展没被映射；`.crashed` 标记；待换入区非空；有待生效标记 |
+| 2 xochitl 与 xovi 扩展 | `is-active`/`MainPID`/`NRestarts`；`maps` 里有没有 `xovi.so`；`extensions.d` 下每个文件是否被映射；本进程日志里各扩展"安装完成"次数；待换入区与待生效标记 | xochitl 不是 active；xovi 装了但没生效；扩展在 `maps` 里是 `(deleted)`（换了文件没重启——整机重启，别 restart xochitl）；日志有「hook 未安装」，或扩展在主进程里自己拒绝加载（行首 `[扩展名] _xovi_shouldLoad` 且含「拒绝加载」；xovi 先映射再问扩展，所以它照样在 `maps` 里。主进程转写的排版子进程拒绝行不算，2026-10-16 起）；`extensions.d` 里有非 `.so` 文件（xovi 会当扩展加载） | `NRestarts>0`；设备没装 xovi；扩展没被映射；`.crashed` 标记；待换入区非空；有待生效标记 |
 | 3 界面补丁 qmd | 期望清单 = `shelf/manifest.sh` 里已装服务的 qmd；文件修改时间对比 xochitl 启动时刻；能找到加载标记（如 `CJ-PAGE-TURN: loaded`）就附注 | 期望的 qmd 缺失；侧栏入口 qmd 残留且 appload 已不在 | 没装 qt-resource-rebuilder；qmd 比 xochitl 进程新（待生效）；旧命名遗留；侧栏入口 qmd 残留（appload 还在时）。日志标记没见到**不算异常**，多数要打开相关界面才打印 |
 | 4 常驻服务 | `manifest.sh` 的 8 个服务 + `wifi-watch`：`is-active`、`NRestarts`、`MainPID`、`VmRSS`/`VmHWM`、开机后第几秒启动 | 单元在但不是 active | `NRestarts>0`；峰值内存超 `CJ_VERIFY_HWM_WARN_KB`（512MB，经验值） |
 | 5 本次开机的关键告警 | `journalctl -b` + `dmesg`：panic（排除 `Kernel command line` 行，内核参数 `panic=2` 曾误报）、OOM、「hook 未安装」、`processed more than once`、`SHELF-MKDIR: transfer timeout` | 前四类任一出现 | `SHELF-MKDIR` 超时（会自动延长等待，只提示） |
@@ -305,7 +305,7 @@ sh verify-on-device.sh --from d.txt        # 不连设备，离线重判存下�
 
 ## 固件安全门
 
-装前取设备上 `/usr/bin/xochitl` 的 sha256，跟两份白名单比对：仓库里的 `firmware-allowlist.txt`（每行 `sha256  <人读标签>`）+ 本机的 `firmware-allowlist.local.txt`，命中任一份才继续，否则拒装。确认要装用 `--force`：当前哈希追加进**本机**文件（已 gitignore，避免"没验证过的哈希"被误提交）。用 sha256 而不用版本号，是因为界面补丁按字节定位，同一个版本号的热修也可能挪动内部布局（见白名单文件头注）。当前白名单：3.28.0.172（现役）与 3.28.0.169（历史记录）。
+装前取设备上 `/usr/bin/xochitl` 的 sha256，跟两份白名单比对：仓库里的 `firmware-allowlist.txt`（每行 `sha256  <人读标签>`）+ 本机的 `firmware-allowlist.local.txt`，命中任一份才继续，否则拒装。确认要装用 `--force`：当前哈希追加进**本机**文件（已 gitignore，避免"没验证过的哈希"被误提交）。用 sha256 而不用版本号，是因为界面补丁按字节定位，同一个版本号的热修也可能挪动内部布局（见白名单文件头注）。当前白名单：3.29.0.153（设备现役，2026-10-16 加入；hl-snap 划线未实测）、3.28.0.172（仍支持）与 3.28.0.169（历史记录）。
 
 ## 备份与幂等
 
@@ -367,7 +367,7 @@ sh verify-on-device.sh --from d.txt        # 不连设备，离线重判存下�
 ## 测试：不碰真机验证脚本
 
 ```sh
-bash packaging/tests/run_sim_tests.sh      # 2026-10-10 实跑 448 项断言全过
+bash packaging/tests/run_sim_tests.sh      # 2026-10-22 实跑 460 项断言全过
 uv run pytest packaging/tests -q           # 同一套，经 tests/test_install_scripts_sim.py 调用（CI 走这条）
 git ls-files -z '*.sh' | xargs -0 shellcheck --severity=warning   # 全仓库 36 个 .sh，零告警（2026-10-10）
 shellcheck --severity=warning --shell=sh packaging/tests/stubs/*   # 测试桩（无 .sh 后缀），CI 同样门控
@@ -433,7 +433,7 @@ shellcheck --severity=warning --shell=sh packaging/tests/stubs/*   # 测试桩�
 | 整轮 `uninstall-all.sh` | 09-25 | 通过：8 步逆序全部成功；`/usr` 单元、服务二进制、两个扩展、qmd 全部清掉，端口释放，书架/笔记数据保留；卸载期间 xochitl 不重启，被删的 `.so` 在 maps 里变成 `(deleted)`——**删掉正被映射的 `.so` 本身不崩**。小尾巴：09-20 之前的手工备份 `*.bak.pre-*` 卸载器不认识、没动；`SleepScreenPath` 被运行中的 xochitl 写回 |
 | 生效方式：换入后整机重启 | 09-25 | 通过：只卸 `hl-snap` → `deploy-hl-snap.sh` 换入、打印 `CJ-APPLY-REBOOTING`、`systemctl reboot`；约 20 秒回来，上次关机无 SEGV / core dump / 应急服务，hook "安装完成"，`verify-on-device.sh` 43 ✓。这也是"有变化的 `.so` → 待换入区 → 整机重启换入"第一次真机走通（同日 enhance 扩展的 Makefile 加了 `-ffile-prefix-map`，反汇编与旧版一致）。同一次顺带核了 lo-alias：没插 USB 冷启动，`10.11.99.1` 挂上 `lo` 与 `usb1`，xochitl :80 已绑定 |
 | 部署后核对 | 09-25 | `verify-on-device.sh` 首次真机（busybox）：44 项全部采集到、判定正确，`panic=2` 误报已排除。**`run_apply` 自动等重启并核对**这一段在 09-25 只有本机模拟；之后各轮 `install-all` 的"整机重启后核对"结论即来自它 |
-| 固件安全门 | 09-11 | 通过：3.28.0.172 的 sha256 命中白名单 |
+| 固件安全门 | 09-11、10-16 | 通过：3.28.0.172 的 sha256 命中白名单；10-16 OTA 到 3.29.0.153 后哈希不在表里、按预期拒装，用 `--force` 装完验证后把哈希加进仓库白名单 |
 | 单个扩展部署 | 09-11、09-15 | 通过：构建 → 推送 → 安装 → hook 已加载；部署前备份的 md5 精确匹配旧版本；trampoline 通用代码收进 `enhance/shared/` 后日志逐字节一致 |
 | `sidebar-entry`（09-29 已退役） | 09-13/14、09-21 | 通过：两项版/单项版 qmd、`DEFER_XOVI_START` 只落盘、缺 qt-resource-rebuilder / appload 时跳过；appload 0.6.0 md5 与官方包一致、入口正常 |
 | `xovi-persist` | 09-11 起、09-24 | 通过：真机重启后 `xovi-reenable` 自动恢复 xovi，无需手动 `xovi/start`；带 `ExecCondition` 的新版已部署，设备上的单元与仓库一致。`systemctl status` 显示 `disabled` 是手写 `.wants/` 软链的显示怪癖，不影响开机激活 |

@@ -322,8 +322,8 @@
   | `notesImportMdEnabled` | 关 | 无（只影响网页「导入 md」子标签） | `web` | 管理 → 实验室 |
   | `notesReviewEnabled` | 关 | 无（只影响网页「笔记 → 回顾」子标签，2026-10-14） | `web` | 管理 → 实验室 |
 
-- **`loaded` 怎么判**（`enhance::load_state`）：找不到 xochitl 主进程 → `unknown`；扩展映射了 → `on`，否则 `off`；补丁已载入 → `on`，文件比进程新 → `pending`（待整机重启），否则 `off`；`web` 为 `null`。网页按 `kind` 选徽章说明、按 `loaded` 选徽章。
-- **扩展加载检测**（`enhance/loaded.rs`）：直接读 xochitl 主进程（`comm==xochitl` 且父进程是 1，排除渲染用的同名子进程）的 `/proc/<pid>/maps`，映射了哪个 `extensions.d/*.so` 就是真加载了；maps 解析与设备健康共用 `device::health::parse_maps`，行尾带 ` (deleted)` 的映射照样算已加载。qmd 不是 `.so`，按"qt-resource-rebuilder 在进程里 + 补丁文件早于 xochitl 启动"推断为已载入——这是按加载机制推断，看不到 qmd 里的定位是否全部命中。
+- **`loaded` 怎么判**（`enhance::load_state`）：找不到 xochitl 主进程 → `unknown`；扩展映射了、而且没有自己拒绝加载 → `on`，否则 `off`；补丁已载入 → `on`，文件比进程新 → `pending`（待整机重启），否则 `off`；`web` 为 `null`。网页按 `kind` 选徽章说明、按 `loaded` 选徽章。
+- **扩展加载检测**（`enhance/loaded.rs`）：直接读 xochitl 主进程（`comm==xochitl` 且父进程是 1，排除渲染用的同名子进程）的 `/proc/<pid>/maps`，看映射了哪些 `extensions.d/*.so`；maps 解析与设备健康共用 `device::health::parse_maps`，行尾带 ` (deleted)` 的映射照样算已加载。**映射了不等于加载了**（2026-10-16 补）：xovi 先映射 `.so` 再调它的 `_xovi_shouldLoad`，扩展认不出固件（如 OTA 后特征码不中）会自己拒绝加载、什么都不装，`maps` 里却照样有它（10-16 固件 3.29 上的 hl-snap 就被报成了已加载）。所以 xochitl 起满 30 秒、要写缓存的那一次，另读这个进程启动后 2 分钟内的 journal（`device::health::xochitl_journal`，同一进程只读一次），只认**行首**就是 `[扩展名] _xovi_shouldLoad` 且含「拒绝加载」的行，把它从 `extensions` 挪进 `refused`；主进程会把排版子进程的输出转写成 `rm.worker.unix …: [hl-snap] … 拒绝加载`，那是子进程里正常的拒绝，行首不是扩展名，不算。qmd 不是 `.so`，按"qt-resource-rebuilder 在进程里 + 补丁文件早于 xochitl 启动"推断为已载入——这是按加载机制推断，看不到 qmd 里的定位是否全部命中。
 - **缓存**：这个接口很常被调（管理页每次刷新、每个 manage 事件）。`reading-qol.json` 一次请求只读一次；xochitl 扩展扫描按 **(pid, 进程启动时刻)** 缓存，同一个 xochitl 进程只全量扫一次，之后每次只读一次 `/proc/<pid>/stat` 核对（host 合成数据 253µs → 1.7µs）。启动不到 30 秒的 xochitl 不缓存（xovi 还在逐个加载扩展）；qmd 状态看文件修改时间，每次现算。
 - **开关存哪**：`~/.local/share/cangjie-ime/reading-qol.json`（与设备原生设置页、C 扩展共用）。写法是"整份读进来、只覆盖要改的键、其余原样写回"，进程内串行化，所以不认识的键不会丢（旧设备上的 `hwStroke*`、`comicMinMargin`、`rtlPageTurn` 原样留着，无人再读）。各开关在 xochitl 侧怎么生效见[系统增强线白皮书](../../enhance/docs/reMarkable系统增强线白皮书.md)。
 
@@ -341,9 +341,9 @@
 | `GET /api/device/cleanup` | 可清理的遗留文件 + xochitl 书库里的 EPUB/PDF + 回收站代理是否载入（只读） |
 | `POST /api/device/cleanup/delete {area, names}` | 逐个删除遗留文件 → `{deleted, failed:[{name,message}], partial}` |
 
-**页面**：「管理 → 设备健康」顶部一张卡（标题、刷新按钮、采集时刻），下面六个二级标签：概览（开机时长、xochitl、xovi、`/home` 空间、固件、OTA 判定、部署版本）/ 服务（各单元状态、重启次数、内存、启动耗时）/ 扩展（映射的扩展、`(deleted)`、待换入区）/ 日志（上次开机 journal 尾部、最近的部署）/ 清理 / 自检（10-14：book-serve 的一键自检，`GET`/`POST /api/books/selftest`，跑着时每 2 秒取一次进度，这一屏不在前台或跑完就停；接口与步骤见[传书链路技术细节](../../shelf/docs/传书EPUB线架构.md) §4）。进页或刷新时一次取 `health`+`ota` 分给前四个标签，切标签不重取；`cleanup`、自检只在各自的标签在前台时取。上次停留的二级标签记在浏览器里（`shelf.healthSub`）。
+**页面**：「管理 → 设备健康」顶部一张卡（标题、刷新按钮、采集时刻），下面六个二级标签：概览（开机时长、xochitl、xovi、`/home` 空间、固件、OTA 判定、部署版本）/ 服务（各单元状态、重启次数、内存、启动耗时）/ 扩展（映射的扩展、`(deleted)`、自己拒绝加载的扩展、待换入区）/ 日志（上次开机 journal 尾部、最近的部署）/ 清理 / 自检（10-14：book-serve 的一键自检，`GET`/`POST /api/books/selftest`，跑着时每 2 秒取一次进度，这一屏不在前台或跑完就停；接口与步骤见[传书链路技术细节](../../shelf/docs/传书EPUB线架构.md) §4）。进页或刷新时一次取 `health`+`ota` 分给前四个标签，切标签不重取；`cleanup`、自检只在各自的标签在前台时取。上次停留的二级标签记在浏览器里（`shelf.healthSub`）。
 
-**健康采集（`health.rs`）**：一次只 fork **两个**子进程——一个 `systemctl show -p … <全部单元>`（xochitl、`xovi-reenable`、gateway 加 `MODULES` 里的 7 个服务），一个 `journalctl -b -1 -n 20 --no-pager`（超时 10 秒；journal 没持久化时整块不显示）——其余都是读 `/proc` 和 `stat`：开机时长；各单元 `ActiveState`/`NRestarts`/`MainPID` 与 MainPID 的 `VmRSS`/`VmHWM`；启动耗时（`ActiveEnterTimestampMonotonic` 减 `InactiveExitTimestampMonotonic`）；xochitl 主进程（取 systemd 的 MainPID）的 `maps`——**每次现读**，因为 `(deleted)` 会在同一进程生命期里变化；待换入区 `~/.cangjie-stage/so-pending/`（换入途中的半成品 `.<名>.new.<pid>` 不列）；`/home` 剩余/总空间（基座 `fs::fs_space`，即 `statvfs`）。飞行记录仪日志在宿主机上，网关读不到。
+**健康采集（`health.rs`）**：一次 fork **三个**子进程——一个 `systemctl show -p … <全部单元>`（xochitl、`xovi-reenable`、gateway 加 `MODULES` 里的 7 个服务），一个 `journalctl -b -1 -n 20 --no-pager`（上次开机的尾部），一个读 xochitl 启动后 2 分钟的 journal 认出自己拒绝加载的扩展（10-16 起，见 4.7）；journalctl 超时 10 秒，journal 没持久化时对应的块不显示——其余都是读 `/proc` 和 `stat`：开机时长；各单元 `ActiveState`/`NRestarts`/`MainPID` 与 MainPID 的 `VmRSS`/`VmHWM`；启动耗时（`ActiveEnterTimestampMonotonic` 减 `InactiveExitTimestampMonotonic`）；xochitl 主进程（取 systemd 的 MainPID）的 `maps`——**每次现读**，因为 `(deleted)` 会在同一进程生命期里变化；待换入区 `~/.cangjie-stage/so-pending/`（换入途中的半成品 `.<名>.new.<pid>` 不列）；`/home` 剩余/总空间（基座 `fs::fs_space`，即 `statvfs`）。飞行记录仪日志在宿主机上，网关读不到。
 
 **部署版本（`deploy.rs`，2026-10-14）**：部署脚本每次把文件装好后，在设备上记一行 `~/.local/state/shelf/deploy-log.jsonl`（`packaging/devlib.sh` 的 `cj_deploy_stamp`，只留最近 20 行）：`{at, label, only, failed, commit, dirty, via, host, files:{路径: sha256}}`。`files` 是当时 `~/.local/bin/*`、`extensions.d/*.so`、qrr 目录下 `*.qmd` 的哈希；扩展 `.so` 的新版还在待换入区时记新版的。网关取最后一行显示为"部署版本"（提交号、时间、USB/WiFi、装了什么；`dirty` 标"含未提交改动"），并把它记的文件逐个现算 sha256 比对：内容变了（`changed`）、不见了（`missing`）、新版还在待换入区（`pending`，整机重启后自然消失）。`~` 之外的路径不读。哈希按 (大小, mtime) 记在进程里，文件没变不重读；跟健康数据同一个 15 秒缓存。`files` 不发给网页。没有记录（还没用 10-14 之后的脚本部署过）时这一行显示"没有部署记录"。
 
@@ -483,6 +483,8 @@
 | 10-07 书架不再优化书、删闸门、代码审查修复（代理空闲超时、批量只认 `ok`、`waitingService`、`registry_wake`、`parse_maps` 共用） | 已部署（10-07 15:54 并整机重启，部署自检 36✓ 1⚠ 0✗）；功能未真机手测 |
 | 10-09 第六轮审计（确认框 Enter、配置锁 poison、`/api/services` 带 `seg`、`lowSpace`、页面隐藏不取数等）及同日审计后续（批量 `names` 改用 `opt_str_list`、网页发单价用 `inputPer1k`/`outputPer1k`） | 已部署（第六轮 10-09 13:48 `install-all`，整机重启后部署自检 38✓ 1⚠ 0✗；审计后续随之后的部署上机）；**功能未在真机手测** |
 | **10-10 重构**（网页脚本拆 8 个源文件；接口 DTO 化 + 线上格式快照；`TOGGLES` 与 `toggles`；`MODULES.tab` 路由事件；后端下发 `title`/`series`/`done`/`live`；清理失败项 `{name,message}` + `partial`；`format:"other"` 徽章；`EV`、`refreshGate`、`liveStream`；`FailureKind`） | **host**：`cargo test` 77 个、node 19 项通过（本次实跑），浏览器冒烟与 clippy 在 10-10 重构时通过；10-12 约 08:38 已部署（10-13 核对设备上的文件得知，部署当时没记录），功能未在真机上手测（与各服务同批） |
+| 10-14 部署记录（概览「部署版本」、日志「最近的部署」）与「自检」标签 | 已部署（10-14 09:06）；设备上已记下部署记录，一键自检 10-14 与 10-16 在真机上五步全过；「部署版本」一行没在浏览器里专门看过 |
+| 10-16 扩展自己拒绝加载不算已加载（徽章、设备健康「扩展」单列） | 已部署（随 10-16 之后的 `deploy.sh` 上机，网关总会一起装）；起因是 3.29 上 hl-snap 拒载时被报成已加载，修复后的判定没再遇到拒载的场景 |
 
 **待手测清单**（部署后逐批看；书架那边对应条目在书架白皮书 8.3 节）
 

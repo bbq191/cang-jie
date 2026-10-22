@@ -18,17 +18,18 @@ It **does not modify `xochitl`** (the device's stock reading / notes / library a
 
 | You want | How | Code |
 |---|---|---|
-| **Get books into xochitl** | Optimize the book on your computer with the sister project [sheng-ren](https://github.com/bbq191/sheng-ren) (booklib, `xochitl` reading mode) first, then upload it on the web page or scp it into the device's `~/.local/state/shelf/books/inbox/`. The book lands in the **master library** (a staging pool on the device that keeps books byte-for-byte); tick it and press "Add", optionally into a folder (xochitl creates it if missing). The shelf accepts EPUB / PDF only and delivers books as-is, never modifying them; books in the master library can be downloaded as the original file or renamed | [`shelf/`](../shelf/README.md) |
+| **Get books into xochitl** | Optimize the book on your computer with the sister project [sheng-ren](https://github.com/bbq191/sheng-ren) (booklib, `xochitl` reading mode) first, then upload it on the web page or scp it into the device's `~/.local/state/shelf/books/inbox/`. The book lands in the **master library** (a staging pool on the device that keeps books byte-for-byte); tick it and press "Add", optionally into a folder, nested sub-folders included (xochitl creates whatever levels are missing). The shelf accepts EPUB / PDF only and delivers books as-is, never modifying them; books in the master library can be downloaded as the original file or renamed | [`shelf/`](../shelf/README.md) |
 | Books over 100MB | xochitl's web upload stops at about 100MB; books over 90MB automatically go through "placeholder + on-disk replacement", whole, up to 1GB | `shelf/` |
 | Add in bulk | Tick several books; the gateway works through them one by one in the background, even after you close the browser | [`gateway/`](../gateway/README.md) |
 | Minimal comic margins | Comics optimized by sheng-ren get their page margin set to the minimum the first time you open them | `shelf/` |
 | Replace a book without losing your place | sheng-ren on your computer can import directly (skipping the master library) or replace an existing book in place; after replacing a book you are reading, reopening it jumps back to where you were | `shelf/` |
-| **Turn highlights and handwritten notes into notes** | When you close a book, highlighter marks and the handwriting beside them are collected into an entry store automatically. On your phone: review the handwriting transcription (vision model), search across books, ask AI about a single entry; then push a chapter back into a device notebook (headings, lists and checkboxes use the device's own styles) or export Obsidian Markdown | [`notes/`](../notes/README.md) |
+| **Turn highlights and handwritten notes into notes** | When you close a book, highlighter marks and the handwriting beside them are collected into an entry store automatically. On your phone: review the handwriting transcription (vision model), search across books, ask AI about a single entry; then push a chapter back into a device notebook (headings, lists and checkboxes use the device's own styles) or export Obsidian Markdown. Optional "note review": reviewed entries come due on a spaced-repetition schedule and become a "Today's review" notebook at the library root (Lab switch) | [`notes/`](../notes/README.md) |
 | Highlighter that snaps precisely on Chinese text | xochitl splits words on spaces, so highlighting Chinese grabs the whole line; the `hl-snap` extension fixes that | [`enhance/`](../enhance/README.md) |
 | Tap to turn pages in the reader | Tap the left / right edge to turn the page (off by default) | `enhance/` (the patch ships with `shelf/`) |
+| Right-to-left manga | Books that declare right-to-left reading (EPUB OPF `page-progression-direction="rtl"`) get swipes, keys and taps swapped automatically; no switch, the book decides | `enhance/` (the patch ships with `shelf/`; book-serve reads the direction from the book) |
 | A different xochitl UI font | Library, settings and dialogs use a font you upload; fonts inside the reader stay the same | `enhance/` |
 | Reading fonts, sleep-screen wallpapers | Upload and use; the wallpaper can stay fixed or change on every sleep (in order or at random) | `enhance/` |
-| Device health | "Manage → Device health" on the web page shows service status, memory, whether extensions are really loaded, and the last boot's log; when a firmware update wipes components, a banner at the top tells you how to recover | `gateway/` |
+| Device health | "Manage → Device health" on the web page shows service status, memory, whether extensions are really loaded (including extensions that refused to load themselves), the last boot's log, and the deployed version and deploy history; "Self-test" really creates a folder, uploads and trashes a document in the library; when a firmware update wipes components, a banner at the top tells you how to recover | `gateway/` |
 
 Everything is done from one web page: open `https://10.11.99.1/` (USB) or `https://shelf.local/` (same WiFi; Android doesn't resolve `.local`)
 and enter the login password. The web UI is available in Chinese and English.
@@ -43,7 +44,8 @@ or update. How a request or an event actually flows is shown in the module-inter
 
 ## Install
 
-Only the **reMarkable Paper Pro Move on firmware 3.28.0.172** is supported (the only version verified so far; the installer checks and refuses otherwise by default).
+Only the **reMarkable Paper Pro Move on firmware 3.28.0.172 or 3.29.0.153** is supported (the two versions verified on hardware; the installer checks xochitl's sha256 and refuses otherwise by default).
+On 3.29.0.153 the `hl-snap` highlighter fix is only confirmed to install its hook; the snapping itself has not been tried yet. See [`INSTALL.en.md`](INSTALL.en.md#scope) for the rest.
 
 1. Install two third-party base components on the device by hand: `vellum add xovi` and `vellum add qt-resource-rebuilder` (vellum is the device's package manager). The installer won't install them.
 2. Your computer needs a Rust cross-compilation setup and passwordless ssh to the device's root (list in [`INSTALL.en.md`](INSTALL.en.md)). Connect the device over USB, then:
@@ -65,12 +67,12 @@ Prerequisites, risks and how to recover after a firmware update (OTA) are all in
 
 | Directory | In one line |
 |---|---|
-| [`shelf/`](../shelf/README.md) | The shelf: master library, add / import into xochitl, the large-file channel, and the 5 qmd patches installed with it (trash agent, folder-creation agent, comic margins, reading position, tap-to-turn) |
+| [`shelf/`](../shelf/README.md) | The shelf: master library, add / import into xochitl, the large-file channel, and the 5 qmd patches installed with it (trash agent, folder-creation agent, comic margins, reading position, tap-to-turn and per-book page direction); the font-menu and UI-font-token qmd patches are installed with it too |
 | [`notes/`](../notes/README.md) | The notes line: highlights + handwriting → entry store → transcription / ask AI → device notebook or Obsidian (4 services: ink, transcribe, mind, note) |
 | [`enhance/`](../enhance/README.md) | System enhancements: xovi extensions `hl-snap` (CJK highlighter snapping) and `ui-font` (UI font), the `font-serve` and `wallpaper-serve` services, and `lo-alias` (keeps xochitl's upload endpoint reachable after you unplug USB) |
 | [`gateway/`](../gateway/README.md) | The gateway: the only network-facing entry; HTTPS, login, reverse proxy, event fan-in, bulk queue, management and device health; serves the whole web UI |
 | [`rmsvc-core/`](../rmsvc-core/README.md) | The service base: a Rust library shared by the gateway and every service (service registry, HTTP, event bus, the layer that talks to xochitl); no business logic, never runs on its own |
-| [`defw/`](../defw/README.md) | Reverse-engineering material for xochitl 3.28.0.172, used to find hook points for the xovi extensions; never goes on the device |
+| [`defw/`](../defw/README.md) | Reverse-engineering material for xochitl 3.28.0.172, used to find hook points for the xovi extensions; never goes on the device (the 3.29.0.153 port was done offline with objdump and extracted QML; findings live in the headers of `hl_snap.c` and the affected qmd files) |
 | [`packaging/`](../packaging/README.md) | The installer: runs on your computer and installs all of the above over ssh, with a firmware check, a post-install check, and a symmetric uninstall |
 
 For contributors: on every push / PR, GitHub Actions runs shellcheck, the installer's sandboxed simulation tests, a syntax check and node

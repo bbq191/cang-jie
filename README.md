@@ -18,17 +18,18 @@
 
 | 你想要 | 怎么做到 | 代码在 |
 |---|---|---|
-| **把书放进 xochitl** | 书先在电脑上用姊妹项目 [sheng-ren](https://github.com/bbq191/sheng-ren)（booklib，`xochitl` 阅读模式）优化好，再在网页上传，或 scp 进设备的 `~/.local/state/shelf/books/inbox/`，书就进了**母版库**（设备上原样保存书的暂存池）；勾选后点「加入」，可选放进哪个文件夹（没有就让 xochitl 自己建）。书架只收 EPUB / PDF，原样投书、不改书；母版库里的书可以下载原件、改文件名 | [`shelf/`](shelf/README.md) |
+| **把书放进 xochitl** | 书先在电脑上用姊妹项目 [sheng-ren](https://github.com/bbq191/sheng-ren)（booklib，`xochitl` 阅读模式）优化好，再在网页上传，或 scp 进设备的 `~/.local/state/shelf/books/inbox/`，书就进了**母版库**（设备上原样保存书的暂存池）；勾选后点「加入」，可选放进哪个文件夹（可以是多级子文件夹，缺的那几级让 xochitl 自己建）。书架只收 EPUB / PDF，原样投书、不改书；母版库里的书可以下载原件、改文件名 | [`shelf/`](shelf/README.md) |
 | 放超过 100MB 的大书 | xochitl 网页上传约 100MB 封顶；超过 90MB 的书自动走"占位 + 磁盘替换"，整本进，最大 1GB | `shelf/` |
 | 批量加入 | 母版库里勾多本，网关在后台一本一本做完，关掉浏览器也接着跑 | [`gateway/`](gateway/README.md) |
 | 漫画留白最少 | sheng-ren 优化过的漫画，加入后第一次打开时自动把页边距设到最小 | `shelf/` |
 | 换书不丢进度 | 电脑上的 sheng-ren 可以绕过母版库直接导入，或原地替换一本已有的书；替换一本正在读的书后重新打开，自动跳回原来读到的地方 | `shelf/` |
-| **把勾画和手写批注变成笔记** | 合上书后，荧光笔勾画和旁边的手写自动收进条目库；在手机网页上校对手写转写（视觉模型）、全文搜索、对单条问 AI；再按章投回设备笔记本（标题、列表、复选框用设备自带样式），或导出 Obsidian Markdown | [`notes/`](notes/README.md) |
+| **把勾画和手写批注变成笔记** | 合上书后，荧光笔勾画和旁边的手写自动收进条目库；在手机网页上校对手写转写（视觉模型）、全文搜索、对单条问 AI；再按章投回设备笔记本（标题、列表、复选框用设备自带样式），或导出 Obsidian Markdown；可选「笔记回顾」：校对过的条目按间隔重复到期，生成书库根下的「今日回顾」笔记本（实验室开关） | [`notes/`](notes/README.md) |
 | 荧光笔划中文"划哪亮哪" | xochitl 原本按空格分词，划中文会吸整行；扩展 `hl-snap` 修掉 | [`enhance/`](enhance/README.md) |
 | 阅读器单击翻页 | 点屏幕左右边缘翻页（开关默认关） | `enhance/`（补丁随 `shelf/` 装） |
+| 日漫从右往左翻 | 书里标了从右往左（EPUB OPF 的 `page-progression-direction="rtl"`）的书，滑动、键盘、单击翻页的方向自动对调；没有开关，以书为准 | `enhance/`（补丁随 `shelf/` 装，方向由 book-serve 读书判断） |
 | 换 xochitl 界面字体 | 书库、设置、对话框换成你上传的字体；阅读器里的字体不变 | `enhance/` |
 | 阅读字体、休眠壁纸 | 网页上传即用；壁纸可固定一张，或每次休眠按顺序 / 随机换一张 | `enhance/` |
-| 设备健康 | 网页「管理 → 设备健康」看各服务状态、内存、扩展是否真的载入、上次开机日志；固件升级冲掉组件时网页顶部提示怎么恢复 | `gateway/` |
+| 设备健康 | 网页「管理 → 设备健康」看各服务状态、内存、扩展是否真的载入（含扩展自己拒绝加载的情况）、上次开机日志、部署版本与部署历史；「自检」在书库里真走一遍建文件夹、上传、移进回收站；固件升级冲掉组件时网页顶部提示怎么恢复 | `gateway/` |
 
 所有操作都在一个网页里：浏览器打开 `https://10.11.99.1/`（USB 连接）或 `https://shelf.local/`（同一 WiFi；安卓不解析 `.local`），
 输入登录密码。网页有中文、英文两种界面语言。
@@ -43,7 +44,8 @@
 
 ## 怎么装
 
-**只支持 reMarkable Paper Pro Move、固件 3.28.0.172**（目前唯一验证过的版本，安装脚本会核对，不符默认拒装）。
+**只支持 reMarkable Paper Pro Move，固件 3.28.0.172 或 3.29.0.153**（真机验证过的两个版本，安装脚本按 xochitl 的 sha256 核对，不符默认拒装）。
+3.29.0.153 上荧光笔吸附 `hl-snap` 只确认了挂钩装上，划线效果还没实测，其余功能见 [`docs/INSTALL.md`](docs/INSTALL.md#适用范围)。
 
 1. 在设备上手动装好两样第三方基础组件：`vellum add xovi`、`vellum add qt-resource-rebuilder`（vellum 是设备上的包管理器）。安装脚本不代装。
 2. 电脑上准备 Rust 交叉编译环境，并能免密 ssh 到设备 root（清单见 [`docs/INSTALL.md`](docs/INSTALL.md)）。用 USB 线连上设备，然后：
@@ -65,12 +67,12 @@
 
 | 目录 | 一句话 |
 |---|---|
-| [`shelf/`](shelf/README.md) | 书架：母版库、加入 / 直接导入 xochitl、大书通道，以及随它安装的 5 个 qmd 补丁（回收站代理、建文件夹代理、漫画页边距、阅读位置、单击翻页） |
+| [`shelf/`](shelf/README.md) | 书架：母版库、加入 / 直接导入 xochitl、大书通道，以及随它安装的 5 个 qmd 补丁（回收站代理、建文件夹代理、漫画页边距、阅读位置、单击翻页与按书翻页方向）；字体菜单、界面字体令牌两个 qmd 也随它装 |
 | [`notes/`](notes/README.md) | 笔记线：勾画 + 手写 → 条目库 → 转写 / 问 AI → 设备笔记本或 Obsidian（4 个服务：ink、transcribe、mind、note） |
 | [`enhance/`](enhance/README.md) | 系统增强：xovi 扩展 `hl-snap`（荧光笔中文吸附）、`ui-font`（界面字体），字体服务 `font-serve`、壁纸服务 `wallpaper-serve`，以及 `lo-alias`（让 xochitl 的上传口在拔掉 USB 后仍可达） |
 | [`gateway/`](gateway/README.md) | 网关：唯一对外入口，HTTPS、登录、反向代理、事件汇聚、批量队列、管理台与设备健康，托管整个网页 |
 | [`rmsvc-core/`](rmsvc-core/README.md) | 服务基座：网关和各服务共用的 Rust 库（服务注册表、HTTP、事件总线、跟 xochitl 打交道的那一层），不含业务逻辑，不单独运行 |
-| [`defw/`](defw/README.md) | xochitl 3.28.0.172 的固件逆向资料，给 xovi 扩展找挂接点用，不上设备 |
+| [`defw/`](defw/README.md) | xochitl 3.28.0.172 的固件逆向资料，给 xovi 扩展找挂接点用，不上设备（3.29.0.153 的适配是离线 objdump、解 QML 做的，结论记在 `hl_snap.c` 与相关 qmd 的文件头） |
 | [`packaging/`](packaging/README.md) | 安装器：在电脑上运行，经 ssh 把上面这些装到设备；带固件校验、部署后核对，以及对称的卸载 |
 
 改代码的人：每次 push / PR，GitHub Actions 跑 shellcheck、安装脚本的沙箱模拟测试、网页脚本检查与 node 测试、enhance 的 C 单测、
