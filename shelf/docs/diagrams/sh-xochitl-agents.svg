@@ -17,7 +17,8 @@
 <rect x="760" y="112" width="410" height="86" rx="8" fill="#FFFBEB" stroke="#F59E0B" stroke-width="1.5"/>
 <text x="772.0" y="132.0" font-size="13" font-weight="bold" fill="#1F2937" text-anchor="start">shelf-mkdir-agent.qmd（MainView）</text>
 <text x="772.0" y="151.0" font-size="11.5" fill="#1F2937" text-anchor="start">长轮询 GET /mkdir/pending?wait=290</text>
-<text x="772.0" y="167.5" font-size="11.5" fill="#1F2937" text-anchor="start">→ Library.createCollection(上级, 名字)</text>
+<text x="772.0" y="167.5" font-size="11.5" fill="#1F2937" text-anchor="start">→ createCollection(上级, 名字)</text>
+<text x="772.0" y="184.0" font-size="11" fill="#6B7280" text-anchor="start">3.28 在 Library 上，3.29 起在 LibraryController 上（运行时二选一）</text>
 <path d="M280.0,155.0 L320.0,155.0" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#shxoch-a)"/>
 <text x="300.0" y="149.0" font-size="11" fill="#6B7280" text-anchor="middle">入队</text>
 <path d="M760.0,155.0 L700.0,155.0" fill="none" stroke="#64748B" stroke-width="1.5" marker-end="url(#shxoch-a)"/>
