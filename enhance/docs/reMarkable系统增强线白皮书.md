@@ -313,6 +313,7 @@ wallpaper-serve 的日志在 `journalctl -u wallpaper-serve`：每次休眠轮�
 ```sh
 cd enhance/hl-snap && make aarch64     # 产物 hl-snap.so（已提交进仓库）
 cd enhance/ui-font && make aarch64     # 产物 ui-font.so（已提交进仓库）
+# 同时刷新 <名>.so.inputs（全部输入的 sha256），与 .so 一起提交；部署时源码没变就用已提交的 .so、不重编
 ```
 
 - 只需要 aarch64 交叉编译器（`aarch64-linux-gnu-gcc`）。xovi 胶水 `xovi_glue.{c,h}` 已提交进仓库，平常不需要 asivery/xovi clone；改了 `.xovi` 才 `make glue XOVI_DIR=<clone>` 重新生成（hl-snap 的 Makefile 只在胶水缺失时生成，不看 `.xovi` 的修改时间；`make clean` 只删 `.so`）。ui-font 的胶水与 hl-snap 逐字节相同。

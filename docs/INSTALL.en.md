@@ -320,7 +320,7 @@ All of these are known issues with a clear trigger, not random failures.
 
 - Start with the summary to find the failing step; the header comment of the matching `packaging/deploy-*.sh` explains what the step does and common causes of failure.
 - The web page's "Manage" view shows whether a plugin is really loaded into xochitl ("loaded / not loaded"). A switch that's on but shows "not loaded" means the plugin isn't installed, the device hasn't rebooted since, or the plugin didn't recognise the firmware and refused to load itself (typical after an OTA; listed separately under Device health's "Extensions"). "Manage → Device health" shows a fuller picture (services, extensions, last boot log, deployed version and deploy history), and its "Self-test" tab really creates folders, uploads and trashes a document in the library.
-- To check the scripts aren't broken without touching a device: `bash packaging/tests/run_sim_tests.sh` (local simulation, 460 assertions, all passing on 2026-10-22). It doesn't replace verification on real hardware.
+- To check the scripts aren't broken without touching a device: `bash packaging/tests/run_sim_tests.sh` (local simulation, 463 assertions, all passing on 2026-10-22). It doesn't replace verification on real hardware.
 
 ## Risks and known limitations
 

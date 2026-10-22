@@ -8,7 +8,7 @@
 #
 # 前置：设备已 vellum add xovi（设备端 install.sh 检查，缺失清楚报错）。
 # 前置（host 侧构建）：aarch64-linux-gnu-gcc。xovi 胶水 xovi_glue.{c,h} 已提交进仓库，平常构建不需要 asivery/xovi 的
-# clone；只有改了 .xovi 才要 `make -C <扩展目录> glue XOVI_DIR=<clone路径>` 重新生成。CJ_SKIP_BUILD=1 跳过构建、直接用仓库里已提交的 .so。
+# clone；只有改了 .xovi 才要 `make -C <扩展目录> glue XOVI_DIR=<clone路径>` 重新生成。源码与已提交的 .so 对应（<名>.so.inputs 一致）时不重编；CJ_SKIP_BUILD=1 一律不构建，CJ_FORCE_BUILD=1 一律重编。
 #
 # 用法：./deploy-xovi-ext.sh hl-snap [host]      host 默认 10.11.99.1
 #   环境 DEFER_XOVI_START=1：只把 .so 落盘（设备端 install.sh --no-restart），不重启 xochitl——install-all 编排多个
@@ -20,7 +20,7 @@ set -eu
 cd "$(dirname "$0")"
 # shellcheck disable=SC1091
 . ./lib.sh
-USAGE="用法：deploy-xovi-ext.sh hl-snap|ui-font [host]      环境：DEFER_XOVI_START=1（只落盘不重启）CJ_SKIP_BUILD=1 XOVI_DIR=<xovi clone>"
+USAGE="用法：deploy-xovi-ext.sh hl-snap|ui-font [host]      环境：DEFER_XOVI_START=1（只落盘不重启）CJ_SKIP_BUILD=1 CJ_FORCE_BUILD=1 XOVI_DIR=<xovi clone>"
 case "${1:-}" in -h|--help) echo "$USAGE"; exit 0 ;; esac
 NAME="${1:?$USAGE}"; shift
 host_arg "$USAGE" "$@"
@@ -36,9 +36,14 @@ require_device
 echo "== 构建 $SO =="
 # ⚠️ 不跑 `make clean`——产物已提交进仓库，本机缺交叉编译器时重编会失败；不清现有 .so/xovi_glue.{c,h}
 # 才能在那种情况下退回用仓库里已提交的版本（先删了才发现编不出新的，真机实测踩过）。
+# 源码没变就不重编（2026-10-22）：.so 连同 <名>.so.inputs（编它时全部输入的 sha256）一起提交，`make check-inputs`
+# 按内容比对——一致就用已提交的 .so。以前每次部署都原地重编，编译器一升级就编出字节不同、代码一样的 .so，
+# 弄脏工作区、设备上的文件跟着变、还白白多一次整机重启。CJ_FORCE_BUILD=1 强制重编。
 if [ "${CJ_SKIP_BUILD:-0}" = "1" ]; then
     echo "-- CJ_SKIP_BUILD=1：不构建，用现有 $DIR/$SO"
     [ -f "$DIR/$SO" ] || { echo "!! 没有 $DIR/$SO"; exit 1; }
+elif [ "${CJ_FORCE_BUILD:-0}" != "1" ] && make -s -C "$DIR" check-inputs >/dev/null 2>&1; then
+    echo "-- 源码与已提交的 $SO 对应（$SO.inputs 一致），不重编；要强制重编设 CJ_FORCE_BUILD=1"
 elif ! make -C "$DIR" aarch64; then
     if [ -f "$DIR/$SO" ]; then
         echo "⚠️  重新构建失败（本机缺 aarch64-linux-gnu-gcc，或源码编不过——看上面的编译输出）——"

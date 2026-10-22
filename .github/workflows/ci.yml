@@ -121,6 +121,12 @@ jobs:
       # 两个 C 写的 xovi 扩展（2026-10-10，审计 SEC-2）：部署脚本构建失败时会退回仓库里提交的 .so，源码改坏/出警告
       # 不会被发现——这里按"交叉编译零警告"门槛编一遍。xovi 胶水 xovi_glue.{c,h} 已提交，不需要 asivery/xovi clone。
       # 只验证编得过，不比对仓库里提交的 .so（runner 的 gcc 版本与开发机不同，产物字节必然不同）。
+      # 已提交的 .so 必须是当前源码编出来的：比的是 <名>.so.inputs 里记的输入 sha256，不比 .so 字节（编译器版本不同字节必然不同）。
+      # 改了源码却没重编、没一起提交 .so 和 .so.inputs，这里就失败（部署脚本据此决定用不用已提交的 .so）。须在下面 make aarch64 之前查。
+      - name: enhance C 扩展：已提交的 .so 与源码对应（.so.inputs）
+        run: |
+          make -C enhance/hl-snap check-inputs || { echo "::error::enhance/hl-snap 的源码改了但 hl-snap.so / hl-snap.so.inputs 没重编提交（make aarch64 后一起提交）"; exit 1; }
+          make -C enhance/ui-font check-inputs || { echo "::error::enhance/ui-font 的源码改了但 ui-font.so / ui-font.so.inputs 没重编提交（make aarch64 后一起提交）"; exit 1; }
       - name: enhance C 扩展交叉编译（hl-snap / ui-font，-Werror）
         run: |
           make -C enhance/hl-snap aarch64 EXTRA_CFLAGS=-Werror

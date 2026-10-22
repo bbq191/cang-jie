@@ -26,6 +26,8 @@ target/
 *.so.*
 # 例外：出货载荷——cangjie-langhook.so 是 install.sh 直接拷的预编译 xovi 扩展，故意 track。
 !chinese-ime/langhook/cangjie-langhook.so
+# 例外：xovi 扩展 .so 的输入记录（编它时全部输入的 sha256，部署脚本据此决定要不要重编），与 .so 一起提交。
+!enhance/*/*.so.inputs
 
 # ── 缓存 ──
 .cache/
