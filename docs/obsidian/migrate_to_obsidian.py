@@ -2,11 +2,16 @@
 """把 cang-jie 仓库的文档导出成 Obsidian 知识库里的一个项目目录。
 
 用法：
-    python3 docs/obsidian/migrate_to_obsidian.py <Vault 绝对路径> [--subdir cang-jie] [--dry-run] [--force]
+    python3 docs/obsidian/migrate_to_obsidian.py <Vault 绝对路径> [--subdir 技术能力/cang-jie]
+        [--assets-dir "00 Library/Assets/cang-jie"] [--dry-run] [--force]
+
+缺省值按作者的 Vault（ikate）的约定：项目放「技术能力/<项目>/」、入口是项目根下的「<项目> MOC」；附件统一放
+「00 Library/Assets/<项目>/」、文件名带项目前缀、正文用短链接 ![[文件名]]（Vault 按文件名全库解析，所以笔记名和
+附件名都不能与库里已有文件重名，脚本会查）；标签用 工具技巧/…、领域/…、<项目>/<分类>。
 
 以仓库为准、知识库是生成物：仓库里的 Markdown 原样不动（GitHub 上的相对链接照常能点），每次运行都从仓库
 重新生成知识库里的整份副本——
-  · 按「00-MOC … 99-附件」的目录结构放文件，文件名全库唯一（6 个 README.md 各自改名）；
+  · 按「01-总览 … 08-概念」放笔记、MOC 放项目根下，附件放 --assets-dir，文件名全库唯一（6 个 README.md 各自改名）；
   · 每篇顶部注入 YAML frontmatter（title/aliases/date/updated/type/line/status/firmware/tags/source/related），
     date/updated 取 git 首次 / 最后提交日期，tags 按类型、所属线和正文关键词生成；
   · 文档之间的相对链接改成 [[双链]]，带锚点的按 GitHub 的锚点规则找回标题，改成 [[笔记#标题]]；
@@ -16,8 +21,9 @@
     项目 MOC、按实际文件树生成的 Index_MOC.md。
 
 幂等：输出只由仓库内容决定（不写"生成时间"），内容没变的文件不重写；脚本只管自己写过的文件——清单记在
-<Vault>/<subdir>/.cang-jie-export.json，下次运行删掉清单里不再生成的文件，绝不碰你自己在这个目录里加的笔记；
-目标位置已有一份不归脚本管、内容又不同的文件时拒绝覆盖（--force 才覆盖）。
+<Vault>/<subdir>/.cang-jie-export.json（路径相对 Vault），下次运行删掉清单里不再生成的文件，绝不碰你自己加的笔记；
+目标位置已有一份不归脚本管、内容又不同的文件，或库里别处已有同名笔记 / 附件（会让双链有歧义）时拒绝写入
+（--force 才继续）。
 
 只用标准库；仓库内需要 git。
 """
@@ -97,19 +103,16 @@ EXTRA_CONCEPTS = {
     "sheng-ren": ("姊妹项目（booklib，`xochitl` 阅读模式），在电脑上把书优化好；书架只把优化好的书原样投进 xochitl。https://github.com/bbq191/sheng-ren", ["booklib"]),
 }
 
+# 正文关键词 → Vault 的「领域/…」标签（出现次数达到阈值才打；长文按篇幅放大阈值）。
 TOPIC_RULES: list[tuple[str, str, int]] = [
-    ("topic/api", r"`(?:GET|POST|PUT|DELETE) /", 3),
-    ("topic/backend", r"\bcrate\b|cargo|loopback|127\.0\.0\.1|服务端", 4),
-    ("topic/frontend", r"前端|\.js`|i18n|网页脚本|浏览器", 4),
-    ("topic/deployment", r"install-all|deploy[-.]|部署|整机重启", 8),
-    ("topic/reverse-engineering", r"objdump|Ghidra|反汇编|反编译|特征码", 3),
-    ("topic/security", r"TLS|私有 CA|证书|登录|限速|权限", 5),
-    ("topic/bugfix", r"修复|修掉|改正|误报|\bbug\b", 5),
-    ("lang/rust", r"\bcargo\b|\bcrate\b|\.rs\b", 3),
-    ("lang/c", r"\b[\w-]+\.[ch]\b|trampoline|xovi_glue|make aarch64|交叉编译器", 3),
-    ("lang/qml", r"\bqmd\b|QML", 5),
-    ("lang/shell", r"\b[\w-]+\.sh\b", 5),
+    ("领域/开发", r"`(?:GET|POST|PUT|DELETE) /|\bcrate\b|cargo|\.rs\b|loopback", 6),
+    ("领域/部署", r"install-all|deploy[-.]|部署|整机重启", 8),
+    ("领域/逆向", r"objdump|Ghidra|反汇编|反编译|特征码", 3),
+    ("领域/认证", r"TLS|私有 CA|证书|登录|限速", 5),
+    ("领域/网络", r"WiFi|USB 网卡|10\.11\.99\.1|mDNS|shell\.local", 5),
+    ("领域/shell", r"\b[\w-]+\.sh\b", 6),
 ]
+CATEGORY_TAG = "工具技巧/reMarkable"
 PITFALL_HEAD = re.compile(r"踩坑|已知限制|排错|常见问题")
 VERIFY_HEAD = re.compile(r"验证现状|待手测|没验证|还没手测|没手测")
 
@@ -226,13 +229,14 @@ class Note:
 
 
 class Exporter:
-    def __init__(self, subdir: str, repo_url: str) -> None:
+    def __init__(self, subdir: str, assets_dir: str, repo_url: str) -> None:
         self.subdir = subdir
+        self.assets_dir = assets_dir
         self.repo_url = repo_url.rstrip("/")
         self.head_date = git("log", "-1", "--format=%ad", "--date=short").strip()
         self.notes: dict[str, Note] = {}
         self.by_src: dict[str, Note] = {}
-        self.assets: dict[str, str] = {}   # 知识库相对路径 → 仓库路径
+        self.assets: dict[str, str] = {}   # 附件文件名（全库唯一、带 cang-jie- 前缀）→ 仓库路径
         self.src_text: dict[str, str] = {}
         self.slugs: dict[str, dict[str, str]] = {}
         self.warnings: list[str] = []
@@ -241,8 +245,17 @@ class Exporter:
     def gh(self, path: str) -> str:
         return f"{self.repo_url}/blob/master/{path}"
 
-    def asset_rel(self, repo_path: str) -> str:
-        return f"99-附件/{repo_path}"
+    @staticmethod
+    def asset_name(repo_path: str) -> str:
+        """附件在 Vault 里的文件名：带项目前缀、按所属顶层目录区分（两张 architecture.svg 分属书架和笔记线）。"""
+        top, base = repo_path.split("/", 1)[0], repo_path.rsplit("/", 1)[-1]
+        return f"cang-jie-{base}" if top == "docs" else f"cang-jie-{top}-{base}"
+
+    def add_asset(self, repo_path: str) -> str:
+        name = self.asset_name(repo_path)
+        if self.assets.setdefault(name, repo_path) != repo_path:
+            raise SystemExit(f"!! 附件改名后重名：{name} ← {self.assets[name]} 与 {repo_path}")
+        return name
 
     def add_note(self, n: Note) -> None:
         assert n.title not in self.notes, n.title
@@ -302,9 +315,8 @@ class Exporter:
                 self.by_src[src].links.append(note.title)
                 return m.put(wikilink(note.title, heading, alias, in_table))
             if (REPO / repo_path).is_file() and repo_path.lower().endswith((".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp")):
-                vault_path = f"{self.subdir}/{self.asset_rel(repo_path)}"
-                self.assets[self.asset_rel(repo_path)] = repo_path
-                return m.put(wikilink(vault_path, None, None if bang else alias, in_table, embed=bool(bang)))
+                name = self.add_asset(repo_path)
+                return m.put(wikilink(name, None, None if bang else alias, in_table, embed=bool(bang)))
             if (REPO / repo_path).exists():
                 return m.put(f"[{text}]({self.gh(repo_path)}{'#' + anchor if anchor else ''})")
             self.warnings.append(f"{src}: 链接目标 {target} 在仓库里不存在，原样保留")
@@ -477,7 +489,7 @@ WHERE type != "moc"
 SORT line ASC, type ASC
 ```
 """
-        self.add_note(Note(src=None, rel=f"00-MOC/{MOC_TITLE}.md", title=MOC_TITLE, type="moc", line="全局",
+        self.add_note(Note(src=None, rel=f"{MOC_TITLE}.md", title=MOC_TITLE, type="moc", line="全局",
                            aliases=["cang-jie", "仓颉"], date=self.docs_date, updated=self.docs_date, body=body, origin="脚本内模板"))
 
     def index_moc(self, files: list[str]) -> str:
@@ -485,11 +497,11 @@ SORT line ASC, type ASC
         tree: dict[str, list[str]] = {}
         for rel in sorted(files):
             d, _, name = rel.rpartition("/")
-            if d.startswith("99-附件") or rel == "Index_MOC.md":
+            if not rel.endswith(".md") or rel == "Index_MOC.md":
                 continue
             tree.setdefault(d, []).append(name)
-        n_md = sum(1 for f in files if f.endswith(".md") and not f.startswith("99-附件"))
-        n_assets = sum(1 for f in files if f.startswith("99-附件/"))
+        n_md = sum(1 for f in files if f.endswith(".md"))
+        n_assets = len(self.assets)
         out = ["# Index_MOC\n", f"> 按导出的文件树自动生成：{n_md} 篇笔记、{n_assets} 个附件（文档最后更新 {self.docs_date}）。"
                f"从 [[{MOC_TITLE}]] 进入更有条理。\n"]
         shown: set[str] = set()
@@ -506,21 +518,21 @@ SORT line ASC, type ASC
                     meta = f"（{n.type} · {n.line}{' · 历史' if n.status == '历史' else ''}）" if n else ""
                     out.append(f"- [[{name[:-3]}]]{meta}")
             out.append("")
-        out.append(f"## 99-附件\n\n{n_assets} 个示意图，按仓库原路径放在 `99-附件/` 下，由各篇以 `![[…]]` 嵌入。\n")
+        out.append(f"## 附件\n\n{n_assets} 个示意图在 `{self.assets_dir}/`，文件名带 `cang-jie-` 前缀，各篇以 `![[文件名]]` 嵌入。\n")
         return "\n".join(out)
 
     # frontmatter ---------------------------------------------------------------------------------
     def tags(self, n: Note, text: str) -> list[str]:
-        tags = ["cang-jie", f"type/{n.type}"]
-        if n.line != "全局":
-            tags.append(f"cang-jie/{n.line}")
-        if n.type in ("whitepaper", "architecture", "overview"):
-            tags.append("topic/architecture")
-        if any(PITFALL_HEAD.search(h) for h in headings(text)):
-            tags.append("topic/pitfall")
+        """对齐 Vault：工具技巧/reMarkable、cang-jie/<分类>（笔记所在的一级目录，去掉序号）、领域/…；MOC 另打 MOC。"""
+        top = n.rel.split("/", 1)[0]
+        tags = [CATEGORY_TAG, "cang-jie/" + (re.sub(r"^\d+-", "", top) if "/" in n.rel else "入口")]
+        if n.type == "moc":
+            tags.insert(0, "MOC")
+        if n.type == "reverse":
+            tags.append("领域/硬件")
         scale = max(1.0, len(text) / 8000)      # 长文按篇幅放大阈值，免得长白皮书什么标签都沾
         for tag, pat, k in TOPIC_RULES:
-            if len(re.findall(pat, text)) >= k * scale:
+            if tag not in tags and len(re.findall(pat, text)) >= k * scale:
                 tags.append(tag)
         return tags
 
@@ -552,28 +564,27 @@ SORT line ASC, type ASC
         self.api_table()
         self.heading_index("踩坑索引", "07-踩坑记录/踩坑索引.md", "index", PITFALL_HEAD,
                            "各篇「已知限制 / 踩坑 / 排错 / 常见问题」章节的入口，只放链接、不复制正文，以原文为准。")
-        self.heading_index("待验证清单", "00-MOC/待验证清单.md", "index", VERIFY_HEAD,
+        self.heading_index("待验证清单", "待验证清单.md", "index", VERIFY_HEAD,
                            "各篇「验证现状 / 待手测」章节的入口。\"已部署\"不等于\"真机验证过\"，以原文的写法为准。")
         self.moc()
         bodies = {t: (self.transform(n) if n.src else n.body) for t, n in self.notes.items()}
-        out: dict[str, bytes] = {}
-        for t, n in self.notes.items():
-            out[n.rel] = (self.frontmatter(n, bodies[t]) + bodies[t].rstrip("\n") + "\n").encode()
         for svg in git("ls-files", "*/docs/diagrams/*.svg", "docs/diagrams/*.svg").split():
-            self.assets.setdefault(self.asset_rel(svg), svg)
-        for rel, src in self.assets.items():
-            out[rel] = (REPO / src).read_bytes()
+            self.add_asset(svg)                  # 没被正文引用的图也带上（MOC、手工笔记可能要用）
         idx = Note(src=None, rel="Index_MOC.md", title="Index_MOC", type="moc", line="全局", aliases=["项目知识导航"],
                    date=self.docs_date, updated=self.docs_date, origin="导出的文件树")
         self.notes["Index_MOC"] = idx
-        idx_body = self.index_moc(list(out) + ["Index_MOC.md"])
-        out["Index_MOC.md"] = (self.frontmatter(idx, idx_body) + idx_body).encode()
+        bodies["Index_MOC"] = self.index_moc([n.rel for n in self.notes.values()])
+        out: dict[str, bytes] = {}
+        for t, n in self.notes.items():
+            out[f"{self.subdir}/{n.rel}"] = (self.frontmatter(n, bodies[t]) + bodies[t].rstrip("\n") + "\n").encode()
+        for name, src in self.assets.items():
+            out[f"{self.assets_dir}/{name}"] = (REPO / src).read_bytes()
         self.validate(out)
         return out
 
     def validate(self, out: dict[str, bytes]) -> None:
         """所有 [[双链]] 都要能落到一篇笔记（或附件）、带的标题要真在那篇里。"""
-        heads = {t: set(headings(out[n.rel].decode())) for t, n in self.notes.items()}
+        heads = {t: set(headings(out[f"{self.subdir}/{n.rel}"].decode())) for t, n in self.notes.items()}
         for rel, data in out.items():
             if not rel.endswith(".md"):
                 continue
@@ -583,8 +594,8 @@ SORT line ASC, type ASC
                     continue
                 for raw in re.findall(r"\[\[([^\]]+)\]\]", INLINE_CODE.sub("", line)):
                     target = raw.replace("\\|", "|").split("|", 1)[0]
-                    if target.startswith(f"{self.subdir}/"):
-                        if target[len(self.subdir) + 1:] not in out:
+                    if re.search(r"\.(svg|png|jpe?g|gif|webp)$", target, re.I):
+                        if target not in self.assets:
                             self.warnings.append(f"{rel}: 附件 {target} 不存在")
                         continue
                     note, _, h = target.partition("#")
@@ -597,18 +608,34 @@ SORT line ASC, type ASC
 
 # ── 写入（幂等、只管自己的文件）──────────────────────────────────────────────────────────────────
 
-def write_all(target: Path, out: dict[str, bytes], dry: bool, force: bool) -> int:
-    man_path = target / MANIFEST
+def vault_basenames(vault: Path, skip: set[str]) -> dict[str, str]:
+    """Vault 里（不含 .git/.obsidian 与 skip 里的路径）每个文件名 → 一个所在路径，用来查重名。"""
+    seen: dict[str, str] = {}
+    for root, dirs, files in os.walk(vault):
+        dirs[:] = [d for d in dirs if d not in (".git", ".obsidian", ".trash")]
+        for f in files:
+            rel = os.path.relpath(os.path.join(root, f), vault).replace(os.sep, "/")
+            if rel not in skip:
+                seen.setdefault(f, rel)
+    return seen
+
+
+def write_all(vault: Path, roots: list[str], manifest: str, out: dict[str, bytes], dry: bool, force: bool) -> int:
+    """out 的键是相对 Vault 的路径；roots 是脚本管的目录（删文件后只在这些目录里往上收空目录）。"""
+    man_path = vault / manifest
     old = set(json.loads(man_path.read_text())["files"]) if man_path.is_file() else set()
-    conflicts = [r for r in out if r not in old and (target / r).is_file() and (target / r).read_bytes() != out[r]]
-    if conflicts and not force:
-        print("!! 这些文件已在目标位置、不归本脚本管、内容又不同，拒绝覆盖（确认后加 --force）：", file=sys.stderr)
-        for r in conflicts:
-            print("   ", target / r, file=sys.stderr)
+    problems = [f"已存在、不归本脚本管、内容不同：{r}" for r in out
+                if r not in old and (vault / r).is_file() and (vault / r).read_bytes() != out[r]]
+    others = vault_basenames(vault, old | set(out) | {manifest})
+    problems += [f"库里别处已有同名文件，双链会有歧义：{r} ↔ {others[Path(r).name]}" for r in out if Path(r).name in others]
+    if problems and not force:
+        print("!! 拒绝写入（确认无妨后加 --force）：", file=sys.stderr)
+        for p in problems:
+            print("   ", p, file=sys.stderr)
         return 3
     written = same = 0
     for rel, data in sorted(out.items()):
-        p = target / rel
+        p = vault / rel
         if p.is_file() and p.read_bytes() == data:
             same += 1
             continue
@@ -621,52 +648,62 @@ def write_all(target: Path, out: dict[str, bytes], dry: bool, force: bool) -> in
         tmp.write_bytes(data)
         os.replace(tmp, p)
     gone = sorted(old - set(out))
+    stops = {vault} | {vault / r for r in roots}
     for rel in gone:
         if dry:
             print("  删", rel)
             continue
-        (target / rel).unlink(missing_ok=True)
-        d = (target / rel).parent
-        while d != target and d.is_dir() and not any(d.iterdir()):
+        (vault / rel).unlink(missing_ok=True)
+        d = (vault / rel).parent
+        while d not in stops and any(vault / r in d.parents for r in roots) and d.is_dir() and not any(d.iterdir()):
             d.rmdir()
             d = d.parent
     if not dry:
         man = json.dumps({"tool": "cang-jie migrate_to_obsidian.py", "files": sorted(out)}, ensure_ascii=False, indent=1) + "\n"
+        man_path.parent.mkdir(parents=True, exist_ok=True)
         if not man_path.is_file() or man_path.read_text() != man:
             man_path.write_text(man)
-    print(f"{'(dry-run) ' if dry else ''}写入 {written}，未变 {same}，删除 {len(gone)} → {target}")
+    print(f"{'(dry-run) ' if dry else ''}写入 {written}，未变 {same}，删除 {len(gone)} → {vault}（{' 与 '.join(roots)}）")
     return 0
+
+
+def rel_dir(s: str) -> str | None:
+    """Vault 内的相对目录：不能是绝对路径、不能含 . / ..、不能为空。"""
+    parts = s.strip("/").split("/")
+    return "/".join(parts) if s and not s.startswith("/") and all(x not in ("", ".", "..") for x in parts) else None
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="把 cang-jie 文档导出到 Obsidian 知识库（幂等，可重复运行）")
     ap.add_argument("vault", help="Obsidian Vault 的绝对路径")
-    ap.add_argument("--subdir", default="cang-jie", help="项目放在 Vault 里的子目录（缺省 cang-jie）")
+    ap.add_argument("--subdir", default="技术能力/cang-jie", help="项目笔记放在 Vault 里的哪个目录（缺省 技术能力/cang-jie）")
+    ap.add_argument("--assets-dir", default="00 Library/Assets/cang-jie", help="附件放在 Vault 里的哪个目录（缺省 00 Library/Assets/cang-jie）")
     ap.add_argument("--repo-url", default=DEFAULT_REPO_URL, help="源码 / 未导出文档的链接指向的仓库网址")
     ap.add_argument("--dry-run", action="store_true", help="只打印要写 / 删的文件")
-    ap.add_argument("--force", action="store_true", help="目标位置已有不归脚本管的同名文件时也覆盖")
+    ap.add_argument("--force", action="store_true", help="有不归脚本管的同名文件、或库里别处有同名文件时也写")
     a = ap.parse_args()
 
-    vault = Path(a.vault)
+    vault = Path(a.vault).expanduser()
     if not vault.is_absolute() or not vault.is_dir():
         print(f"!! Vault 必须是已存在目录的绝对路径：{a.vault}", file=sys.stderr)
         return 2
-    if not re.fullmatch(r"[^/\\]+", a.subdir) or a.subdir in (".", ".."):
-        print(f"!! --subdir 只能是一层目录名：{a.subdir}", file=sys.stderr)
+    subdir, assets_dir = rel_dir(a.subdir), rel_dir(a.assets_dir)
+    if not subdir or not assets_dir:
+        print(f"!! --subdir / --assets-dir 要是 Vault 里的相对目录：{a.subdir} / {a.assets_dir}", file=sys.stderr)
         return 2
     vault = vault.resolve()
-    target = vault / a.subdir
-    if REPO == target or REPO in target.parents or target in REPO.parents:
-        print(f"!! 目标 {target} 与仓库 {REPO} 重叠，拒绝写入", file=sys.stderr)
-        return 2
+    for t in (vault / subdir, vault / assets_dir):
+        if REPO == t or REPO in t.parents or t in REPO.parents:
+            print(f"!! 目标 {t} 与仓库 {REPO} 重叠，拒绝写入", file=sys.stderr)
+            return 2
     if not (vault / ".obsidian").is_dir():
         print(f"-- 提示：{vault} 下没有 .obsidian/，可能还没在 Obsidian 里打开过（不影响导出）")
 
-    ex = Exporter(a.subdir, a.repo_url)
+    ex = Exporter(subdir, assets_dir, a.repo_url)
     out = ex.build()
     for w in ex.warnings:
         print("⚠", w)
-    return write_all(target, out, a.dry_run, a.force)
+    return write_all(vault, [subdir, assets_dir], f"{subdir}/{MANIFEST}", out, a.dry_run, a.force)
 
 
 if __name__ == "__main__":
