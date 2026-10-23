@@ -12,6 +12,11 @@
 
 ## 2026-10
 
+### 10-23（取消用 Obsidian Vault 管理文档；分支 `chore/remove-obsidian-export`）
+
+- 文档只在仓库里维护：删掉 10-22 加的 `docs/obsidian/migrate_to_obsidian.py`（看代码去 git 历史）。作者 Vault 里导出的副本（`技术能力/cang-jie/` 与 `00 Library/Assets/cang-jie/`，共 99 个文件，从没提交进 Vault 的 git）按导出清单逐个删掉，删前核对过目录里没有清单外的文件、Vault 里也没有别的笔记链接它们。
+- 与笔记线的「导出 Obsidian md」无关：那是笔记线把书摘推送成 md 的功能，照常在用。
+
 ### 10-22（xovi 扩展源码没变就不重编；分支 `fix/xovi-ext-rebuild`）
 
 - **起因**：10-22 17:09 跑 `install-all.sh` 时，hl-snap、ui-font 两步按老规矩原地 `make aarch64`。开发机的交叉编译器 10-19 从 GCC 16.1 升到了 16.2，编出来的两个 `.so` 和已提交的字节不同（反汇编去掉地址后逐条相同、导出符号相同，只差编译器版本），工作区因此变脏，部署记录也标成 `dirty`。设备上装的就是这两份（17:25 核对，md5 分别是 `44659634…`、`edb9ce94…`）。这次把它们提交进仓库，仓库与设备一致。
@@ -19,13 +24,13 @@
 - **CI** 新增一步：已提交的 `.so` 必须由当前源码编出（`.so.inputs` 对得上），否则失败。改了扩展源码要把 `.so` 和 `.so.inputs` 一起提交。比的是输入，不是 `.so` 字节，所以 runner 用别的 gcc 版本也不受影响。
 - 安装脚本模拟测试加 3 项（源码没变不跑 `make aarch64`、强制重编时照跑并在编不出来时退回已提交的 `.so`、测试不改动仓库里的 `.so`），共 463 项全过。以前有几个测试场景会在真实仓库里重编 `.so`，这次修好后不会再发生。另外，「单独跑 deploy-hl-snap 被 Ctrl-C」这一项在 4 次运行里失败过 2 次；它不经过这次改的逻辑，是原有的、按信号时机判断的不稳定测试。
 
-### 10-22（Obsidian 导出按作者 Vault 的约定调整；分支 `feat/obsidian-vault-conventions`）〔已导出到作者的 Vault（`~/Documents/ikate`）：98 个文件，第二次运行 0 写入；还没在 Obsidian 里打开看过〕
+### 10-22（Obsidian 导出按作者 Vault 的约定调整；分支 `feat/obsidian-vault-conventions`）〔已导出到作者的 Vault（`~/Documents/ikate`）：98 个文件，第二次运行 0 写入；还没在 Obsidian 里打开看过〕〔10-23 撤销：脚本删除、Vault 里导出的文件已清掉，见 10-23〕
 
 - 缺省位置改成作者 Vault 的约定：笔记放 `技术能力/cang-jie/`，入口 `cang-jie MOC` 和 `待验证清单`、`Index_MOC` 放项目根（不再有 `00-MOC/`）；示意图放 `00 Library/Assets/cang-jie/`，文件名加 `cang-jie-` 前缀（两张 `architecture.svg` 分别成了 `cang-jie-shelf-…`、`cang-jie-notes-…`），正文用短链接 `![[文件名]]`。`--subdir`、`--assets-dir` 可改，支持多级目录。
 - 标签对齐 Vault 已有的体系：`工具技巧/reMarkable`、`cang-jie/<分类>`（如 `cang-jie/架构设计`）、`领域/…`（开发、部署、逆向、认证、网络、shell，按正文关键词密度打）；MOC 另打 `MOC`。`type`、`line` 只作属性。
 - Vault 按文件名全库解析双链，所以写入前查全库重名：库里别处已有同名笔记或附件时拒绝写入（`--force` 才继续）。清单里的路径改为相对 Vault，删文件后只在这两个目录里往上收空目录。
 
-### 10-22（文档导出到 Obsidian；分支 `feat/obsidian-export`，只加工具，不改文档）
+### 10-22（文档导出到 Obsidian；分支 `feat/obsidian-export`，只加工具，不改文档）〔10-23 撤销，见 10-23〕
 
 - 新增 `docs/obsidian/migrate_to_obsidian.py <Vault 绝对路径>`：仓库文档仍是唯一来源、原样不动（GitHub 上的相对链接照常能点），脚本每次从仓库生成知识库里的一份副本。按「00-MOC … 08-概念、99-附件」分目录，文件名全库唯一；每篇注入 YAML frontmatter（日期取 git，标签按类型、所属线、正文关键词密度生成）；相对链接改成 `[[双链]]`（锚点按 GitHub 规则找回标题），源码与没导出的文档改指 GitHub；每篇第一次出现的核心术语和组件链到概念笔记或对应文档。另外生成概念笔记（来自 OVERVIEW 术语表）、API 路由总表（从代码和 systemd 单元抽取）、踩坑索引、待验证清单、项目 MOC 和 Index_MOC。英文版和打赏页不导出。
 - 幂等与安全：输出只由仓库内容决定，内容没变的文件不重写，重复运行结果相同；只管理自己写过的文件（清单在 `<Vault>/cang-jie/.cang-jie-export.json`），你自己放进去的笔记不碰；目标位置已有一份不归脚本管、内容又不同的文件时拒绝覆盖（`--force` 才覆盖）；校验全部双链和标题都能对上。在临时知识库里试过：98 个文件（51 篇笔记、47 张图），第二次运行 0 写入，冲突时拒绝、退出码 3。**还没在你的真实 Obsidian 里打开看过。**
