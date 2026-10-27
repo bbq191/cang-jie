@@ -27,12 +27,14 @@ if [ -n "${CJ_SIM_LOSE_ON:-}" ] && printf '%s' "$*" | grep -Eq -- "$CJ_SIM_LOSE_
 fi
 if [ -n "${CJ_SIM_KILL_ON:-}" ] && [ ! -e "$CJ_SIM_ROOT/.sim-killed" ] && printf '%s' "$*" | grep -Eq -- "$CJ_SIM_KILL_ON"; then
     : > "$CJ_SIM_ROOT/.sim-killed"
-    # 取命令行含 <子串> 的**最外层**祖先：脚本里的管道/命令替换会 fork 出同名子 shell，信号要发给脚本主进程
+    # 取某个参数就是 <脚本名>（或以 /<脚本名> 结尾）的**最外层**祖先：脚本里的管道/命令替换会 fork 出同名子 shell，信号要发给脚本主进程。
+    # 逐个参数整串比对，不在整条命令行里找子串（2026-10-27）：启动测试的外层 shell 命令行里只要提到这个脚本名
+    # （如同一条命令先 `shellcheck packaging/deploy-xovi-ext.sh` 再跑测试），它就成了"最外层"，信号发错进程组，用例误报失败
     p=$$; hit=""
     while [ "$p" -gt 1 ]; do
         p="$(sed 's/.*) [A-Za-z] \([0-9]*\) .*/\1/' "/proc/$p/stat" 2>/dev/null)" || break
         [ -n "$p" ] || break
-        if tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | grep -q -- "$CJ_SIM_KILL_WHO"; then hit=$p; fi
+        if tr '\0' '\n' < "/proc/$p/cmdline" 2>/dev/null | awk -v w="$CJ_SIM_KILL_WHO" '$0 == w || substr($0, length($0) - length(w)) == "/" w { f = 1 } END { exit !f }'; then hit=$p; fi
     done
     if [ -n "$hit" ]; then
         # CJ_SIM_KILL_GROUP=1：发给它所在的整个进程组（终端 Ctrl-C / 挂断就是这样发的；用例用 setsid 把它放进独立进程组）
