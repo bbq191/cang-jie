@@ -2,10 +2,10 @@
 
 - Task ID: 2026-11-12-notify-afu-setup
 - 负责 bot: cang-jie
-- 状态: done
+- 状态: verified
 - 执行方: cang-jie（项目 bot 按 Jarvis 指示在本机仓库直接落地）
 - 分支: chore/notify-afu（从最新 master 切出）
-- 更新时间: 2026-11-12T14:34+08:00
+- 更新时间: 2026-11-12T14:35+08:00
 - 引用: 正本模板 `~/Documents/ikate/Projects/_templates/notify-afu.yml`（只读该文件）
 
 ## 需求原文
@@ -48,10 +48,10 @@
 ```
 
 ## 结果
-- 执行方 / 开始–结束时间：cang-jie / 2026-11-12T14:31+08:00–2026-11-12T14:34+08:00
-- base..head：`9f8b464`（origin/master）.. `chore/notify-afu`（提交号见下，提交后回填）
+- 执行方 / 开始–结束时间：cang-jie / 2026-11-12T14:31+08:00–2026-11-12T14:35+08:00
+- base..head：`9f8b464`（origin/master）.. `44ef537`（chore/notify-afu）
 - 提交：| 步骤 | 提交号 | 文件 | 说明 |
-  | 新增工作流与任务单 | （提交后回填） | `.github/workflows/notify-afu.yml`、`.dev/tasks/2026-11-12-notify-afu-setup.md` | 模板原样复制；任务单新建 |
+  | 新增工作流与任务单 | `44ef537` | `.github/workflows/notify-afu.yml`、`.dev/tasks/2026-11-12-notify-afu-setup.md` | 模板原样复制；任务单新建 |
 - 测试：
   | 命令 | 通过 / 失败 / 未跑 | 摘要 |
   | `cmp` 模板与目标文件 | 通过 | 字节级一致 |
@@ -65,4 +65,4 @@
 ## 审查
 - 验收：通过。工作区仅新增上述两个文件；`cmp` 证明 workflow 与正本模板一致；YAML 可解析；过滤逻辑与 Secrets 引用符合需求；未写入 Secret 值，未改其他文件，未碰设备。
 - 二审：用户经 Jarvis 要求验收后直接合并，本单不跑 agy。
-- 合并：待合入 master 后回填合并提交号；不需要真机验收。
+- 合并：已用 `merge: chore/notify-afu` 合入 master，合并提交 `97ea2f5`；不需要真机验收，状态改为 verified。
