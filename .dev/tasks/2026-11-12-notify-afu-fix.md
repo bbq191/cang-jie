@@ -2,10 +2,10 @@
 
 - Task ID: 2026-11-12-notify-afu-fix
 - 负责 bot: cang-jie
-- 状态: done
+- 状态: verified
 - 执行方: cang-jie（项目 bot 按指示在本机仓库直接落地）
 - 分支: fix/notify-afu-merge-base（从最新 master 切出）
-- 更新时间: 2026-11-12T14:36+08:00
+- 更新时间: 2026-11-12T14:37+08:00
 - 引用: 2026-11-12-notify-afu-setup；正本模板 `~/Documents/ikate/Projects/_templates/notify-afu.yml`（sha256 以 `2c3f9ea8` 开头、以 `d206` 结尾）
 
 ## 需求原文
@@ -48,11 +48,11 @@
 ```
 
 ## 结果
-- 执行方 / 开始–结束时间：cang-jie / 2026-11-12T14:36+08:00–2026-11-12T14:36+08:00
+- 执行方 / 开始–结束时间：cang-jie / 2026-11-12T14:36+08:00–2026-11-12T14:37+08:00
 - 正本 sha256：`2c3f9ea80688adfb0c14772cb91fed985f31806e564841c5cbebfac060dbd206`
-- base..head：`75f7317`（origin/master）.. `fix/notify-afu-merge-base`（提交号见下，提交后回填）
+- base..head：`75f7317`（origin/master）.. `f8b5f54`（fix/notify-afu-merge-base）
 - 提交：| 步骤 | 提交号 | 文件 | 说明 |
-  | 替换工作流并新建任务单 | （提交后回填） | `.github/workflows/notify-afu.yml`、`.dev/tasks/2026-11-12-notify-afu-fix.md` | 整文件覆盖为修复版正本；任务单新建 |
+  | 替换工作流并新建任务单 | `f8b5f54` | `.github/workflows/notify-afu.yml`、`.dev/tasks/2026-11-12-notify-afu-fix.md` | 整文件覆盖为修复版正本；任务单新建 |
 - 测试：
   | 命令 | 通过 / 失败 / 未跑 | 摘要 |
   | 正本 sha256 前缀/后缀核对 | 通过 | `2c3f9ea8…d206`，全值如上 |
@@ -67,4 +67,4 @@
 ## 审查
 - 验收：通过。仅改上述两个文件；`cmp` 与修复版正本一致；YAML 可解析；merge-base 回退与 Secrets 引用符合需求；未写入 Secret 值，未改其他文件，未碰设备。
 - 二审：用户要求验收后直接合并，本单不跑 agy。
-- 合并：待合入 master 后回填合并提交号；不需要真机验收。
+- 合并：已用 `merge: fix/notify-afu-merge-base` 合入 master，合并提交 `ad4fe33`；不需要真机验收，状态改为 verified。
